@@ -1,66 +1,84 @@
-import { Route, BrowserRouter as Router, Routes } from "react-router";
-import { ScrollToTop } from "./components/common/ScrollToTop";
-import AppLayout from "./layout/AppLayout";
-import SignIn from "./pages/AuthPages/SignIn";
-import SignUp from "./pages/AuthPages/SignUp";
-import Calendar from "./pages/Calendar";
-import BarChart from "./pages/Charts/BarChart";
-import LineChart from "./pages/Charts/LineChart";
-import Home from "./pages/Dashboard/Ecommerce";
-import FormElements from "./pages/Forms/FormElements";
-import Blank from "./pages/OtherPage/Blank";
-import NotFound from "./pages/OtherPage/NotFound";
-import BasicTables from "./pages/Tables/BasicTables";
-import Alerts from "./pages/UiElements/Alerts";
-import Avatars from "./pages/UiElements/Avatars";
-import Badges from "./pages/UiElements/Badges";
-import Buttons from "./pages/UiElements/Buttons";
-import Images from "./pages/UiElements/Images";
-import Videos from "./pages/UiElements/Videos";
-import UserProfiles from "./pages/UserProfiles";
+import { BrowserRouter } from "react-router";
+import { Sparkles } from "lucide-react";
+import "./styles/main.scss";
+import { store } from "@/store";
+import { fetchTenantById } from "@/store/tenantSlice";
+import { validateOrRefreshToken } from "@/store/authSlice";
+import { useAppDispatch, useAppSelector } from "@/store/hooks";
+import { useTranslation } from "react-i18next";
+import { useEffect } from "react";
+import { ProtectedRoutes } from "@/router/ProtectedRoutes.tsx";
+import { PublicRoutes } from "@/router/PublicRoutes.tsx";
+import { Provider } from "react-redux";
+
+function AppContent() {
+  const dispatch = useAppDispatch();
+  const { t } = useTranslation();
+  const { isAuthenticated, isInitializing, user } = useAppSelector(
+    (state) => state.auth,
+  );
+
+  useEffect(() => {
+    dispatch(validateOrRefreshToken());
+  }, [dispatch]);
+
+  useEffect(() => {
+    if (isAuthenticated && user) {
+      const tenantId = user.tenantId || user.tenant_id;
+      if (tenantId) {
+        dispatch(fetchTenantById(tenantId));
+      }
+    }
+  }, [isAuthenticated, user, dispatch]);
+
+  if (isInitializing) {
+    return (
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          height: "100vh",
+          backgroundColor: "var(--bg-primary)",
+          color: "var(--text-body)",
+        }}
+      >
+        <Sparkles
+          size={36}
+          style={{
+            color: "var(--accent-primary)",
+            marginBottom: "1rem",
+            animation: "spin 2s linear infinite",
+          }}
+        />
+        <p
+          style={{
+            fontSize: "0.9rem",
+            letterSpacing: "0.08em",
+            color: "var(--text-body)",
+            textTransform: "uppercase",
+          }}
+        >
+          {t("common.validatingSession")}
+        </p>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return <PublicRoutes />;
+  }
+
+  return <ProtectedRoutes />;
+}
 
 export default function App() {
   return (
-    <>
-      <Router>
-        <ScrollToTop />
-        <Routes>
-          {/* Dashboard Layout */}
-          <Route element={<AppLayout />}>
-            <Route index path="/" element={<Home />} />
-
-            {/* Others Page */}
-            <Route path="/profile" element={<UserProfiles />} />
-            <Route path="/calendar" element={<Calendar />} />
-            <Route path="/blank" element={<Blank />} />
-
-            {/* Forms */}
-            <Route path="/form-elements" element={<FormElements />} />
-
-            {/* Tables */}
-            <Route path="/basic-tables" element={<BasicTables />} />
-
-            {/* Ui Elements */}
-            <Route path="/alerts" element={<Alerts />} />
-            <Route path="/avatars" element={<Avatars />} />
-            <Route path="/badge" element={<Badges />} />
-            <Route path="/buttons" element={<Buttons />} />
-            <Route path="/images" element={<Images />} />
-            <Route path="/videos" element={<Videos />} />
-
-            {/* Charts */}
-            <Route path="/line-chart" element={<LineChart />} />
-            <Route path="/bar-chart" element={<BarChart />} />
-          </Route>
-
-          {/* Auth Layout */}
-          <Route path="/signin" element={<SignIn />} />
-          <Route path="/signup" element={<SignUp />} />
-
-          {/* Fallback Route */}
-          <Route path="*" element={<NotFound />} />
-        </Routes>
-      </Router>
-    </>
+    <Provider store={store}>
+      <BrowserRouter>
+        <AppContent />
+      </BrowserRouter>
+    </Provider>
   );
 }

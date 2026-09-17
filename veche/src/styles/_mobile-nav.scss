@@ -1,0 +1,36 @@
+@use 'variables' as *;
+
+// Mobile-only chrome: hamburger trigger + sidebar backdrop for the
+// off-canvas drawer defined in _components.scss's .main-sidebar rules.
+.btn-mobile-menu-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  color: var(--text-heading);
+  cursor: pointer;
+  padding: 8px;
+  margin-right: 8px;
+  border-radius: 8px;
+
+  &:hover {
+    background-color: var(--bg-primary);
+  }
+
+  @media (min-width: 901px) {
+    display: none;
+  }
+}
+
+.sidebar-backdrop {
+  position: fixed;
+  inset: 0;
+  top: $header-height;
+  background: rgba(0, 0, 0, 0.4);
+  z-index: 89;
+
+  @media (min-width: 901px) {
+    display: none;
+  }
+}

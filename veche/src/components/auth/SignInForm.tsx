@@ -1,14 +1,41 @@
 import Label from "@/components/form/Label";
 import Checkbox from "@/components/form/input/Checkbox";
-import Input from "@/components/form/input/InputField";
 import Button from "@/components/ui/button/Button";
 import { ChevronLeftIcon, EyeCloseIcon, EyeIcon } from "@/icons";
-import { useState } from "react";
+import { clearError, loginUser } from "@/store/authSlice";
+import { useAppDispatch, useAppSelector } from "@/store/hooks";
+import {
+  useState,
+  type ChangeEvent,
+  type Dispatch,
+  type FormEvent,
+  type SetStateAction,
+} from "react";
 import { Link } from "react-router";
+import { useTranslation } from "react-i18next";
 
 export default function SignInForm() {
   const [showPassword, setShowPassword] = useState(false);
   const [isChecked, setIsChecked] = useState(false);
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const dispatch = useAppDispatch();
+  const error = useAppSelector((state) => state.auth.error);
+  const { t } = useTranslation();
+
+  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!email || !password) return;
+    dispatch(loginUser({ email, password }));
+  };
+
+  const handleInputChange =
+    (setter: Dispatch<SetStateAction<string>>) =>
+    (event: ChangeEvent<HTMLInputElement>) => {
+      if (error) dispatch(clearError());
+      setter(event.target.value);
+    };
+
   return (
     <div className="flex flex-1 flex-col">
       <div className="mx-auto w-full max-w-md pt-10">
@@ -83,22 +110,35 @@ export default function SignInForm() {
                 </span>
               </div>
             </div>
-            <form>
+            <form onSubmit={handleSubmit}>
               <div className="space-y-6">
                 <div>
                   <Label>
                     Email <span className="text-error-500">*</span>{" "}
                   </Label>
-                  <Input placeholder="info@gmail.com" />
+                  <input
+                    id="login-email"
+                    type="email"
+                    placeholder={t("auth.emailPlaceholder")}
+                    value={email}
+                    onChange={handleInputChange(setEmail)}
+                    required
+                    autoComplete="username"
+                  />
                 </div>
                 <div>
                   <Label>
                     Password <span className="text-error-500">*</span>{" "}
                   </Label>
                   <div className="relative">
-                    <Input
+                    <input
+                      id="login-password"
                       type={showPassword ? "text" : "password"}
-                      placeholder="Enter your password"
+                      placeholder="••••••••"
+                      value={password}
+                      onChange={handleInputChange(setPassword)}
+                      required
+                      autoComplete="current-password"
                     />
                     <span
                       onClick={() => setShowPassword(!showPassword)}
