@@ -1,0 +1,31 @@
+[package]
+name = "business"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+entity = { path = "../entity" }
+
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+utoipa = { workspace = true }
+tokio = { workspace = true }
+chrono = { workspace = true }
+
+bcrypt = "0.19.3"
+log = "0.4.34"
+jsonwebtoken = { version = "11.0.0", features = ["rust_crypto"] }
+base64 = "0.23.1"
+
+
+[dependencies.sea-orm]
+version = "2.0.3"
+features = ["debug-print", "runtime-tokio-native-tls", "sqlx-mysql"]
+
+[features]
+mock = ["sea-orm/mock"]
+
+[[test]]
+name = "mock"
+required-features = ["mock"]
