@@ -1,5 +1,5 @@
 use crate::commons::entity_mapper::EntityMapper;
-use crate::commons::functions::{bytes_para_string, string_to_bytes};
+use crate::commons::functions::{string_to_uuid, uuid_to_string};
 use entity::city_entity::{ActiveModel, Model};
 use sea_orm::{NotSet, Set, TryIntoModel};
 
@@ -21,7 +21,7 @@ impl EntityMapper<City, Model, ActiveModel> for CityEntityMapper {
                 None => NotSet,
             },
             uuid: match d.uuid {
-                Some(uuid) => Set(string_to_bytes(&uuid)),
+                Some(uuid) => Set(string_to_uuid(&uuid)),
                 None => NotSet,
             },
             province_id: Set(d.province_id),
@@ -32,7 +32,7 @@ impl EntityMapper<City, Model, ActiveModel> for CityEntityMapper {
     fn from_model(e: Model) -> City {
         City {
             id: Some(e.id),
-            uuid: Some(bytes_para_string(e.uuid)),
+            uuid: Some(uuid_to_string(e.uuid)),
             province_id: e.province_id,
             name: e.name,
         }
@@ -44,7 +44,7 @@ impl EntityMapper<City, Model, ActiveModel> for CityEntityMapper {
             Ok(m) => Self::from_model(m),
             Err(_) => City {
                 id: e.id.take(),
-                uuid: e.uuid.take().map(bytes_para_string),
+                uuid: e.uuid.take().map(uuid_to_string),
                 province_id: e.province_id.take().unwrap_or_default(),
                 name: e.name.take().unwrap_or_default(),
             },

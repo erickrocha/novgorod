@@ -1,5 +1,5 @@
 use crate::commons::entity_mapper::EntityMapper;
-use crate::commons::functions::string_to_bytes;
+use crate::commons::functions::{string_to_uuid};
 use crate::commons::gateway::Gateway;
 use crate::domain::tenant::{Tenant, TenantEntityMapper};
 use entity::prelude::TenantEntity as TenantQuery;
@@ -39,7 +39,7 @@ impl Gateway<Tenant, tenant_entity::Model, tenant_entity::ActiveModel> for Tenan
 
     async fn find_by_uuid(&self, uuid: String) -> Result<Option<tenant_entity::Model>, DbErr> {
         TenantQuery::find()
-            .filter(tenant_entity::Column::Uuid.eq(string_to_bytes(&uuid)))
+            .filter(tenant_entity::Column::Uuid.eq(string_to_uuid(&uuid)))
             .one(&self.db)
             .await
     }

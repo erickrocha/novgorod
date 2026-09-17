@@ -12,7 +12,7 @@ impl MigrationTrait for Migration {
                     .table(City::Table)
                     .if_not_exists()
                     .col(pk_auto(City::Id).integer())
-                    .col(binary_len_uniq(City::Uuid, 16))
+                    .col(uuid_uniq(City::Uuid))
                     .col(integer(City::ProvinceId).not_null())
                     .foreign_key(
                         ForeignKey::create()

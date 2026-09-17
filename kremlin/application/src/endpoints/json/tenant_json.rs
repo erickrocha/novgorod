@@ -11,7 +11,7 @@ pub struct TenantJson {
     pub tax_id: Option<String>,
     pub email: Option<String>,
     pub phone: Option<String>,
-    pub website: Option<String>,
+    pub web_site: Option<String>,
     pub address_line1: Option<String>,
     pub address_line2: Option<String>,
     pub locality: Option<String>,
@@ -21,9 +21,6 @@ pub struct TenantJson {
     pub province: Option<String>,
     pub city: Option<String>,
     pub zipcode: Option<String>,
-    /// Days a customer keeps app access after a charge falls due. Omitting it
-    /// on an update keeps the clinic's current value.
-    pub payment_grace_days: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_at: Option<chrono::NaiveDateTime>,
     #[serde(skip_serializing_if = "Option::is_none")]

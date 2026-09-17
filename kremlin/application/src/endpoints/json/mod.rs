@@ -7,3 +7,4 @@ pub mod province_json;
 pub mod refresh_token_request;
 pub mod tenant_json;
 pub mod user_json;
+pub mod catalog_json;

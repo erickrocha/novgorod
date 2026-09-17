@@ -2,49 +2,145 @@
 
 use sea_orm::entity::prelude::*;
 
-#[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
-#[sea_orm(table_name = "sku_attribute_value")]
-pub struct Model {
-    #[sea_orm(primary_key)]
-    pub id: i32,
-    #[sea_orm(unique_key = "uq_sku_attribute_value_sku_attribute_value")]
-    pub sku_id: i32,
-    #[sea_orm(unique_key = "uq_sku_attribute_value_sku_attribute_value")]
-    pub attribute_value_id: i32,
-    pub created_at: DateTime,
-    pub updated_at: DateTime,
-}
+#[derive(Copy, Clone, Default, Debug, DeriveEntity)]
+pub struct Entity;
 
-#[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
-pub enum Relation {
-    #[sea_orm(
-        belongs_to = "super::product_attribute_value::Entity",
-        from = "Column::AttributeValueId",
-        to = "super::product_attribute_value::Column::Id",
-        on_update = "Restrict",
-        on_delete = "Restrict"
-    )]
-    ProductAttributeValue,
-    #[sea_orm(
-        belongs_to = "super::sku::Entity",
-        from = "Column::SkuId",
-        to = "super::sku::Column::Id",
-        on_update = "Restrict",
-        on_delete = "Restrict"
-    )]
-    Sku,
-}
-
-impl Related<super::product_attribute_value::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::ProductAttributeValue.def()
+impl EntityName for Entity {
+    fn table_name(&self) -> &'static str {
+        "sku_attribute_value"
     }
 }
 
-impl Related<super::sku::Entity> for Entity {
+#[derive(Clone, Debug, PartialEq, DeriveModel, DeriveActiveModel, Eq)]
+pub struct Model {
+    pub id: i64,
+    pub uuid: Uuid,
+    pub tenant_id: Option<i64>,
+    pub product_id: i64,
+    pub sku_id: i64,
+    pub product_attribute_id: i64,
+    pub attribute_id: i64,
+    pub attribute_value_id: i64,
+    pub created_at: DateTime,
+    pub created_by: Option<String>,
+    pub updated_at: DateTime,
+    pub updated_by: Option<String>,
+}
+
+#[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
+pub enum Column {
+    Id,
+    Uuid,
+    TenantId,
+    ProductId,
+    SkuId,
+    ProductAttributeId,
+    AttributeId,
+    AttributeValueId,
+    CreatedAt,
+    CreatedBy,
+    UpdatedAt,
+    UpdatedBy,
+}
+
+#[derive(Copy, Clone, Debug, EnumIter, DerivePrimaryKey)]
+pub enum PrimaryKey {
+    Id,
+}
+
+impl PrimaryKeyTrait for PrimaryKey {
+    type ValueType = i64;
+    fn auto_increment() -> bool {
+        true
+    }
+}
+
+#[derive(Copy, Clone, Debug, EnumIter)]
+pub enum Relation {
+    CatalogAttributeValue,
+    ProductAttribute,
+    Sku,
+}
+
+impl ColumnTrait for Column {
+    type EntityName = Entity;
+    fn def(&self) -> ColumnDef {
+        match self {
+            Self::Id => ColumnType::Integer.def(),
+            Self::Uuid => ColumnType::Uuid.def().unique(),
+            Self::TenantId => ColumnType::Integer.def(),
+            Self::ProductId => ColumnType::Integer.def(),
+            Self::SkuId => ColumnType::Integer.def(),
+            Self::ProductAttributeId => ColumnType::Integer.def(),
+            Self::AttributeId => ColumnType::Integer.def(),
+            Self::AttributeValueId => ColumnType::Integer.def(),
+            Self::CreatedAt => ColumnType::DateTime.def(),
+            Self::CreatedBy => ColumnType::String(StringLen::N(255u32)).def().null(),
+            Self::UpdatedAt => ColumnType::DateTime.def(),
+            Self::UpdatedBy => ColumnType::String(StringLen::N(255u32)).def().null(),
+        }
+    }
+}
+
+impl RelationTrait for Relation {
+    fn def(&self) -> RelationDef {
+        match self {
+            Self::CatalogAttributeValue => {
+                Entity::belongs_to(super::catalog_attribute_value_entity::Entity)
+                    .from((
+                        Column::TenantId,
+                        Column::AttributeValueId,
+                        Column::AttributeId,
+                    ))
+                    .to((
+                        super::catalog_attribute_value_entity::Column::TenantId,
+                        super::catalog_attribute_value_entity::Column::Id,
+                        super::catalog_attribute_value_entity::Column::AttributeId,
+                    ))
+                    .into()
+            }
+            Self::ProductAttribute => Entity::belongs_to(super::product_attribute_entity::Entity)
+                .from((
+                    Column::TenantId,
+                    Column::ProductAttributeId,
+                    Column::AttributeId,
+                    Column::ProductId,
+                ))
+                .to((
+                    super::product_attribute_entity::Column::TenantId,
+                    super::product_attribute_entity::Column::Id,
+                    super::product_attribute_entity::Column::AttributeId,
+                    super::product_attribute_entity::Column::ProductId,
+                ))
+                .into(),
+            Self::Sku => Entity::belongs_to(super::sku_entity::Entity)
+                .from((Column::TenantId, Column::SkuId, Column::ProductId))
+                .to((
+                    super::sku_entity::Column::TenantId,
+                    super::sku_entity::Column::Id,
+                    super::sku_entity::Column::ProductId,
+                ))
+                .into(),
+        }
+    }
+}
+
+impl Related<super::catalog_attribute_value_entity::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::CatalogAttributeValue.def()
+    }
+}
+
+impl Related<super::product_attribute_entity::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::ProductAttribute.def()
+    }
+}
+
+impl Related<super::sku_entity::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::Sku.def()
     }
 }
 
-impl ActiveModelBehavior for ActiveModel {}
+crate::impl_tenant_auditable_before_save!(ActiveModel);

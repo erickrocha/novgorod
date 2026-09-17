@@ -1,5 +1,5 @@
 use crate::commons::entity_mapper::EntityMapper;
-use crate::commons::functions::string_to_bytes;
+use crate::commons::functions::{string_to_uuid};
 use crate::commons::gateway::{Gateway, tenant_delete, tenant_select};
 use crate::domain::user::{User, UserEntityMapper};
 use entity::prelude::UserEntity as UserQuery;
@@ -48,7 +48,7 @@ impl Gateway<User, user_entity::Model, user_entity::ActiveModel> for UserGateway
 
     async fn find_by_uuid(&self, uuid: String) -> Result<Option<user_entity::Model>, DbErr> {
         tenant_select(UserQuery::find(), user_entity::Column::TenantId)
-            .filter(user_entity::Column::Uuid.eq(string_to_bytes(&uuid)))
+            .filter(user_entity::Column::Uuid.eq(string_to_uuid(&uuid)))
             .one(&self.db)
             .await
     }

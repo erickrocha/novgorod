@@ -128,11 +128,6 @@ impl TenantUseCase {
                 "Country code must contain two letters".to_string(),
             ));
         }
-        if tenant.payment_grace_days.is_some_and(|days| days < 0) {
-            return Err(BusinessError::new(
-                "Payment grace days cannot be negative".to_string(),
-            ));
-        }
 
         let updated_tenant = Tenant {
             id: Some(id),
@@ -142,16 +137,13 @@ impl TenantUseCase {
             tax_id: tenant.tax_id,
             email: tenant.email,
             phone: tenant.phone,
-            website: tenant.website,
+            web_site: tenant.web_site,
             address_line1: tenant.address_line1,
             address_line2: tenant.address_line2,
             locality: tenant.locality,
             administrative_area: tenant.administrative_area,
             postal_code: tenant.postal_code,
             country_code: tenant.country_code,
-            // Omitting the field keeps the clinic's current grace rather than
-            // silently resetting it to the column default.
-            payment_grace_days: tenant.payment_grace_days.or(existing.payment_grace_days),
             created_at: existing.created_at,
             created_by: existing.created_by,
             updated_at: None,

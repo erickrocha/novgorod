@@ -1,13 +1,17 @@
 use uuid::Uuid;
 
-pub fn bytes_para_string(bytes: Vec<u8>) -> String {
-    Uuid::from_slice(&bytes)
-        .map(|u| u.to_string())
-        .unwrap_or_default()
+pub fn uuid_to_string(uuid: Uuid) -> String {
+    uuid.to_string()
 }
 
-pub fn string_to_bytes(uuid_str: &str) -> Vec<u8> {
+pub fn string_to_uuid(uuid_str: &str) -> Uuid {
+    Uuid::parse_str(uuid_str).unwrap_or_else(|_| Uuid::nil())
+}
+
+pub fn parse_uuid(uuid_str: &str) -> Result<Uuid, uuid::Error> {
     Uuid::parse_str(uuid_str)
-        .map(|u| u.as_bytes().to_vec())
-        .unwrap_or_else(|_| vec![0; 16])
+}
+
+pub fn parse_uuids(uuid_strings: &[String]) -> Result<Vec<Uuid>, uuid::Error> {
+    uuid_strings.iter().map(|value| parse_uuid(value)).collect()
 }

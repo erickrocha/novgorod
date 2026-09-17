@@ -59,6 +59,12 @@ impl Modify for SecurityAddon {
         endpoints::city_endpoint::list_all,
         endpoints::city_endpoint::get_by_province,
         endpoints::city_endpoint::get_by_id
+        ,endpoints::catalog_endpoint::categories
+        ,endpoints::catalog_endpoint::attributes
+        ,endpoints::catalog_endpoint::attribute_values
+        ,endpoints::catalog_endpoint::products
+        ,endpoints::catalog_endpoint::product_attributes
+        ,endpoints::catalog_endpoint::skus
     ),
     components(
         schemas(
@@ -70,6 +76,13 @@ impl Modify for SecurityAddon {
             endpoints::json::tenant_json::TenantJson,
             endpoints::json::province_json::ProvinceJson,
             endpoints::json::city_json::CityJson,
+            endpoints::json::catalog_json::CategoryJson,
+            endpoints::json::catalog_json::CatalogAttributeJson,
+            endpoints::json::catalog_json::CatalogAttributeValueJson,
+            endpoints::json::catalog_json::CatalogAttributeValueJson,
+            endpoints::json::catalog_json::ProductJson,
+            endpoints::json::catalog_json::ProductAttributeJson,
+            endpoints::json::catalog_json::SkuJson,
         ),
     ),
     tags(

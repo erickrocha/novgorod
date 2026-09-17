@@ -25,6 +25,8 @@ impl MigrationTrait for Migration {
                     .col(integer(SkuAttributeValue::AttributeValueId))
                     .col(date_time(SkuAttributeValue::CreatedAt))
                     .col(string_len_null(SkuAttributeValue::CreatedBy, 255))
+                    .col(date_time(SkuAttributeValue::UpdatedAt))
+                    .col(string_len_null(SkuAttributeValue::UpdatedAt, 255))
                     .index(
                         Index::create()
                             .name("uq_sku_attribute_value_one_per_attribute")
@@ -97,4 +99,6 @@ pub enum SkuAttributeValue {
     AttributeValueId,
     CreatedAt,
     CreatedBy,
+    UpdatedAt,
+    UpdatedBy,
 }

@@ -1,5 +1,5 @@
 use crate::commons::entity_mapper::EntityMapper;
-use crate::commons::functions::{bytes_para_string, string_to_bytes};
+use crate::commons::functions::{string_to_uuid, uuid_to_string};
 use crate::domain::enums::Role;
 use chrono::NaiveDateTime;
 use entity::user_entity::{ActiveModel, Model};
@@ -32,7 +32,7 @@ impl EntityMapper<User, Model, ActiveModel> for UserEntityMapper {
                 None => NotSet,
             },
             uuid: match d.uuid {
-                Some(uuid) => Set(string_to_bytes(&uuid)),
+                Some(uuid) => Set(string_to_uuid(&uuid)),
                 None => NotSet,
             },
             name: Set(d.name.to_owned()),
@@ -54,7 +54,7 @@ impl EntityMapper<User, Model, ActiveModel> for UserEntityMapper {
     fn from_model(e: Model) -> User {
         User {
             id: Some(e.id),
-            uuid: Some(bytes_para_string(e.uuid)),
+            uuid: Some(uuid_to_string(e.uuid)),
             name: e.name,
             email: e.email,
             password: e.password,
@@ -62,9 +62,9 @@ impl EntityMapper<User, Model, ActiveModel> for UserEntityMapper {
             first_login: e.first_login,
             tenant_id: e.tenant_id,
             role: Role::from_str(e.role.as_str()).unwrap_or(Role::TenantUser),
-            created_at: Some(e.created_at.naive_utc()),
+            created_at: Some(e.created_at),
             created_by: e.created_by,
-            updated_at: Some(e.updated_at.naive_utc()),
+            updated_at: Some(e.updated_at),
             updated_by: e.updated_by,
         }
     }
@@ -76,7 +76,7 @@ impl EntityMapper<User, Model, ActiveModel> for UserEntityMapper {
             Ok(m) => Self::from_model(m),
             Err(_) => User {
                 id: e.id.take(),
-                uuid: e.uuid.take().map(bytes_para_string),
+                uuid: e.uuid.take().map(uuid_to_string),
                 name: e.name.take().flatten(),
                 email: e.email.take().unwrap_or_default(),
                 password: e.password.take().unwrap_or_default(),
@@ -84,9 +84,9 @@ impl EntityMapper<User, Model, ActiveModel> for UserEntityMapper {
                 first_login: e.first_login.take().unwrap_or(false),
                 tenant_id: e.tenant_id.take().flatten(),
                 role: Role::from_str(e.role.unwrap().as_str()).unwrap_or(Role::TenantUser),
-                created_at: e.created_at.take().map(|dt| dt.naive_utc()),
+                created_at: e.created_at.take(),
                 created_by: e.created_by.take().flatten(),
-                updated_at: e.updated_at.take().map(|dt| dt.naive_utc()),
+                updated_at: e.updated_at.take(),
                 updated_by: e.updated_by.take().flatten(),
             },
         }

@@ -1,5 +1,5 @@
 use crate::commons::entity_mapper::EntityMapper;
-use crate::commons::functions::{bytes_para_string, string_to_bytes};
+use crate::commons::functions::{string_to_uuid, uuid_to_string};
 use entity::province_entity::{ActiveModel, Model};
 use sea_orm::{NotSet, Set, TryIntoModel};
 
@@ -22,7 +22,7 @@ impl EntityMapper<Province, Model, ActiveModel> for ProvinceEntityMapper {
                 None => NotSet,
             },
             uuid: match d.uuid {
-                Some(uuid) => Set(string_to_bytes(&uuid)),
+                Some(uuid) => Set(string_to_uuid(&uuid)),
                 None => NotSet,
             },
             acronym: Set(d.acronym),
@@ -34,7 +34,7 @@ impl EntityMapper<Province, Model, ActiveModel> for ProvinceEntityMapper {
     fn from_model(e: Model) -> Province {
         Province {
             id: Some(e.id),
-            uuid: Some(bytes_para_string(e.uuid)),
+            uuid: Some(uuid_to_string(e.uuid)),
             acronym: e.acronym,
             name: e.name,
             country_code: e.country_code,
@@ -47,7 +47,7 @@ impl EntityMapper<Province, Model, ActiveModel> for ProvinceEntityMapper {
             Ok(m) => Self::from_model(m),
             Err(_) => Province {
                 id: e.id.take(),
-                uuid: e.uuid.take().map(bytes_para_string),
+                uuid: e.uuid.take().map(uuid_to_string),
                 acronym: e.acronym.take().unwrap_or_default(),
                 name: e.name.take().unwrap_or_default(),
                 country_code: e.country_code.take().unwrap_or_default(),

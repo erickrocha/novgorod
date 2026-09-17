@@ -1,5 +1,5 @@
 use crate::commons::entity_mapper::EntityMapper;
-use crate::commons::functions::string_to_bytes;
+use crate::commons::functions::{string_to_uuid};
 use crate::commons::gateway::Gateway;
 use crate::domain::province::{Province, ProvinceEntityMapper};
 use entity::prelude::ProvinceEntity as ProvinceQuery;
@@ -51,7 +51,7 @@ impl Gateway<Province, province_entity::Model, province_entity::ActiveModel> for
 
     async fn find_by_uuid(&self, uuid: String) -> Result<Option<province_entity::Model>, DbErr> {
         ProvinceQuery::find()
-            .filter(province_entity::Column::Uuid.eq(string_to_bytes(&uuid)))
+            .filter(province_entity::Column::Uuid.eq(string_to_uuid(&uuid)))
             .one(&self.db)
             .await
     }

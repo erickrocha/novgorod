@@ -1,5 +1,5 @@
 use crate::commons::entity_mapper::EntityMapper;
-use crate::commons::functions::string_to_bytes;
+use crate::commons::functions::{string_to_uuid};
 use crate::commons::gateway::Gateway;
 use crate::domain::city::{City, CityEntityMapper};
 use entity::city_entity;
@@ -51,7 +51,7 @@ impl Gateway<City, city_entity::Model, city_entity::ActiveModel> for CityGateway
 
     async fn find_by_uuid(&self, uuid: String) -> Result<Option<city_entity::Model>, DbErr> {
         CityQuery::find()
-            .filter(city_entity::Column::Uuid.eq(string_to_bytes(&uuid)))
+            .filter(city_entity::Column::Uuid.eq(string_to_uuid(&uuid)))
             .one(&self.db)
             .await
     }
