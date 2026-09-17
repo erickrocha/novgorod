@@ -1,9 +1,9 @@
 use crate::domain::business_error::BusinessError;
 use crate::gateway::user_gateway::UserGateway;
+use base64::Engine;
 use chrono::{DateTime, Utc};
 use entity::user_entity;
-use base64::Engine;
-use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
+use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, encode};
 use sea_orm::{ActiveModelTrait, DbConn, Set};
 use serde::{Deserialize, Serialize};
 use std::env;
@@ -56,16 +56,15 @@ impl AccountInviteUseCase {
         )
         .map_err(|e| BusinessError::new(format!("Failed to issue invite: {}", e)))?;
 
-        log::info!("[AccountInviteUseCase::issue] Invite issued for {}", user.email);
+        log::info!(
+            "[AccountInviteUseCase::issue] Invite issued for {}",
+            user.email
+        );
         Ok(AccountInvite { token, expires_at })
     }
 
     /// Consome o convite: valida e grava a senha escolhida pelo paciente.
-    pub async fn accept(
-        db: &DbConn,
-        token: &str,
-        new_password: &str,
-    ) -> Result<(), BusinessError> {
+    pub async fn accept(db: &DbConn, token: &str, new_password: &str) -> Result<(), BusinessError> {
         if new_password.chars().count() < MIN_PASSWORD_LEN {
             return Err(BusinessError::new(format!(
                 "Password must be at least {} characters long",
@@ -94,7 +93,10 @@ impl AccountInviteUseCase {
             &strict,
         )
         .map_err(|_| {
-            log::warn!("[AccountInviteUseCase::accept] Rejected invite for {}", user.email);
+            log::warn!(
+                "[AccountInviteUseCase::accept] Rejected invite for {}",
+                user.email
+            );
             BusinessError::new("Invite is invalid or has already been used".to_string())
         })?;
 
@@ -114,7 +116,10 @@ impl AccountInviteUseCase {
             .await
             .map_err(|e| BusinessError::new(format!("Failed to set password: {}", e)))?;
 
-        log::info!("[AccountInviteUseCase::accept] Invite accepted for {}", user.email);
+        log::info!(
+            "[AccountInviteUseCase::accept] Invite accepted for {}",
+            user.email
+        );
         Ok(())
     }
 

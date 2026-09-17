@@ -15,15 +15,11 @@ impl CityUseCase {
 
     pub async fn find_by_id(&self, id: i64) -> Result<City, BusinessError> {
         log::info!("[CityUseCase::find_by_id] Executing for id: {}", id);
-        let model = self
-            .gateway
-            .find_by_id(id)
-            .await
-            .map_err(|e| {
-                let msg = format!("Database error: {}", e);
-                log::error!("[CityUseCase::find_by_id] {}", msg);
-                BusinessError::new(msg)
-            })?;
+        let model = self.gateway.find_by_id(id).await.map_err(|e| {
+            let msg = format!("Database error: {}", e);
+            log::error!("[CityUseCase::find_by_id] {}", msg);
+            BusinessError::new(msg)
+        })?;
 
         match model {
             Some(val) => Ok(CityEntityMapper::from_model(val)),
@@ -37,15 +33,11 @@ impl CityUseCase {
 
     pub async fn find_by_uuid(&self, uuid: String) -> Result<City, BusinessError> {
         log::info!("[CityUseCase::find_by_uuid] Executing for uuid: {}", uuid);
-        let model = self
-            .gateway
-            .find_by_uuid(uuid.clone())
-            .await
-            .map_err(|e| {
-                let msg = format!("Database error: {}", e);
-                log::error!("[CityUseCase::find_by_uuid] {}", msg);
-                BusinessError::new(msg)
-            })?;
+        let model = self.gateway.find_by_uuid(uuid.clone()).await.map_err(|e| {
+            let msg = format!("Database error: {}", e);
+            log::error!("[CityUseCase::find_by_uuid] {}", msg);
+            BusinessError::new(msg)
+        })?;
 
         match model {
             Some(val) => Ok(CityEntityMapper::from_model(val)),
@@ -59,21 +51,20 @@ impl CityUseCase {
 
     pub async fn find_all(&self) -> Result<Vec<City>, BusinessError> {
         log::info!("[CityUseCase::find_all] Executing find_all");
-        let models = self
-            .gateway
-            .find_all()
-            .await
-            .map_err(|e| {
-                let msg = format!("Database error: {}", e);
-                log::error!("[CityUseCase::find_all] {}", msg);
-                BusinessError::new(msg)
-            })?;
+        let models = self.gateway.find_all().await.map_err(|e| {
+            let msg = format!("Database error: {}", e);
+            log::error!("[CityUseCase::find_all] {}", msg);
+            BusinessError::new(msg)
+        })?;
 
         Ok(CityEntityMapper::from_models(models))
     }
 
     pub async fn find_by_province_id(&self, province_id: i32) -> Result<Vec<City>, BusinessError> {
-        log::info!("[CityUseCase::find_by_province_id] Executing for province_id: {}", province_id);
+        log::info!(
+            "[CityUseCase::find_by_province_id] Executing for province_id: {}",
+            province_id
+        );
         let models = self
             .gateway
             .find_by_province_id(province_id)

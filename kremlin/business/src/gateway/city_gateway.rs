@@ -5,7 +5,10 @@ use crate::domain::city::{City, CityEntityMapper};
 use entity::city_entity;
 use entity::prelude::CityEntity as CityQuery;
 use sea_orm::prelude::async_trait::async_trait;
-use sea_orm::{ActiveModelTrait, ColumnTrait, DbConn, DbErr, DeleteResult, EntityTrait, QueryFilter, QueryOrder};
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, DbConn, DbErr, DeleteResult, EntityTrait, QueryFilter,
+    QueryOrder,
+};
 
 pub struct CityGateway {
     db: DbConn,
@@ -16,7 +19,10 @@ impl CityGateway {
         Self { db }
     }
 
-    pub async fn find_by_province_id(&self, province_id: i32) -> Result<Vec<city_entity::Model>, DbErr> {
+    pub async fn find_by_province_id(
+        &self,
+        province_id: i32,
+    ) -> Result<Vec<city_entity::Model>, DbErr> {
         CityQuery::find()
             .filter(city_entity::Column::ProvinceId.eq(province_id))
             .order_by_asc(city_entity::Column::Name)
@@ -33,9 +39,7 @@ impl Gateway<City, city_entity::Model, city_entity::ActiveModel> for CityGateway
     }
 
     async fn delete_by_id(&self, id: i64) -> Result<DeleteResult, DbErr> {
-        CityQuery::delete_by_id(id)
-            .exec(&self.db)
-            .await
+        CityQuery::delete_by_id(id).exec(&self.db).await
     }
 
     async fn find_by_id(&self, id: i64) -> Result<Option<city_entity::Model>, DbErr> {

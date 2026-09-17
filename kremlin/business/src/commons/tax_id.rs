@@ -74,7 +74,10 @@ mod tests {
     fn accepts_a_valid_cpf_in_any_formatting() {
         assert_eq!(normalize("529.982.247-25").as_deref(), Some("52998224725"));
         assert_eq!(normalize("52998224725").as_deref(), Some("52998224725"));
-        assert_eq!(normalize(" 529 982 247 25 ").as_deref(), Some("52998224725"));
+        assert_eq!(
+            normalize(" 529 982 247 25 ").as_deref(),
+            Some("52998224725")
+        );
     }
 
     #[test]

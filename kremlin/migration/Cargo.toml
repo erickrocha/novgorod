@@ -14,4 +14,4 @@ uuid = { workspace = true }
 
 [dependencies.sea-orm-migration]
 version = "2.0.3"
-features = ["runtime-tokio-rustls", "sqlx-mysql", "with-chrono"]
+features = ["runtime-tokio-rustls", "sqlx-postgres", "with-chrono"]

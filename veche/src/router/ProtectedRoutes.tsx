@@ -15,11 +15,13 @@ import Badges from "@/pages/UiElements/Badges";
 import Buttons from "@/pages/UiElements/Buttons";
 import Images from "@/pages/UiElements/Images";
 import Videos from "@/pages/UiElements/Videos";
+import {ScrollToTop} from "@/components/common/ScrollToTop.tsx";
 
 
 export const ProtectedRoutes = () => (
     <Suspense fallback={<div className="route-loading-state">Loading...</div>}>
         <Routes>
+            <ScrollToTop />
             <Route element={<AppLayout />}>
                 <Route index path="/" element={<Home />} />
 

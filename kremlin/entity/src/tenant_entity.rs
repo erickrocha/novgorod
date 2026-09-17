@@ -27,15 +27,6 @@ pub struct Model {
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
-pub enum Relation {
-    #[sea_orm(has_many = "super::tenant_plan_entity::Entity")]
-    TenantPlan,
-}
-
-impl Related<super::tenant_plan_entity::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::TenantPlan.def()
-    }
-}
+pub enum Relation {}
 
 crate::impl_auditable_before_save!(ActiveModel);

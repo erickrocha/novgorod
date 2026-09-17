@@ -21,7 +21,7 @@ base64 = "0.23.1"
 
 [dependencies.sea-orm]
 version = "2.0.3"
-features = ["debug-print", "runtime-tokio-native-tls", "sqlx-mysql"]
+features = ["debug-print", "runtime-tokio-native-tls", "sqlx-postgres"]
 
 [features]
 mock = ["sea-orm/mock"]

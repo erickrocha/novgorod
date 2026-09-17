@@ -1,10 +1,10 @@
-use std::str::FromStr;
 use crate::commons::entity_mapper::EntityMapper;
 use crate::commons::functions::{bytes_para_string, string_to_bytes};
+use crate::domain::enums::Role;
 use chrono::NaiveDateTime;
 use entity::user_entity::{ActiveModel, Model};
 use sea_orm::{NotSet, Set};
-use crate::domain::enums::Role;
+use std::str::FromStr;
 
 #[derive(Debug, Clone)]
 pub struct User {
@@ -23,7 +23,7 @@ pub struct User {
     pub updated_by: Option<String>,
 }
 
-pub struct UserEntityMapper{}
+pub struct UserEntityMapper {}
 impl EntityMapper<User, Model, ActiveModel> for UserEntityMapper {
     fn build_active_model(d: User) -> ActiveModel {
         ActiveModel {
@@ -92,4 +92,3 @@ impl EntityMapper<User, Model, ActiveModel> for UserEntityMapper {
         }
     }
 }
-

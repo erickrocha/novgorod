@@ -1,13 +1,19 @@
-pub use sea_orm_migration::{async_trait, MigratorTrait, MigrationTrait};
+pub use sea_orm_migration::{MigrationTrait, MigratorTrait, async_trait};
 
-mod m20260916_000001_create_table_user;
-mod m20260916_000004_create_tenant_table;
-mod m20260916_000005_create_tenant_plan_table;
-mod m20260916_000002_create_business_plan_table;
-mod m20260916_000003_business_plan_tiers;
-mod m20260916_000008_data_load_us_provinces_and_cities;
-mod m20260916_000006_create_province_table;
-mod m20260916_000007_create_city_table;
+mod m20260917_000001_create_table_user;
+mod m20260917_000002_create_tenant_table;
+mod m20260917_000003_create_province_table;
+mod m20260917_000004_create_city_table;
+mod m20260917_000005_create_table_category;
+mod m20260917_000006_create_table_product;
+mod m20260917_000007_create_table_product_category;
+mod m20260917_000008_create_table_catalog_attribute;
+mod m20260917_000009_create_table_catalog_attribute_value;
+mod m20260917_000010_create_table_product_attribute;
+mod m20260917_000011_create_table_sku;
+mod m20260917_000012_create_table_sku_attribute_value;
+mod m20260917_000013_create_table_sku_stock;
+mod m20260917_000014_create_table_product_image;
 
 pub struct Migrator;
 
@@ -15,14 +21,44 @@ pub struct Migrator;
 impl MigratorTrait for Migrator {
     fn migrations() -> Vec<Box<dyn MigrationTrait>> {
         vec![
-            Box::new(m20260916_000001_create_table_user::Migration),
-            Box::new(m20260916_000002_create_business_plan_table::Migration),
-            Box::new(m20260916_000003_business_plan_tiers::Migration),
-            Box::new(m20260916_000004_create_tenant_table::Migration),
-            Box::new(m20260916_000005_create_tenant_plan_table::Migration),
-            Box::new(m20260916_000006_create_province_table::Migration),
-            Box::new(m20260916_000007_create_city_table::Migration),
-            Box::new(m20260916_000008_data_load_us_provinces_and_cities::Migration),
+            Box::new(m20260917_000001_create_table_user::Migration),
+            Box::new(m20260917_000002_create_tenant_table::Migration),
+            Box::new(m20260917_000003_create_province_table::Migration),
+            Box::new(m20260917_000004_create_city_table::Migration),
+            Box::new(m20260917_000005_create_table_category::Migration),
+            Box::new(m20260917_000006_create_table_product::Migration),
+            Box::new(m20260917_000007_create_table_product_category::Migration),
+            Box::new(m20260917_000008_create_table_catalog_attribute::Migration),
+            Box::new(m20260917_000009_create_table_catalog_attribute_value::Migration),
+            Box::new(m20260917_000010_create_table_product_attribute::Migration),
+            Box::new(m20260917_000011_create_table_sku::Migration),
+            Box::new(m20260917_000012_create_table_sku_attribute_value::Migration),
+            Box::new(m20260917_000013_create_table_sku_stock::Migration),
+            Box::new(m20260917_000014_create_table_product_image::Migration),
         ]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    #[test]
+    fn migrations_are_registered_once_in_order() {
+        let migrations = Migrator::migrations();
+        let names: Vec<&str> = migrations
+            .iter()
+            .map(|migration| migration.name())
+            .collect();
+        let unique: HashSet<&str> = names.iter().copied().collect();
+
+        assert_eq!(names.len(), 14);
+        assert_eq!(unique.len(), names.len());
+        assert!(names.windows(2).all(|pair| pair[0] < pair[1]));
+        assert_eq!(
+            names.last().copied(),
+            Some("m20260917_000014_create_table_product_image")
+        );
     }
 }

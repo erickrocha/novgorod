@@ -32,7 +32,10 @@ impl ProvinceUseCase {
     }
 
     pub async fn find_by_uuid(&self, uuid: String) -> Result<Province, BusinessError> {
-        log::info!("[ProvinceUseCase::find_by_uuid] Executing for uuid: {}",uuid);
+        log::info!(
+            "[ProvinceUseCase::find_by_uuid] Executing for uuid: {}",
+            uuid
+        );
         let model = self.gateway.find_by_uuid(uuid.clone()).await.map_err(|e| {
             let msg = format!("Database error: {}", e);
             log::error!("[ProvinceUseCase::find_by_uuid] {}", msg);
@@ -49,8 +52,14 @@ impl ProvinceUseCase {
         }
     }
 
-    pub async fn find_by_country_code(&self,country_code: String) -> Result<Vec<Province>, BusinessError> {
-        log::info!("[ProvinceUseCase::find_by_country_code] Executing for country_code: {}",country_code);
+    pub async fn find_by_country_code(
+        &self,
+        country_code: String,
+    ) -> Result<Vec<Province>, BusinessError> {
+        log::info!(
+            "[ProvinceUseCase::find_by_country_code] Executing for country_code: {}",
+            country_code
+        );
         let models = self
             .gateway
             .find_by_country_code(&country_code)

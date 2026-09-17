@@ -1,6 +1,6 @@
+use serde::{Deserialize, Serialize};
 use std::fmt::{Display, Formatter};
 use std::str::FromStr;
-use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 #[derive(Clone, Eq, PartialEq, Debug, Default, Serialize, Deserialize, ToSchema)]

@@ -1,8 +1,8 @@
 //! `SeaORM` Entity
 
+use sea_orm::Set;
 use sea_orm::entity::prelude::*;
 use sea_orm::prelude::async_trait::async_trait;
-use sea_orm::Set;
 
 #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
 #[sea_orm(table_name = "city")]
@@ -39,10 +39,9 @@ impl ActiveModelBehavior for ActiveModel {
     where
         C: ConnectionTrait,
     {
-        if insert
-            && self.uuid.is_not_set() {
-                self.uuid = Set(Uuid::new_v4().as_bytes().to_vec());
-            }
+        if insert && self.uuid.is_not_set() {
+            self.uuid = Set(Uuid::new_v4().as_bytes().to_vec());
+        }
         Ok(self)
     }
 }

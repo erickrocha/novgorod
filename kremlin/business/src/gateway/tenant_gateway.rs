@@ -5,7 +5,9 @@ use crate::domain::tenant::{Tenant, TenantEntityMapper};
 use entity::prelude::TenantEntity as TenantQuery;
 use entity::tenant_entity;
 use sea_orm::prelude::async_trait::async_trait;
-use sea_orm::{ActiveModelTrait, ColumnTrait, DbConn, DbErr, DeleteResult, EntityTrait, QueryFilter};
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, DbConn, DbErr, DeleteResult, EntityTrait, QueryFilter,
+};
 
 pub struct TenantGateway {
     db: DbConn,
@@ -25,9 +27,7 @@ impl Gateway<Tenant, tenant_entity::Model, tenant_entity::ActiveModel> for Tenan
     }
 
     async fn delete_by_id(&self, id: i64) -> Result<DeleteResult, DbErr> {
-        TenantQuery::delete_by_id(id)
-            .exec(&self.db)
-            .await
+        TenantQuery::delete_by_id(id).exec(&self.db).await
     }
 
     async fn find_by_id(&self, id: i64) -> Result<Option<tenant_entity::Model>, DbErr> {
@@ -48,4 +48,3 @@ impl Gateway<Tenant, tenant_entity::Model, tenant_entity::ActiveModel> for Tenan
         TenantQuery::find().all(&self.db).await
     }
 }
-

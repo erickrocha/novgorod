@@ -1,15 +1,13 @@
 use std::error::Error;
 use std::fmt::{Debug, Display, Formatter};
 
-pub struct BusinessError{
+pub struct BusinessError {
     pub message: String,
 }
 
 impl BusinessError {
     pub fn new(message: String) -> Self {
-        BusinessError {
-            message
-        }
+        BusinessError { message }
     }
 }
 

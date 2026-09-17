@@ -1,0 +1,100 @@
+use crate::{
+    m20260917_000009_create_table_catalog_attribute_value::CatalogAttributeValue,
+    m20260917_000010_create_table_product_attribute::ProductAttribute,
+    m20260917_000011_create_table_sku::Sku,
+};
+use sea_orm_migration::{prelude::*, schema::*};
+
+#[derive(DeriveMigrationName)]
+pub struct Migration;
+#[async_trait::async_trait]
+impl MigrationTrait for Migration {
+    async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+        manager
+            .create_table(
+                Table::create()
+                    .table(SkuAttributeValue::Table)
+                    .if_not_exists()
+                    .col(pk_auto(SkuAttributeValue::Id))
+                    .col(uuid_uniq(SkuAttributeValue::Uuid))
+                    .col(integer(SkuAttributeValue::TenantId))
+                    .col(integer(SkuAttributeValue::ProductId))
+                    .col(integer(SkuAttributeValue::SkuId))
+                    .col(integer(SkuAttributeValue::ProductAttributeId))
+                    .col(integer(SkuAttributeValue::AttributeId))
+                    .col(integer(SkuAttributeValue::AttributeValueId))
+                    .col(date_time(SkuAttributeValue::CreatedAt))
+                    .col(string_len_null(SkuAttributeValue::CreatedBy, 255))
+                    .index(
+                        Index::create()
+                            .name("uq_sku_attribute_value_one_per_attribute")
+                            .col(SkuAttributeValue::TenantId)
+                            .col(SkuAttributeValue::SkuId)
+                            .col(SkuAttributeValue::AttributeId)
+                            .unique(),
+                    )
+                    .foreign_key(
+                        ForeignKey::create()
+                            .name("fk_sku_attribute_value_sku")
+                            .from_tbl(SkuAttributeValue::Table)
+                            .from_col(SkuAttributeValue::TenantId)
+                            .from_col(SkuAttributeValue::SkuId)
+                            .from_col(SkuAttributeValue::ProductId)
+                            .to_tbl(Sku::Table)
+                            .to_col(Sku::TenantId)
+                            .to_col(Sku::Id)
+                            .to_col(Sku::ProductId)
+                            .on_delete(ForeignKeyAction::Cascade),
+                    )
+                    .foreign_key(
+                        ForeignKey::create()
+                            .name("fk_sku_attribute_value_product_attribute")
+                            .from_tbl(SkuAttributeValue::Table)
+                            .from_col(SkuAttributeValue::TenantId)
+                            .from_col(SkuAttributeValue::ProductAttributeId)
+                            .from_col(SkuAttributeValue::AttributeId)
+                            .from_col(SkuAttributeValue::ProductId)
+                            .to_tbl(ProductAttribute::Table)
+                            .to_col(ProductAttribute::TenantId)
+                            .to_col(ProductAttribute::Id)
+                            .to_col(ProductAttribute::AttributeId)
+                            .to_col(ProductAttribute::ProductId)
+                            .on_delete(ForeignKeyAction::Restrict),
+                    )
+                    .foreign_key(
+                        ForeignKey::create()
+                            .name("fk_sku_attribute_value_value")
+                            .from_tbl(SkuAttributeValue::Table)
+                            .from_col(SkuAttributeValue::TenantId)
+                            .from_col(SkuAttributeValue::AttributeValueId)
+                            .from_col(SkuAttributeValue::AttributeId)
+                            .to_tbl(CatalogAttributeValue::Table)
+                            .to_col(CatalogAttributeValue::TenantId)
+                            .to_col(CatalogAttributeValue::Id)
+                            .to_col(CatalogAttributeValue::AttributeId)
+                            .on_delete(ForeignKeyAction::Restrict),
+                    )
+                    .to_owned(),
+            )
+            .await
+    }
+    async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+        manager
+            .drop_table(Table::drop().table(SkuAttributeValue::Table).to_owned())
+            .await
+    }
+}
+#[derive(DeriveIden)]
+pub enum SkuAttributeValue {
+    Table,
+    Id,
+    Uuid,
+    TenantId,
+    ProductId,
+    SkuId,
+    ProductAttributeId,
+    AttributeId,
+    AttributeValueId,
+    CreatedAt,
+    CreatedBy,
+}

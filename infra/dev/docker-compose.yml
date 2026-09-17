@@ -1,7 +1,7 @@
 services:
   postgres:
     image: postgis/postgis:18-3.6
-    container_name: commerce_dev_postgres
+    container_name: novgorod_postgres
     environment:
       - POSTGRES_DB=${DATABASE_NAME}
       - POSTGRES_PASSWORD=${DATABASE_PASSWORD}
@@ -9,7 +9,7 @@ services:
     ports:
       - '5432:5432'
     networks:
-      - workout-dev-network
+      - novgorod-dev-network
     volumes:
       - postgres_data:/var/lib/postgresql
     healthcheck:
@@ -20,3 +20,7 @@ services:
 
 volumes:
   postgres_data:
+
+networks:
+  novgorod-dev-network:
+    driver: bridge

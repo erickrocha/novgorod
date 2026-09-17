@@ -124,6 +124,29 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
+name = "application"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "business",
+ "chrono",
+ "dotenvy",
+ "entity",
+ "fluent-templates",
+ "log",
+ "migration",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tower-http",
+ "tracing-subscriber",
+ "unic-langid",
+ "utoipa",
+ "utoipa-swagger-ui",
+]
+
+[[package]]
 name = "arbitrary"
 version = "1.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2151,14 +2174,6 @@ dependencies = [
  "signature",
  "simple_asn1",
  "zeroize",
-]
-
-[[package]]
-name = "kremlin"
-version = "0.1.0"
-dependencies = [
- "business",
- "web",
 ]
 
 [[package]]
@@ -4477,29 +4492,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "81941cd78d0c92026c33e5e01312845a4cb1e9af3407f9134b100dd03144103e"
 dependencies = [
  "unicode-ident",
-]
-
-[[package]]
-name = "web"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum",
- "business",
- "chrono",
- "dotenvy",
- "entity",
- "fluent-templates",
- "log",
- "migration",
- "serde",
- "serde_json",
- "tokio",
- "tower-http",
- "tracing-subscriber",
- "unic-langid",
- "utoipa",
- "utoipa-swagger-ui",
 ]
 
 [[package]]

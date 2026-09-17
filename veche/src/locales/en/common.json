@@ -9,6 +9,9 @@
     "filter": "Filter",
     "seeAll": "See all"
   },
+  "signin": {
+    "emailPlaceholder": "john.smith@mail.com"
+  },
   "sidebar": {
     "groups": {
       "menu": "Menu",

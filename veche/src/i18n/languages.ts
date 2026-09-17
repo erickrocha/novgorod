@@ -1,4 +1,4 @@
-import { UsFlagIcon } from "@/icons";
+  import { UsFlagIcon } from "@/icons";
 import type React from "react";
 
 export const locales = ["en"] as const;
