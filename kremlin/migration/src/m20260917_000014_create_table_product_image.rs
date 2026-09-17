@@ -9,11 +9,11 @@ pub struct Migration;
 impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         manager.create_table(Table::create().table(ProductImage::Table).if_not_exists()
-            .col(pk_auto(ProductImage::Id))
+            .col(pk_auto(ProductImage::Id).big_integer())
             .col(binary_len_uniq(ProductImage::Uuid, 16))
-            .col(integer(ProductImage::TenantId))
-            .col(integer(ProductImage::ProductId))
-            .col(integer_null(ProductImage::SkuId))
+            .col(big_integer(ProductImage::TenantId))
+            .col(big_integer(ProductImage::ProductId))
+            .col(big_integer_null(ProductImage::SkuId))
             .col(string_len_null(ProductImage::AltText, 255))
             .col(integer(ProductImage::SortOrder).default(0).check(Expr::cust("sort_order >= 0")))
             .col(boolean(ProductImage::IsPrimary).default(false).check(Expr::cust("NOT is_primary OR sku_id IS NULL")))

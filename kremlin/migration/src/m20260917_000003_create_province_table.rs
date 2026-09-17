@@ -11,7 +11,7 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(Province::Table)
                     .if_not_exists()
-                    .col(pk_auto(Province::Id).integer())
+                    .col(pk_auto(Province::Id).big_integer())
                     .col(uuid_uniq(Province::Uuid))
                     .col(string_len(Province::Acronym, 10).not_null())
                     .col(string_len(Province::Name, 255).not_null())

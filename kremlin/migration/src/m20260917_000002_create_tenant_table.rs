@@ -11,7 +11,7 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(Tenant::Table)
                     .if_not_exists()
-                    .col(pk_auto(Tenant::Id).integer())
+                    .col(pk_auto(Tenant::Id).big_integer())
                     .col(uuid_uniq(Tenant::Uuid))
                     .col(string_len(Tenant::BusinessName, 500).not_null())
                     .col(string_len(Tenant::CompanyName, 500).null())

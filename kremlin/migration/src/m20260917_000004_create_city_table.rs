@@ -11,9 +11,9 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(City::Table)
                     .if_not_exists()
-                    .col(pk_auto(City::Id).integer())
+                    .col(pk_auto(City::Id).big_integer())
                     .col(uuid_uniq(City::Uuid))
-                    .col(integer(City::ProvinceId).not_null())
+                    .col(big_integer(City::ProvinceId).not_null())
                     .foreign_key(
                         ForeignKey::create()
                             .name("fk_city_province")

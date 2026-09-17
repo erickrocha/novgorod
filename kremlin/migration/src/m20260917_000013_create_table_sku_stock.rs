@@ -11,10 +11,10 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(SkuStock::Table)
                     .if_not_exists()
-                    .col(pk_auto(SkuStock::Id))
+                    .col(pk_auto(SkuStock::Id).big_integer())
                     .col(uuid_uniq(SkuStock::Uuid))
-                    .col(integer(SkuStock::TenantId))
-                    .col(integer(SkuStock::SkuId))
+                    .col(big_integer(SkuStock::TenantId))
+                    .col(big_integer(SkuStock::SkuId))
                     .col(
                         integer(SkuStock::Quantity)
                             .default(0)

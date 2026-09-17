@@ -12,7 +12,7 @@ use crate::routes::user_routes::user_routes;
 use axum::Router;
 use axum::http::{Method, header};
 use axum::routing::get;
-use business::sea_orm::{ConnectionTrait, Database, DatabaseConnection, Statement};
+use business::sea_orm::DatabaseConnection;
 use migration::{Migrator, MigratorTrait};
 use std::env;
 use std::sync::Arc;
@@ -23,6 +23,20 @@ use utoipa::{Modify, OpenApi};
 use utoipa_swagger_ui::SwaggerUi;
 
 struct SecurityAddon;
+
+fn migration_lock_name() -> String {
+    env::var("MIGRATION_LOCK_NAME").unwrap_or_else(|_| "novgorod_migrations".to_owned())
+}
+
+fn migration_lock_id(name: &str) -> i64 {
+    // Stable FNV-1a hash: PostgreSQL advisory locks use a numeric key.
+    let mut hash = 0xcbf29ce484222325u64;
+    for byte in name.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash as i64
+}
 
 impl Modify for SecurityAddon {
     fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
@@ -113,33 +127,10 @@ async fn start() -> anyhow::Result<()> {
     let port = env::var("PORT").expect("PORT is not set in .env file");
     let server_url = format!("{host}:{port}");
 
-    let connection = Database::connect(&db_url)
+    let connection = business::commons::db_pool::connect(&db_url, "workout-application")
         .await
         .expect("Failed to connect to database");
-
-    // Multiple instances can boot concurrently (App Runner scale-out, rolling deploys).
-    // Serialize migrations with a DB-level advisory lock so they don't race on the same DDL.
-    let backend = connection.get_database_backend();
-    let lock_row = connection
-        .query_one_raw(Statement::from_string(
-            backend,
-            "SELECT GET_LOCK('hermes_migrations', 30) AS acquired".to_owned(),
-        ))
-        .await?
-        .expect("GET_LOCK query returned no rows");
-    let acquired: i64 = lock_row.try_get("", "acquired").unwrap_or(0);
-    if acquired != 1 {
-        anyhow::bail!("Could not acquire migration lock within timeout");
-    }
-
-    let migration_result = Migrator::up(&connection, None).await;
-
-    connection
-        .execute_unprepared("SELECT RELEASE_LOCK('socialfit_migrations')")
-        .await
-        .ok();
-
-    migration_result?;
+    Migrator::up(&connection, None).await?;
 
     business::use_cases::user_use_case::UserUseCase::seed_sysadmin(&connection).await;
 
