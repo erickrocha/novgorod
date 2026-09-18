@@ -105,3 +105,19 @@ export type UserInput = Pick<User, "email"> &
       | "updatedBy"
     >
   >;
+
+export interface PagedResult<T> {
+  items: T[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export interface PageQueryParams {
+  page?: number;
+  pageSize?: number;
+  q?: string;
+  sortBy?: string;
+  sortDir?: "asc" | "desc";
+  [key: string]: unknown;
+}

@@ -1,9 +1,14 @@
 import { api } from "./api";
-import type { User, UserInput } from "./types";
+import type { PagedResult, PageQueryParams, User, UserInput } from "./types";
 
 export const userService = {
   async getUsers(): Promise<User[]> {
     const response = await api.get<User[]>("/user");
+    return response.data;
+  },
+
+  async getUsersPaged(params?: PageQueryParams): Promise<PagedResult<User>> {
+    const response = await api.get<PagedResult<User>>("/user/paged", { params });
     return response.data;
   },
 

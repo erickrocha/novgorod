@@ -5,11 +5,12 @@ use crate::endpoints::json::city_json::CityJson;
 use crate::endpoints::json::error_response_json::{
     ForbiddenErrorJson, InternalServerErrorJson, NotFoundErrorJson, UnauthorizedErrorJson,
 };
+use crate::commons::pagination::PagedResponse;
 use crate::infrastructure::mapper::{CityMapper, Mapper};
 use axum::Json;
 use axum::extract::Extension;
 use axum::extract::Multipart;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use business::domain::city::City;
 use business::domain::enums::Role;
@@ -37,6 +38,123 @@ pub async fn list_all(state: State<AppState>) -> HttpResponse<Json<Vec<CityJson>
         Ok(list) => Ok(Json(CityMapper::json_vec(list))),
         Err(_) => Ok(Json(Vec::new())),
     }
+}
+
+#[derive(Debug, Clone, serde::Deserialize, utoipa::IntoParams)]
+#[serde(rename_all = "camelCase")]
+pub struct CityPageQuery {
+    pub page: Option<u64>,
+    #[serde(alias = "page_size")]
+    pub page_size: Option<u64>,
+    pub q: Option<String>,
+    #[serde(alias = "sort_by")]
+    pub sort_by: Option<String>,
+    #[serde(alias = "sort_dir")]
+    pub sort_dir: Option<String>,
+    #[serde(alias = "province_id")]
+    pub province_id: Option<i64>,
+}
+
+impl CityPageQuery {
+    pub fn to_page_query(&self) -> crate::commons::pagination::PageQuery {
+        crate::commons::pagination::PageQuery {
+            page: self.page,
+            page_size: self.page_size,
+            q: self.q.clone(),
+            sort_by: self.sort_by.clone(),
+            sort_dir: self.sort_dir.clone(),
+        }
+    }
+}
+
+const CITY_SORT_FIELDS: &[&str] = &[
+    "id",
+    "name",
+    "provinceId",
+    "province_id",
+    "ibgeCode",
+    "ibge_code",
+];
+
+#[utoipa::path(
+    get,
+    tag = "City",
+    path = "/cities/paged",
+    params(CityPageQuery),
+    responses(
+        (status = 200, description = "Paged cities", body = PagedResponse<CityJson>),
+        (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
+        (status = 403, description = "Forbidden", body = ForbiddenErrorJson),
+        (status = 500, description = "Internal server error", body = InternalServerErrorJson),
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn paged(
+    state: State<AppState>,
+    Query(params): Query<CityPageQuery>,
+) -> HttpResponse<Json<crate::commons::pagination::PagedResponse<CityJson>>> {
+    use business::commons::entity_mapper::EntityMapper;
+    use business::domain::city::CityEntityMapper;
+    use business::sea_orm::{
+        ColumnTrait, Condition, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect,
+    };
+    use entity::city_entity;
+
+    let norm = crate::commons::pagination::NormalizedPagination::new(
+        &params.to_page_query(),
+        CITY_SORT_FIELDS,
+        "name",
+    );
+
+    let mut query = city_entity::Entity::find();
+
+    if let Some(pid) = params.province_id {
+        query = query.filter(city_entity::Column::ProvinceId.eq(pid));
+    }
+
+    if let Some(ref q) = norm.q {
+        let pattern = format!("%{}%", q);
+        query = query.filter(
+            Condition::any()
+                .add(city_entity::Column::Name.like(&pattern))
+                .add(city_entity::Column::IbgeCode.like(&pattern)),
+        );
+    }
+
+    let sort_col = match norm.sort_by.to_ascii_lowercase().as_str() {
+        "provinceid" | "province_id" => city_entity::Column::ProvinceId,
+        "ibgecode" | "ibge_code" => city_entity::Column::IbgeCode,
+        "id" => city_entity::Column::Id,
+        _ => city_entity::Column::Name,
+    };
+
+    query = if norm.sort_dir.is_descending() {
+        query
+            .order_by_desc(sort_col)
+            .order_by_desc(city_entity::Column::Id)
+    } else {
+        query
+            .order_by_asc(sort_col)
+            .order_by_asc(city_entity::Column::Id)
+    };
+
+    let total = query.clone().count(state.conn.as_ref()).await.unwrap_or(0);
+    let models = query
+        .offset(norm.offset)
+        .limit(norm.page_size)
+        .all(state.conn.as_ref())
+        .await
+        .unwrap_or_default();
+
+    let domain_cities = CityEntityMapper::from_models(models);
+    let items = CityMapper::json_vec(domain_cities);
+
+    Ok(Json(crate::commons::pagination::PagedResponse::new(
+        items,
+        total,
+        norm.page,
+        norm.page_size,
+    )))
 }
 
 #[utoipa::path(

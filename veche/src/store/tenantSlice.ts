@@ -7,6 +7,8 @@ import {
 import { getApiErrorMessage } from "@/services/api";
 import { tenantService } from "@/services/tenantService";
 import type {
+  PagedResult,
+  PageQueryParams,
   Tenant,
   TenantInput,
   TenantPlan,
@@ -16,6 +18,9 @@ import type {
 interface TenantState {
   activeTenant: Tenant | null;
   tenantsList: Tenant[];
+  total: number;
+  page: number;
+  pageSize: number;
   loading: boolean;
   error: string | null;
 }
@@ -34,11 +39,15 @@ interface AddTenantPlanArgs {
   planData: TenantPlanInput;
 }
 
-export const fetchTenants = createAsyncThunk<Tenant[], void, TenantThunkConfig>(
+export const fetchTenants = createAsyncThunk<
+  PagedResult<Tenant>,
+  PageQueryParams | void,
+  TenantThunkConfig
+>(
   "tenant/fetchTenants",
-  async (_, { rejectWithValue }) => {
+  async (params, { rejectWithValue }) => {
     try {
-      return await tenantService.getTenants();
+      return await tenantService.getTenantsPaged(params || { page: 1, pageSize: 25 });
     } catch (error: unknown) {
       return rejectWithValue(
         getApiErrorMessage(error, "Falha ao buscar tenants"),
@@ -120,6 +129,9 @@ export const addTenantPlan = createAsyncThunk<
 const initialState: TenantState = {
   activeTenant: null,
   tenantsList: [],
+  total: 0,
+  page: 1,
+  pageSize: 25,
   loading: false,
   error: null,
 };
@@ -140,7 +152,10 @@ const tenantSlice = createSlice({
       })
       .addCase(fetchTenants.fulfilled, (state, action) => {
         state.loading = false;
-        state.tenantsList = action.payload;
+        state.tenantsList = action.payload.items;
+        state.total = action.payload.total;
+        state.page = action.payload.page;
+        state.pageSize = action.payload.pageSize;
         if (
           state.activeTenant &&
           !state.tenantsList.some(

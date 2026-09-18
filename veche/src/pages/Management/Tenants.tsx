@@ -1,7 +1,7 @@
-import { useEffect, useMemo } from "react";
-import { Link } from "react-router-dom";
+import { useEffect } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { Plus, RefreshCw } from "lucide-react";
-import type { ColumnDef } from "@tanstack/react-table";
+import type { ColumnDef, PaginationState, SortingState } from "@tanstack/react-table";
 import PageBreadcrumb from "@/components/common/PageBreadCrumb";
 import PageMeta from "@/components/common/PageMeta";
 import ComponentCard from "@/components/common/ComponentCard";
@@ -13,18 +13,52 @@ import { ROLES } from "@/utils/enums";
 import type { Tenant } from "@/services/types";
 
 export default function Tenants() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const dispatch = useAppDispatch();
-  const { tenantsList, loading, error } = useAppSelector((s) => s.tenant);
+  const { tenantsList, total, loading, error } = useAppSelector((s) => s.tenant);
   const { user } = useAppSelector((s) => s.auth);
   const sysAdmin = user?.role === ROLES.SYS_ADMIN;
-  const ownId = user?.tenantId ?? user?.tenant_id;
-  const tenants = useMemo(
-    () => (sysAdmin ? tenantsList : tenantsList.filter((t) => t.id === ownId)),
-    [ownId, sysAdmin, tenantsList],
-  );
+
+  const page = Number(searchParams.get("page") || "1");
+  const pageSize = Number(searchParams.get("pageSize") || "25");
+  const q = searchParams.get("q") || "";
+  const sortBy = searchParams.get("sortBy") || "id";
+  const sortDir = (searchParams.get("sortDir") as "asc" | "desc") || "asc";
+
   useEffect(() => {
-    dispatch(fetchTenants());
-  }, [dispatch]);
+    dispatch(fetchTenants({ page, pageSize, q, sortBy, sortDir }));
+  }, [dispatch, page, pageSize, q, sortBy, sortDir]);
+
+  const onPaginationChange = (next: PaginationState) => {
+    const params = new URLSearchParams(searchParams);
+    params.set("page", String(next.pageIndex + 1));
+    params.set("pageSize", String(next.pageSize));
+    setSearchParams(params);
+  };
+
+  const onSortingChange = (next: SortingState) => {
+    const params = new URLSearchParams(searchParams);
+    if (next.length > 0) {
+      params.set("sortBy", next[0].id);
+      params.set("sortDir", next[0].desc ? "desc" : "asc");
+    } else {
+      params.delete("sortBy");
+      params.delete("sortDir");
+    }
+    params.set("page", "1");
+    setSearchParams(params);
+  };
+
+  const onGlobalFilterChange = (val: string) => {
+    const params = new URLSearchParams(searchParams);
+    if (val) {
+      params.set("q", val);
+    } else {
+      params.delete("q");
+    }
+    params.set("page", "1");
+    setSearchParams(params);
+  };
   const columns: ColumnDef<Tenant, unknown>[] = [
     {
       header: "Business name",
@@ -80,7 +114,7 @@ export default function Tenants() {
           <Button
             variant="outline"
             startIcon={<RefreshCw size={16} />}
-            onClick={() => dispatch(fetchTenants())}
+            onClick={() => dispatch(fetchTenants({ page, pageSize, q, sortBy, sortDir }))}
           >
             Refresh
           </Button>
@@ -91,12 +125,22 @@ export default function Tenants() {
           )}
         </div>
         <DataGrid
-          data={tenants}
+          data={tenantsList}
           columns={columns}
           getRowId={(row, index) => String(row.id ?? row.uuid ?? index)}
-          loading={loading && tenants.length === 0}
+          loading={loading && tenantsList.length === 0}
           error={error}
           emptyMessage="No tenants found."
+          manualPagination
+          manualSorting
+          manualFiltering
+          totalRows={total}
+          pagination={{ pageIndex: Math.max(0, page - 1), pageSize }}
+          onPaginationChange={onPaginationChange}
+          sorting={[{ id: sortBy, desc: sortDir === "desc" }]}
+          onSortingChange={onSortingChange}
+          globalFilter={q}
+          onGlobalFilterChange={onGlobalFilterChange}
         />
       </ComponentCard>
     </>

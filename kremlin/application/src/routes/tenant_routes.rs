@@ -1,6 +1,6 @@
 use crate::AppState;
 use crate::authentication::authentication_middleware::authentication;
-use crate::endpoints::tenant_endpoint::{add, get_by_id, get_by_uuid, list_all, update};
+use crate::endpoints::tenant_endpoint::{add, get_by_id, get_by_uuid, list_all, paged, update};
 use axum::routing::{get, post, put};
 use axum::{Router, middleware};
 
@@ -8,6 +8,7 @@ pub fn tenant_routes(state: AppState) -> Router<AppState> {
     Router::new()
         .route("/", post(add))
         .route("/", get(list_all))
+        .route("/paged", get(paged))
         .route("/{id}", get(get_by_id))
         .route("/uuid/{uuid}", get(get_by_uuid))
         .route("/{id}", put(update))

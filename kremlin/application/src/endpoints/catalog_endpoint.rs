@@ -1,19 +1,23 @@
 use crate::AppState;
 use crate::commons::exception_response::{ExceptionResponse, HttpResponse};
 use crate::commons::i18n::{ErrorKey, Locale};
+use crate::commons::pagination::{NormalizedPagination, PageQuery, PagedResponse};
 use crate::endpoints::json::catalog_json::*;
 use axum::http::StatusCode;
 use axum::{
     Json,
-    extract::{Extension, Path, State},
+    extract::{Extension, Path, Query, State},
 };
 use business::domain::enums::Role;
 use business::domain::user::User;
 use business::sea_orm::{
-    ActiveModelTrait, ColumnTrait, EntityTrait, IntoActiveModel, NotSet, QueryFilter, QueryOrder,
-    Set,
+    ActiveModelTrait, ColumnTrait, Condition, EntityTrait, IntoActiveModel, NotSet,
+    PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Set,
 };
-use entity::{category_entity, product_entity, sku_entity};
+use entity::{
+    catalog_attribute_entity, catalog_attribute_value_entity, category_entity,
+    product_attribute_entity, product_entity, sku_entity,
+};
 
 fn tenant_for_write(user: &User, requested: Option<i64>) -> Option<i64> {
     match user.role {
@@ -211,6 +215,770 @@ pub async fn skus(
             })
             .collect(),
     )
+}
+
+#[derive(Debug, Clone, serde::Deserialize, utoipa::IntoParams)]
+#[serde(rename_all = "camelCase")]
+pub struct CategoryPageQuery {
+    pub page: Option<u64>,
+    #[serde(alias = "page_size")]
+    pub page_size: Option<u64>,
+    pub q: Option<String>,
+    #[serde(alias = "sort_by")]
+    pub sort_by: Option<String>,
+    #[serde(alias = "sort_dir")]
+    pub sort_dir: Option<String>,
+    pub active: Option<bool>,
+    #[serde(alias = "parent_id")]
+    pub parent_id: Option<i64>,
+    #[serde(alias = "tenant_id")]
+    pub tenant_id: Option<i64>,
+}
+
+impl CategoryPageQuery {
+    pub fn to_page_query(&self) -> PageQuery {
+        PageQuery {
+            page: self.page,
+            page_size: self.page_size,
+            q: self.q.clone(),
+            sort_by: self.sort_by.clone(),
+            sort_dir: self.sort_dir.clone(),
+        }
+    }
+}
+
+const CATEGORY_SORT_FIELDS: &[&str] = &[
+    "id",
+    "name",
+    "slug",
+    "active",
+    "createdAt",
+    "created_at",
+];
+
+#[utoipa::path(
+    get,
+    path = "/categories/paged",
+    tag = "Catalog",
+    params(CategoryPageQuery),
+    responses(
+        (status = 200, description = "Paged categories", body = PagedResponse<CategoryJson>)
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn categories_paged(
+    State(state): State<AppState>,
+    Extension(current_user): Extension<User>,
+    Query(params): Query<CategoryPageQuery>,
+) -> Json<PagedResponse<CategoryJson>> {
+    let norm = NormalizedPagination::new(&params.to_page_query(), CATEGORY_SORT_FIELDS, "name");
+    let mut query = category_entity::Entity::find();
+
+    if current_user.role != Role::SysAdmin {
+        if let Some(id) = current_user.tenant_id {
+            query = query.filter(category_entity::Column::TenantId.eq(id));
+        } else {
+            return Json(PagedResponse::empty(norm.page, norm.page_size));
+        }
+    } else if let Some(tid) = params.tenant_id {
+        query = query.filter(category_entity::Column::TenantId.eq(tid));
+    }
+
+    if let Some(active) = params.active {
+        query = query.filter(category_entity::Column::Active.eq(active));
+    }
+
+    if let Some(parent_id) = params.parent_id {
+        query = query.filter(category_entity::Column::ParentId.eq(parent_id));
+    }
+
+    if let Some(ref q) = norm.q {
+        let pattern = format!("%{}%", q);
+        query = query.filter(
+            Condition::any()
+                .add(category_entity::Column::Name.like(&pattern))
+                .add(category_entity::Column::Slug.like(&pattern)),
+        );
+    }
+
+    let sort_col = match norm.sort_by.to_ascii_lowercase().as_str() {
+        "slug" => category_entity::Column::Slug,
+        "active" => category_entity::Column::Active,
+        "createdat" | "created_at" => category_entity::Column::CreatedAt,
+        "id" => category_entity::Column::Id,
+        _ => category_entity::Column::Name,
+    };
+
+    query = if norm.sort_dir.is_descending() {
+        query
+            .order_by_desc(sort_col)
+            .order_by_desc(category_entity::Column::Id)
+    } else {
+        query
+            .order_by_asc(sort_col)
+            .order_by_asc(category_entity::Column::Id)
+    };
+
+    let total = query.clone().count(state.conn.as_ref()).await.unwrap_or(0);
+    let rows = query
+        .offset(norm.offset)
+        .limit(norm.page_size)
+        .all(state.conn.as_ref())
+        .await
+        .unwrap_or_default();
+
+    let items = rows
+        .into_iter()
+        .map(|x| CategoryJson {
+            id: Some(x.id),
+            uuid: x.uuid.to_string(),
+            tenant_id: x.tenant_id,
+            name: x.name,
+            slug: x.slug,
+            parent_id: x.parent_id,
+            active: x.active,
+        })
+        .collect();
+
+    Json(PagedResponse::new(items, total, norm.page, norm.page_size))
+}
+
+#[derive(Debug, Clone, serde::Deserialize, utoipa::IntoParams)]
+#[serde(rename_all = "camelCase")]
+pub struct CatalogAttributePageQuery {
+    pub page: Option<u64>,
+    #[serde(alias = "page_size")]
+    pub page_size: Option<u64>,
+    pub q: Option<String>,
+    #[serde(alias = "sort_by")]
+    pub sort_by: Option<String>,
+    #[serde(alias = "sort_dir")]
+    pub sort_dir: Option<String>,
+    #[serde(alias = "tenant_id")]
+    pub tenant_id: Option<i64>,
+}
+
+impl CatalogAttributePageQuery {
+    pub fn to_page_query(&self) -> PageQuery {
+        PageQuery {
+            page: self.page,
+            page_size: self.page_size,
+            q: self.q.clone(),
+            sort_by: self.sort_by.clone(),
+            sort_dir: self.sort_dir.clone(),
+        }
+    }
+}
+
+const CATALOG_ATTRIBUTE_SORT_FIELDS: &[&str] = &[
+    "id",
+    "name",
+    "displayType",
+    "display_type",
+    "createdAt",
+    "created_at",
+];
+
+#[utoipa::path(
+    get,
+    path = "/catalog-attributes/paged",
+    tag = "Catalog",
+    params(CatalogAttributePageQuery),
+    responses(
+        (status = 200, description = "Paged catalog attributes", body = PagedResponse<CatalogAttributeJson>)
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn attributes_paged(
+    State(state): State<AppState>,
+    Extension(current_user): Extension<User>,
+    Query(params): Query<CatalogAttributePageQuery>,
+) -> Json<PagedResponse<CatalogAttributeJson>> {
+    let norm = NormalizedPagination::new(
+        &params.to_page_query(),
+        CATALOG_ATTRIBUTE_SORT_FIELDS,
+        "name",
+    );
+    let mut query = catalog_attribute_entity::Entity::find();
+
+    if current_user.role != Role::SysAdmin {
+        if let Some(id) = current_user.tenant_id {
+            query = query.filter(catalog_attribute_entity::Column::TenantId.eq(id));
+        } else {
+            return Json(PagedResponse::empty(norm.page, norm.page_size));
+        }
+    } else if let Some(tid) = params.tenant_id {
+        query = query.filter(catalog_attribute_entity::Column::TenantId.eq(tid));
+    }
+
+    if let Some(ref q) = norm.q {
+        let pattern = format!("%{}%", q);
+        query = query.filter(
+            Condition::any()
+                .add(catalog_attribute_entity::Column::Name.like(&pattern))
+                .add(catalog_attribute_entity::Column::DisplayType.like(&pattern)),
+        );
+    }
+
+    let sort_col = match norm.sort_by.to_ascii_lowercase().as_str() {
+        "displaytype" | "display_type" => catalog_attribute_entity::Column::DisplayType,
+        "createdat" | "created_at" => catalog_attribute_entity::Column::CreatedAt,
+        "id" => catalog_attribute_entity::Column::Id,
+        _ => catalog_attribute_entity::Column::Name,
+    };
+
+    query = if norm.sort_dir.is_descending() {
+        query
+            .order_by_desc(sort_col)
+            .order_by_desc(catalog_attribute_entity::Column::Id)
+    } else {
+        query
+            .order_by_asc(sort_col)
+            .order_by_asc(catalog_attribute_entity::Column::Id)
+    };
+
+    let total = query.clone().count(state.conn.as_ref()).await.unwrap_or(0);
+    let rows = query
+        .offset(norm.offset)
+        .limit(norm.page_size)
+        .all(state.conn.as_ref())
+        .await
+        .unwrap_or_default();
+
+    let items = rows
+        .into_iter()
+        .map(|x| CatalogAttributeJson {
+            id: x.id,
+            uuid: x.uuid.to_string(),
+            tenant_id: x.tenant_id,
+            name: x.name,
+            display_type: x.display_type,
+        })
+        .collect();
+
+    Json(PagedResponse::new(items, total, norm.page, norm.page_size))
+}
+
+#[derive(Debug, Clone, serde::Deserialize, utoipa::IntoParams)]
+#[serde(rename_all = "camelCase")]
+pub struct CatalogAttributeValuePageQuery {
+    pub page: Option<u64>,
+    #[serde(alias = "page_size")]
+    pub page_size: Option<u64>,
+    pub q: Option<String>,
+    #[serde(alias = "sort_by")]
+    pub sort_by: Option<String>,
+    #[serde(alias = "sort_dir")]
+    pub sort_dir: Option<String>,
+    #[serde(alias = "attribute_id")]
+    pub attribute_id: Option<i64>,
+    #[serde(alias = "tenant_id")]
+    pub tenant_id: Option<i64>,
+}
+
+impl CatalogAttributeValuePageQuery {
+    pub fn to_page_query(&self) -> PageQuery {
+        PageQuery {
+            page: self.page,
+            page_size: self.page_size,
+            q: self.q.clone(),
+            sort_by: self.sort_by.clone(),
+            sort_dir: self.sort_dir.clone(),
+        }
+    }
+}
+
+const CATALOG_ATTRIBUTE_VALUE_SORT_FIELDS: &[&str] = &[
+    "id",
+    "value",
+    "attributeId",
+    "attribute_id",
+    "createdAt",
+    "created_at",
+];
+
+#[utoipa::path(
+    get,
+    path = "/catalog-attribute-values/paged",
+    tag = "Catalog",
+    params(CatalogAttributeValuePageQuery),
+    responses(
+        (status = 200, description = "Paged catalog attribute values", body = PagedResponse<CatalogAttributeValueJson>)
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn attribute_values_paged(
+    State(state): State<AppState>,
+    Extension(current_user): Extension<User>,
+    Query(params): Query<CatalogAttributeValuePageQuery>,
+) -> Json<PagedResponse<CatalogAttributeValueJson>> {
+    let norm = NormalizedPagination::new(
+        &params.to_page_query(),
+        CATALOG_ATTRIBUTE_VALUE_SORT_FIELDS,
+        "id",
+    );
+    let mut query = catalog_attribute_value_entity::Entity::find();
+
+    if current_user.role != Role::SysAdmin {
+        if let Some(id) = current_user.tenant_id {
+            query = query.filter(catalog_attribute_value_entity::Column::TenantId.eq(id));
+        } else {
+            return Json(PagedResponse::empty(norm.page, norm.page_size));
+        }
+    } else if let Some(tid) = params.tenant_id {
+        query = query.filter(catalog_attribute_value_entity::Column::TenantId.eq(tid));
+    }
+
+    if let Some(aid) = params.attribute_id {
+        query = query.filter(catalog_attribute_value_entity::Column::AttributeId.eq(aid));
+    }
+
+    if let Some(ref q) = norm.q {
+        let pattern = format!("%{}%", q);
+        query = query.filter(catalog_attribute_value_entity::Column::Value.like(&pattern));
+    }
+
+    let sort_col = match norm.sort_by.to_ascii_lowercase().as_str() {
+        "value" => catalog_attribute_value_entity::Column::Value,
+        "attributeid" | "attribute_id" => catalog_attribute_value_entity::Column::AttributeId,
+        "createdat" | "created_at" => catalog_attribute_value_entity::Column::CreatedAt,
+        _ => catalog_attribute_value_entity::Column::Id,
+    };
+
+    query = if norm.sort_dir.is_descending() {
+        query
+            .order_by_desc(sort_col)
+            .order_by_desc(catalog_attribute_value_entity::Column::Id)
+    } else {
+        query
+            .order_by_asc(sort_col)
+            .order_by_asc(catalog_attribute_value_entity::Column::Id)
+    };
+
+    let total = query.clone().count(state.conn.as_ref()).await.unwrap_or(0);
+    let rows = query
+        .offset(norm.offset)
+        .limit(norm.page_size)
+        .all(state.conn.as_ref())
+        .await
+        .unwrap_or_default();
+
+    let items = rows
+        .into_iter()
+        .map(|x| CatalogAttributeValueJson {
+            id: x.id,
+            uuid: x.uuid.to_string(),
+            tenant_id: x.tenant_id,
+            attribute_id: x.attribute_id,
+            value: x.value,
+        })
+        .collect();
+
+    Json(PagedResponse::new(items, total, norm.page, norm.page_size))
+}
+
+#[derive(Debug, Clone, serde::Deserialize, utoipa::IntoParams)]
+#[serde(rename_all = "camelCase")]
+pub struct ProductPageQuery {
+    pub page: Option<u64>,
+    #[serde(alias = "page_size")]
+    pub page_size: Option<u64>,
+    pub q: Option<String>,
+    #[serde(alias = "sort_by")]
+    pub sort_by: Option<String>,
+    #[serde(alias = "sort_dir")]
+    pub sort_dir: Option<String>,
+    pub active: Option<bool>,
+    pub brand: Option<String>,
+    #[serde(alias = "tenant_id")]
+    pub tenant_id: Option<i64>,
+}
+
+impl ProductPageQuery {
+    pub fn to_page_query(&self) -> PageQuery {
+        PageQuery {
+            page: self.page,
+            page_size: self.page_size,
+            q: self.q.clone(),
+            sort_by: self.sort_by.clone(),
+            sort_dir: self.sort_dir.clone(),
+        }
+    }
+}
+
+const PRODUCT_SORT_FIELDS: &[&str] = &[
+    "id",
+    "name",
+    "slug",
+    "brand",
+    "active",
+    "createdAt",
+    "created_at",
+];
+
+#[utoipa::path(
+    get,
+    path = "/products/paged",
+    tag = "Catalog",
+    params(ProductPageQuery),
+    responses(
+        (status = 200, description = "Paged products", body = PagedResponse<ProductJson>)
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn products_paged(
+    State(state): State<AppState>,
+    Extension(current_user): Extension<User>,
+    Query(params): Query<ProductPageQuery>,
+) -> Json<PagedResponse<ProductJson>> {
+    let norm = NormalizedPagination::new(&params.to_page_query(), PRODUCT_SORT_FIELDS, "name");
+    let mut query = product_entity::Entity::find();
+
+    if current_user.role != Role::SysAdmin {
+        if let Some(id) = current_user.tenant_id {
+            query = query.filter(product_entity::Column::TenantId.eq(id));
+        } else {
+            return Json(PagedResponse::empty(norm.page, norm.page_size));
+        }
+    } else if let Some(tid) = params.tenant_id {
+        query = query.filter(product_entity::Column::TenantId.eq(tid));
+    }
+
+    if let Some(active) = params.active {
+        query = query.filter(product_entity::Column::Active.eq(active));
+    }
+
+    if let Some(ref brand) = params.brand {
+        if !brand.trim().is_empty() {
+            query = query.filter(product_entity::Column::Brand.eq(brand.trim()));
+        }
+    }
+
+    if let Some(ref q) = norm.q {
+        let pattern = format!("%{}%", q);
+        query = query.filter(
+            Condition::any()
+                .add(product_entity::Column::Name.like(&pattern))
+                .add(product_entity::Column::Slug.like(&pattern))
+                .add(product_entity::Column::Brand.like(&pattern))
+                .add(product_entity::Column::Description.like(&pattern))
+                .add(product_entity::Column::Ncm.like(&pattern)),
+        );
+    }
+
+    let sort_col = match norm.sort_by.to_ascii_lowercase().as_str() {
+        "slug" => product_entity::Column::Slug,
+        "brand" => product_entity::Column::Brand,
+        "active" => product_entity::Column::Active,
+        "createdat" | "created_at" => product_entity::Column::CreatedAt,
+        "id" => product_entity::Column::Id,
+        _ => product_entity::Column::Name,
+    };
+
+    query = if norm.sort_dir.is_descending() {
+        query
+            .order_by_desc(sort_col)
+            .order_by_desc(product_entity::Column::Id)
+    } else {
+        query
+            .order_by_asc(sort_col)
+            .order_by_asc(product_entity::Column::Id)
+    };
+
+    let total = query.clone().count(state.conn.as_ref()).await.unwrap_or(0);
+    let rows = query
+        .offset(norm.offset)
+        .limit(norm.page_size)
+        .all(state.conn.as_ref())
+        .await
+        .unwrap_or_default();
+
+    let items = rows
+        .into_iter()
+        .map(|x| ProductJson {
+            id: x.id,
+            uuid: x.uuid.to_string(),
+            tenant_id: x.tenant_id,
+            name: x.name,
+            slug: x.slug,
+            description: x.description,
+            brand: x.brand,
+            active: x.active,
+            ncm: x.ncm,
+            cest: x.cest,
+            origem_mercadoria: x.origem_mercadoria,
+        })
+        .collect();
+
+    Json(PagedResponse::new(items, total, norm.page, norm.page_size))
+}
+
+#[derive(Debug, Clone, serde::Deserialize, utoipa::IntoParams)]
+#[serde(rename_all = "camelCase")]
+pub struct ProductAttributePageQuery {
+    pub page: Option<u64>,
+    #[serde(alias = "page_size")]
+    pub page_size: Option<u64>,
+    pub q: Option<String>,
+    #[serde(alias = "sort_by")]
+    pub sort_by: Option<String>,
+    #[serde(alias = "sort_dir")]
+    pub sort_dir: Option<String>,
+    #[serde(alias = "product_id")]
+    pub product_id: Option<i64>,
+    #[serde(alias = "attribute_id")]
+    pub attribute_id: Option<i64>,
+    pub required: Option<bool>,
+    #[serde(alias = "tenant_id")]
+    pub tenant_id: Option<i64>,
+}
+
+impl ProductAttributePageQuery {
+    pub fn to_page_query(&self) -> PageQuery {
+        PageQuery {
+            page: self.page,
+            page_size: self.page_size,
+            q: self.q.clone(),
+            sort_by: self.sort_by.clone(),
+            sort_dir: self.sort_dir.clone(),
+        }
+    }
+}
+
+const PRODUCT_ATTRIBUTE_SORT_FIELDS: &[&str] = &[
+    "id",
+    "productId",
+    "product_id",
+    "attributeId",
+    "attribute_id",
+    "required",
+    "sortOrder",
+    "sort_order",
+    "createdAt",
+    "created_at",
+];
+
+#[utoipa::path(
+    get,
+    path = "/product-attributes/paged",
+    tag = "Catalog",
+    params(ProductAttributePageQuery),
+    responses(
+        (status = 200, description = "Paged product attributes", body = PagedResponse<ProductAttributeJson>)
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn product_attributes_paged(
+    State(state): State<AppState>,
+    Extension(current_user): Extension<User>,
+    Query(params): Query<ProductAttributePageQuery>,
+) -> Json<PagedResponse<ProductAttributeJson>> {
+    let norm = NormalizedPagination::new(
+        &params.to_page_query(),
+        PRODUCT_ATTRIBUTE_SORT_FIELDS,
+        "sortOrder",
+    );
+    let mut query = product_attribute_entity::Entity::find();
+
+    if current_user.role != Role::SysAdmin {
+        if let Some(id) = current_user.tenant_id {
+            query = query.filter(product_attribute_entity::Column::TenantId.eq(id));
+        } else {
+            return Json(PagedResponse::empty(norm.page, norm.page_size));
+        }
+    } else if let Some(tid) = params.tenant_id {
+        query = query.filter(product_attribute_entity::Column::TenantId.eq(tid));
+    }
+
+    if let Some(pid) = params.product_id {
+        query = query.filter(product_attribute_entity::Column::ProductId.eq(pid));
+    }
+
+    if let Some(aid) = params.attribute_id {
+        query = query.filter(product_attribute_entity::Column::AttributeId.eq(aid));
+    }
+
+    if let Some(req) = params.required {
+        query = query.filter(product_attribute_entity::Column::Required.eq(req));
+    }
+
+    let sort_col = match norm.sort_by.to_ascii_lowercase().as_str() {
+        "productid" | "product_id" => product_attribute_entity::Column::ProductId,
+        "attributeid" | "attribute_id" => product_attribute_entity::Column::AttributeId,
+        "required" => product_attribute_entity::Column::Required,
+        "createdat" | "created_at" => product_attribute_entity::Column::CreatedAt,
+        "id" => product_attribute_entity::Column::Id,
+        _ => product_attribute_entity::Column::SortOrder,
+    };
+
+    query = if norm.sort_dir.is_descending() {
+        query
+            .order_by_desc(sort_col)
+            .order_by_desc(product_attribute_entity::Column::Id)
+    } else {
+        query
+            .order_by_asc(sort_col)
+            .order_by_asc(product_attribute_entity::Column::Id)
+    };
+
+    let total = query.clone().count(state.conn.as_ref()).await.unwrap_or(0);
+    let rows = query
+        .offset(norm.offset)
+        .limit(norm.page_size)
+        .all(state.conn.as_ref())
+        .await
+        .unwrap_or_default();
+
+    let items = rows
+        .into_iter()
+        .map(|x| ProductAttributeJson {
+            id: x.id,
+            uuid: x.uuid.to_string(),
+            tenant_id: x.tenant_id,
+            product_id: x.product_id,
+            attribute_id: x.attribute_id,
+            required: x.required,
+            sort_order: x.sort_order,
+        })
+        .collect();
+
+    Json(PagedResponse::new(items, total, norm.page, norm.page_size))
+}
+
+#[derive(Debug, Clone, serde::Deserialize, utoipa::IntoParams)]
+#[serde(rename_all = "camelCase")]
+pub struct SkuPageQuery {
+    pub page: Option<u64>,
+    #[serde(alias = "page_size")]
+    pub page_size: Option<u64>,
+    pub q: Option<String>,
+    #[serde(alias = "sort_by")]
+    pub sort_by: Option<String>,
+    #[serde(alias = "sort_dir")]
+    pub sort_dir: Option<String>,
+    #[serde(alias = "product_id")]
+    pub product_id: Option<i64>,
+    pub active: Option<bool>,
+    #[serde(alias = "tenant_id")]
+    pub tenant_id: Option<i64>,
+}
+
+impl SkuPageQuery {
+    pub fn to_page_query(&self) -> PageQuery {
+        PageQuery {
+            page: self.page,
+            page_size: self.page_size,
+            q: self.q.clone(),
+            sort_by: self.sort_by.clone(),
+            sort_dir: self.sort_dir.clone(),
+        }
+    }
+}
+
+const SKU_SORT_FIELDS: &[&str] = &[
+    "id",
+    "code",
+    "variantKey",
+    "variant_key",
+    "priceCents",
+    "price_cents",
+    "active",
+    "createdAt",
+    "created_at",
+];
+
+#[utoipa::path(
+    get,
+    path = "/skus/paged",
+    tag = "Catalog",
+    params(SkuPageQuery),
+    responses(
+        (status = 200, description = "Paged SKUs", body = PagedResponse<SkuJson>)
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn skus_paged(
+    State(state): State<AppState>,
+    Extension(current_user): Extension<User>,
+    Query(params): Query<SkuPageQuery>,
+) -> Json<PagedResponse<SkuJson>> {
+    let norm = NormalizedPagination::new(&params.to_page_query(), SKU_SORT_FIELDS, "code");
+    let mut query = sku_entity::Entity::find();
+
+    if current_user.role != Role::SysAdmin {
+        if let Some(id) = current_user.tenant_id {
+            query = query.filter(sku_entity::Column::TenantId.eq(id));
+        } else {
+            return Json(PagedResponse::empty(norm.page, norm.page_size));
+        }
+    } else if let Some(tid) = params.tenant_id {
+        query = query.filter(sku_entity::Column::TenantId.eq(tid));
+    }
+
+    if let Some(pid) = params.product_id {
+        query = query.filter(sku_entity::Column::ProductId.eq(pid));
+    }
+
+    if let Some(active) = params.active {
+        query = query.filter(sku_entity::Column::Active.eq(active));
+    }
+
+    if let Some(ref q) = norm.q {
+        let pattern = format!("%{}%", q);
+        query = query.filter(
+            Condition::any()
+                .add(sku_entity::Column::Code.like(&pattern))
+                .add(sku_entity::Column::VariantKey.like(&pattern)),
+        );
+    }
+
+    let sort_col = match norm.sort_by.to_ascii_lowercase().as_str() {
+        "variantkey" | "variant_key" => sku_entity::Column::VariantKey,
+        "pricecents" | "price_cents" => sku_entity::Column::PriceCents,
+        "active" => sku_entity::Column::Active,
+        "createdat" | "created_at" => sku_entity::Column::CreatedAt,
+        "id" => sku_entity::Column::Id,
+        _ => sku_entity::Column::Code,
+    };
+
+    query = if norm.sort_dir.is_descending() {
+        query
+            .order_by_desc(sort_col)
+            .order_by_desc(sku_entity::Column::Id)
+    } else {
+        query
+            .order_by_asc(sort_col)
+            .order_by_asc(sku_entity::Column::Id)
+    };
+
+    let total = query.clone().count(state.conn.as_ref()).await.unwrap_or(0);
+    let rows = query
+        .offset(norm.offset)
+        .limit(norm.page_size)
+        .all(state.conn.as_ref())
+        .await
+        .unwrap_or_default();
+
+    let items = rows
+        .into_iter()
+        .map(|x| SkuJson {
+            id: x.id,
+            uuid: x.uuid.to_string(),
+            tenant_id: x.tenant_id,
+            product_id: x.product_id,
+            code: x.code,
+            variant_key: x.variant_key,
+            price_cents: x.price_cents,
+            compare_at_price_cents: x.compare_at_price_cents,
+            weight_g: x.weight_g,
+            width_mm: x.width_mm,
+            height_mm: x.height_mm,
+            length_mm: x.length_mm,
+            active: x.active,
+        })
+        .collect();
+
+    Json(PagedResponse::new(items, total, norm.page, norm.page_size))
 }
 
 #[utoipa::path(post, path = "/categories", tag = "Catalog", request_body = CategoryInputJson, responses((status = 201, body = CategoryJson)), security(("bearer_auth" = [])))]

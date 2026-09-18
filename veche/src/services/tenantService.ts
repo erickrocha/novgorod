@@ -1,9 +1,14 @@
 import { api } from "./api";
-import type { Tenant, TenantInput, TenantPlan, TenantPlanInput } from "./types";
+import type { PagedResult, PageQueryParams, Tenant, TenantInput, TenantPlan, TenantPlanInput } from "./types";
 
 export const tenantService = {
   async getTenants(): Promise<Tenant[]> {
     const response = await api.get<Tenant[]>("/tenant");
+    return response.data;
+  },
+
+  async getTenantsPaged(params?: PageQueryParams): Promise<PagedResult<Tenant>> {
+    const response = await api.get<PagedResult<Tenant>>("/tenant/paged", { params });
     return response.data;
   },
 

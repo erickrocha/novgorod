@@ -1,0 +1,215 @@
+use utoipa::{IntoParams, ToSchema};
+
+pub const DEFAULT_PAGE: u64 = 1;
+pub const DEFAULT_PAGE_SIZE: u64 = 25;
+pub const MIN_PAGE_SIZE: u64 = 1;
+pub const MAX_PAGE_SIZE: u64 = 100;
+
+#[derive(Debug, Clone, serde::Deserialize, IntoParams)]
+#[serde(rename_all = "camelCase")]
+pub struct PageQuery {
+    pub page: Option<u64>,
+    #[serde(alias = "page_size")]
+    pub page_size: Option<u64>,
+    pub q: Option<String>,
+    #[serde(alias = "sort_by")]
+    pub sort_by: Option<String>,
+    #[serde(alias = "sort_dir")]
+    pub sort_dir: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SortDirection {
+    Asc,
+    Desc,
+}
+
+impl SortDirection {
+    pub fn from_optional_str(s: Option<&str>) -> Self {
+        match s.map(|v| v.trim().to_ascii_lowercase()) {
+            Some(ref v) if v == "desc" => SortDirection::Desc,
+            _ => SortDirection::Asc,
+        }
+    }
+
+    pub fn is_descending(&self) -> bool {
+        matches!(self, SortDirection::Desc)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct NormalizedPagination {
+    pub page: u64,
+    pub page_size: u64,
+    pub offset: u64,
+    pub q: Option<String>,
+    pub sort_by: String,
+    pub sort_dir: SortDirection,
+}
+
+impl NormalizedPagination {
+    pub fn new(query: &PageQuery, allowed_sort_fields: &[&str], default_sort: &str) -> Self {
+        let page = query.page.unwrap_or(DEFAULT_PAGE).max(1);
+        let page_size = query
+            .page_size
+            .unwrap_or(DEFAULT_PAGE_SIZE)
+            .clamp(MIN_PAGE_SIZE, MAX_PAGE_SIZE);
+        let offset = (page - 1) * page_size;
+
+        let q = query
+            .q
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(ToString::to_string);
+
+        let sort_dir = SortDirection::from_optional_str(query.sort_dir.as_deref());
+
+        let sort_by = query
+            .sort_by
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .and_then(|candidate| {
+                allowed_sort_fields
+                    .iter()
+                    .find(|&&allowed| allowed.eq_ignore_ascii_case(candidate))
+                    .copied()
+            })
+            .unwrap_or(default_sort)
+            .to_string();
+
+        Self {
+            page,
+            page_size,
+            offset,
+            q,
+            sort_by,
+            sort_dir,
+        }
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct PagedResponse<T> {
+    pub items: Vec<T>,
+    pub total: u64,
+    pub page: u64,
+    pub page_size: u64,
+}
+
+impl<T> PagedResponse<T> {
+    pub fn new(items: Vec<T>, total: u64, page: u64, page_size: u64) -> Self {
+        Self {
+            items,
+            total,
+            page,
+            page_size,
+        }
+    }
+
+    pub fn empty(page: u64, page_size: u64) -> Self {
+        Self {
+            items: Vec::new(),
+            total: 0,
+            page,
+            page_size,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn defaults_and_clamping_work_as_expected() {
+        let empty_query = PageQuery {
+            page: None,
+            page_size: None,
+            q: None,
+            sort_by: None,
+            sort_dir: None,
+        };
+        let p = NormalizedPagination::new(&empty_query, &["name", "id"], "id");
+        assert_eq!(p.page, 1);
+        assert_eq!(p.page_size, 25);
+        assert_eq!(p.offset, 0);
+        assert_eq!(p.sort_by, "id");
+        assert_eq!(p.sort_dir, SortDirection::Asc);
+        assert_eq!(p.q, None);
+
+        let clamped_query = PageQuery {
+            page: Some(0),
+            page_size: Some(999),
+            q: Some("  term  ".to_string()),
+            sort_by: Some("NAME".to_string()),
+            sort_dir: Some("DESC".to_string()),
+        };
+        let p2 = NormalizedPagination::new(&clamped_query, &["name", "id"], "id");
+        assert_eq!(p2.page, 1);
+        assert_eq!(p2.page_size, 100);
+        assert_eq!(p2.offset, 0);
+        assert_eq!(p2.sort_by, "name");
+        assert_eq!(p2.sort_dir, SortDirection::Desc);
+        assert_eq!(p2.q, Some("term".to_string()));
+    }
+
+    #[test]
+    fn unknown_sort_field_falls_back_safely() {
+        let bad_sort_query = PageQuery {
+            page: Some(2),
+            page_size: Some(10),
+            q: None,
+            sort_by: Some("malicious_column; DROP TABLE".to_string()),
+            sort_dir: Some("asc".to_string()),
+        };
+        let p = NormalizedPagination::new(&bad_sort_query, &["name", "email", "id"], "id");
+        assert_eq!(p.page, 2);
+        assert_eq!(p.page_size, 10);
+        assert_eq!(p.offset, 10);
+        assert_eq!(p.sort_by, "id");
+    }
+
+    #[test]
+    fn page_offset_and_boundaries() {
+        let q = PageQuery {
+            page: Some(5),
+            page_size: Some(20),
+            q: None,
+            sort_by: None,
+            sort_dir: None,
+        };
+        let p = NormalizedPagination::new(&q, &["id"], "id");
+        assert_eq!(p.page, 5);
+        assert_eq!(p.page_size, 20);
+        assert_eq!(p.offset, 80);
+    }
+
+    #[test]
+    fn paged_response_serializes_with_camel_case() {
+        let resp = PagedResponse::new(vec!["test"], 100, 2, 25);
+        let json = serde_json::to_string(&resp).unwrap();
+        assert!(json.contains(r#""pageSize":25"#));
+        assert!(json.contains(r#""page":2"#));
+        assert!(json.contains(r#""total":100"#));
+        assert!(json.contains(r#""items":["test"]"#));
+
+        let empty: PagedResponse<String> = PagedResponse::empty(1, 25);
+        assert_eq!(empty.total, 0);
+        assert_eq!(empty.items.len(), 0);
+        assert_eq!(empty.page, 1);
+        assert_eq!(empty.page_size, 25);
+    }
+
+    #[test]
+    fn sort_direction_normalization() {
+        assert_eq!(SortDirection::from_optional_str(None), SortDirection::Asc);
+        assert_eq!(SortDirection::from_optional_str(Some("asc")), SortDirection::Asc);
+        assert_eq!(SortDirection::from_optional_str(Some("ASC")), SortDirection::Asc);
+        assert_eq!(SortDirection::from_optional_str(Some("  desc  ")), SortDirection::Desc);
+        assert_eq!(SortDirection::from_optional_str(Some("DESC")), SortDirection::Desc);
+        assert_eq!(SortDirection::from_optional_str(Some("invalid")), SortDirection::Asc);
+    }
+}

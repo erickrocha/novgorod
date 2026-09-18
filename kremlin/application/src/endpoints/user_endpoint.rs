@@ -7,9 +7,10 @@ use crate::endpoints::json::error_response_json::{
     UnauthorizedErrorJson,
 };
 use crate::endpoints::json::user_json::UserJson;
+use crate::commons::pagination::PagedResponse;
 use crate::infrastructure::mapper::{Mapper, UserMapper};
 use axum::Json;
-use axum::extract::{Extension, Path, State};
+use axum::extract::{Extension, Path, Query, State};
 use axum::http::StatusCode;
 use business::domain::enums::Role;
 use business::domain::user::User;
@@ -117,6 +118,159 @@ pub async fn list_all(
         Ok(users) => Ok(Json(UserMapper::json_vec(users))),
         Err(_) => Ok(Json(Vec::new())),
     }
+}
+
+#[derive(Debug, Clone, serde::Deserialize, utoipa::IntoParams)]
+#[serde(rename_all = "camelCase")]
+pub struct UserPageQuery {
+    pub page: Option<u64>,
+    #[serde(alias = "page_size")]
+    pub page_size: Option<u64>,
+    pub q: Option<String>,
+    #[serde(alias = "sort_by")]
+    pub sort_by: Option<String>,
+    #[serde(alias = "sort_dir")]
+    pub sort_dir: Option<String>,
+    pub role: Option<String>,
+    pub enabled: Option<bool>,
+    #[serde(alias = "tenant_id")]
+    pub tenant_id: Option<i64>,
+}
+
+impl UserPageQuery {
+    pub fn to_page_query(&self) -> crate::commons::pagination::PageQuery {
+        crate::commons::pagination::PageQuery {
+            page: self.page,
+            page_size: self.page_size,
+            q: self.q.clone(),
+            sort_by: self.sort_by.clone(),
+            sort_dir: self.sort_dir.clone(),
+        }
+    }
+}
+
+const USER_SORT_FIELDS: &[&str] = &[
+    "id",
+    "name",
+    "email",
+    "role",
+    "enabled",
+    "createdAt",
+    "created_at",
+];
+
+#[utoipa::path(
+    get,
+    tag = "User",
+    path = "/user/paged",
+    params(UserPageQuery),
+    responses(
+        (status = 200, description = "Paged users", body = PagedResponse<UserJson>),
+        (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
+        (status = 403, description = "Forbidden", body = ForbiddenErrorJson),
+        (status = 500, description = "Internal server error", body = InternalServerErrorJson),
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn paged(
+    state: State<AppState>,
+    Extension(current_user): Extension<User>,
+    Query(params): Query<UserPageQuery>,
+) -> HttpResponse<Json<crate::commons::pagination::PagedResponse<UserJson>>> {
+    use business::commons::entity_mapper::EntityMapper;
+    use business::domain::user::UserEntityMapper;
+    use business::sea_orm::{
+        ColumnTrait, Condition, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect,
+    };
+    use entity::user_entity;
+
+    let norm = crate::commons::pagination::NormalizedPagination::new(
+        &params.to_page_query(),
+        USER_SORT_FIELDS,
+        "id",
+    );
+
+    let mut query = user_entity::Entity::find();
+
+    match current_user.role {
+        Role::SysAdmin => {
+            if let Some(tid) = params.tenant_id {
+                query = query.filter(user_entity::Column::TenantId.eq(tid));
+            }
+        }
+        Role::TenantOwner => {
+            if let Some(tid) = current_user.tenant_id {
+                query = query.filter(user_entity::Column::TenantId.eq(tid));
+            } else {
+                return Ok(Json(crate::commons::pagination::PagedResponse::empty(
+                    norm.page,
+                    norm.page_size,
+                )));
+            }
+        }
+        _ => {
+            return Ok(Json(crate::commons::pagination::PagedResponse::empty(
+                norm.page,
+                norm.page_size,
+            )));
+        }
+    }
+
+    if let Some(ref role) = params.role {
+        if !role.trim().is_empty() {
+            query = query.filter(user_entity::Column::Role.eq(role.trim()));
+        }
+    }
+
+    if let Some(enabled) = params.enabled {
+        query = query.filter(user_entity::Column::Enabled.eq(enabled));
+    }
+
+    if let Some(ref q) = norm.q {
+        let pattern = format!("%{}%", q);
+        query = query.filter(
+            Condition::any()
+                .add(user_entity::Column::Name.like(&pattern))
+                .add(user_entity::Column::Email.like(&pattern)),
+        );
+    }
+
+    let sort_col = match norm.sort_by.to_ascii_lowercase().as_str() {
+        "name" => user_entity::Column::Name,
+        "email" => user_entity::Column::Email,
+        "role" => user_entity::Column::Role,
+        "enabled" => user_entity::Column::Enabled,
+        "createdat" | "created_at" => user_entity::Column::CreatedAt,
+        _ => user_entity::Column::Id,
+    };
+
+    query = if norm.sort_dir.is_descending() {
+        query
+            .order_by_desc(sort_col)
+            .order_by_desc(user_entity::Column::Id)
+    } else {
+        query
+            .order_by_asc(sort_col)
+            .order_by_asc(user_entity::Column::Id)
+    };
+
+    let total = query.clone().count(state.conn.as_ref()).await.unwrap_or(0);
+    let models = query
+        .offset(norm.offset)
+        .limit(norm.page_size)
+        .all(state.conn.as_ref())
+        .await
+        .unwrap_or_default();
+
+    let domain_users = UserEntityMapper::from_models(models);
+    let items = UserMapper::json_vec(domain_users);
+
+    Ok(Json(crate::commons::pagination::PagedResponse::new(
+        items,
+        total,
+        norm.page,
+        norm.page_size,
+    )))
 }
 
 #[utoipa::path(

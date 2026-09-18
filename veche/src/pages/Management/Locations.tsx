@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Pencil, RefreshCw, Upload, X } from "lucide-react";
 import Papa from "papaparse";
+import type { ColumnDef, PaginationState, SortingState } from "@tanstack/react-table";
 import PageBreadcrumb from "@/components/common/PageBreadCrumb";
 import PageMeta from "@/components/common/PageMeta";
 import ComponentCard from "@/components/common/ComponentCard";
@@ -17,9 +19,9 @@ import {
   saveCity,
   saveProvince,
 } from "@/store/locationSlice";
+import { locationService } from "@/services/locationService";
 import type { City, Province } from "@/services/types";
 import DataGrid from "@/components/data-grid/DataGrid";
-import type { ColumnDef } from "@tanstack/react-table";
 
 interface ProvinceCsvRow {
   ibge_code: string;
@@ -41,22 +43,33 @@ const isProvinceRowInvalid = (row: ProvinceCsvRow) =>
   row.country_code.trim().length !== 2;
 
 export default function Locations({ kind }: { kind: "provinces" | "cities" }) {
+  const [searchParams, setSearchParams] = useSearchParams();
   const dispatch = useAppDispatch();
   const state = useAppSelector((s) => s.location);
-  const [query, setQuery] = useState("");
+  const [allProvinces, setAllProvinces] = useState<Province[]>([]);
   const [editing, setEditing] = useState<Province | City | null>(null);
   const [importRows, setImportRows] = useState<ProvinceCsvRow[] | null>(null);
   const [importName, setImportName] = useState("");
   const [importError, setImportError] = useState("");
 
+  const page = Number(searchParams.get("page") || "1");
+  const pageSize = Number(searchParams.get("pageSize") || "25");
+  const q = searchParams.get("q") || "";
+  const sortBy = searchParams.get("sortBy") || "id";
+  const sortDir = (searchParams.get("sortDir") as "asc" | "desc") || "asc";
+
   useEffect(() => {
     dispatch(clearLocationError());
-    dispatch(fetchProvinces());
-    dispatch(fetchCities());
+    if (kind === "provinces") {
+      dispatch(fetchProvinces({ page, pageSize, q, sortBy, sortDir }));
+    } else {
+      dispatch(fetchCities({ page, pageSize, q, sortBy, sortDir }));
+      locationService.provinces().then(setAllProvinces).catch(() => {});
+    }
     return () => {
       dispatch(clearLocationError());
     };
-  }, [dispatch, kind]);
+  }, [dispatch, kind, page, pageSize, q, sortBy, sortDir]);
 
   useEffect(() => {
     if (!state.report && !state.error && !importError) return;
@@ -67,23 +80,76 @@ export default function Locations({ kind }: { kind: "provinces" | "cities" }) {
     return () => window.clearTimeout(timeout);
   }, [dispatch, importError, state.error, state.report]);
 
-  const provinces = state.provinces;
+  const onPaginationChange = (next: PaginationState) => {
+    const params = new URLSearchParams(searchParams);
+    params.set("page", String(next.pageIndex + 1));
+    params.set("pageSize", String(next.pageSize));
+    setSearchParams(params);
+  };
+
+  const onSortingChange = (next: SortingState) => {
+    const params = new URLSearchParams(searchParams);
+    if (next.length > 0) {
+      params.set("sortBy", next[0].id);
+      params.set("sortDir", next[0].desc ? "desc" : "asc");
+    } else {
+      params.delete("sortBy");
+      params.delete("sortDir");
+    }
+    params.set("page", "1");
+    setSearchParams(params);
+  };
+
+  const onGlobalFilterChange = (val: string) => {
+    const params = new URLSearchParams(searchParams);
+    if (val) {
+      params.set("q", val);
+    } else {
+      params.delete("q");
+    }
+    params.set("page", "1");
+    setSearchParams(params);
+  };
+
   const rows = kind === "provinces" ? state.provinces : state.cities;
-  const filtered = useMemo(
-    () =>
-      rows.filter((row) =>
-        row.name.toLowerCase().includes(query.toLowerCase()),
-      ),
-    [rows, query],
-  );
+  const total = kind === "provinces" ? state.provincesTotal : state.citiesTotal;
   const invalidRows = importRows?.filter(isProvinceRowInvalid).length ?? 0;
+
   const gridColumns: ColumnDef<Province | City, unknown>[] = useMemo(() => {
     const columns: ColumnDef<Province | City, unknown>[] = [
-      { header: "IBGE code", accessorKey: "ibgeCode", enableSorting: true, cell: ({ getValue }) => getValue<string>() || "—" },
-      { header: "Name", accessorKey: "name", enableSorting: true, cell: ({ getValue }) => <span className="font-medium">{getValue<string>()}</span> },
+      {
+        header: "IBGE code",
+        accessorKey: "ibgeCode",
+        enableSorting: true,
+        cell: ({ getValue }) => getValue<string>() || "—",
+      },
+      {
+        header: "Name",
+        accessorKey: "name",
+        enableSorting: true,
+        cell: ({ getValue }) => (
+          <span className="font-medium">{getValue<string>()}</span>
+        ),
+      },
     ];
-    if (kind === "provinces") columns.push({ header: "UF", accessorKey: "acronym", enableSorting: true });
-    columns.push({ id: "actions", header: "", enableSorting: false, enableHiding: false, cell: ({ row }) => <Button variant="outline" onClick={() => setEditing(row.original)} startIcon={<Pencil size={15} />}>Edit</Button> });
+    if (kind === "provinces") {
+      columns.push({ header: "UF", accessorKey: "acronym", enableSorting: true });
+    }
+    columns.push({
+      id: "actions",
+      header: "",
+      enableSorting: false,
+      enableHiding: false,
+      cell: ({ row }) => (
+        <Button
+          variant="outline"
+          onClick={() => setEditing(row.original)}
+          startIcon={<Pencil size={15} />}
+        >
+          Edit
+        </Button>
+      ),
+    });
     return columns;
   }, [kind]);
 
@@ -191,7 +257,7 @@ export default function Locations({ kind }: { kind: "provinces" | "cities" }) {
     try {
       await dispatch(importProvinces(file)).unwrap();
       closePreview();
-      dispatch(fetchProvinces());
+      dispatch(fetchProvinces({ page, pageSize, q, sortBy, sortDir }));
     } catch {
       // Keep the edited preview open; the Redux request error is shown below.
     }
@@ -207,53 +273,45 @@ export default function Locations({ kind }: { kind: "provinces" | "cities" }) {
         pageTitle={kind === "provinces" ? "Provinces" : "Cities"}
       />
       <ComponentCard title={`Manage ${kind}`}>
-        <div className="mb-5 gap-3 flex flex-wrap items-end justify-between">
-          <div>
-            <Label htmlFor="location-search">Search</Label>
-            <Input
-              id="location-search"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search by name"
-            />
-          </div>
-          <div className="gap-2 flex">
-            <Button
-              variant="outline"
-              startIcon={<RefreshCw size={16} />}
-              onClick={() => {
-                dispatch(fetchProvinces());
-                dispatch(fetchCities());
-              }}
-            >
-              Refresh
-            </Button>
-            <label className="rounded-lg bg-brand-500 px-4 py-3 text-sm font-medium text-white inline-flex cursor-pointer items-center">
-              <Upload size={16} className="me-2" />
-              Import CSV
-              <input
-                type="file"
-                accept=".csv,text/csv"
-                className="hidden"
-                onChange={chooseImport}
-              />
-            </label>
-            <Button
-              onClick={() =>
-                setEditing(
-                  kind === "provinces"
-                    ? { acronym: "", name: "", countryCode: "BR", ibgeCode: "" }
-                    : {
-                        provinceId: provinces[0]?.id || 0,
-                        name: "",
-                        ibgeCode: "",
-                      },
-                )
+        <div className="mb-5 gap-3 flex flex-wrap justify-end">
+          <Button
+            variant="outline"
+            startIcon={<RefreshCw size={16} />}
+            onClick={() => {
+              if (kind === "provinces") {
+                dispatch(fetchProvinces({ page, pageSize, q, sortBy, sortDir }));
+              } else {
+                dispatch(fetchCities({ page, pageSize, q, sortBy, sortDir }));
               }
-            >
-              Add
-            </Button>
-          </div>
+            }}
+          >
+            Refresh
+          </Button>
+          <label className="rounded-lg bg-brand-500 px-4 py-3 text-sm font-medium text-white inline-flex cursor-pointer items-center">
+            <Upload size={16} className="me-2" />
+            Import CSV
+            <input
+              type="file"
+              accept=".csv,text/csv"
+              className="hidden"
+              onChange={chooseImport}
+            />
+          </label>
+          <Button
+            onClick={() =>
+              setEditing(
+                kind === "provinces"
+                  ? { acronym: "", name: "", countryCode: "BR", ibgeCode: "" }
+                  : {
+                      provinceId: allProvinces[0]?.id || 0,
+                      name: "",
+                      ibgeCode: "",
+                    },
+              )
+            }
+          >
+            Add
+          </Button>
         </div>
 
         {kind === "provinces" && importError && (
@@ -383,7 +441,7 @@ export default function Locations({ kind }: { kind: "provinces" | "cities" }) {
                   defaultValue={(editing as City).provinceId}
                   className="h-11 rounded-lg border-gray-300 px-3 text-sm w-full border"
                 >
-                  {provinces.map((province) => (
+                  {allProvinces.map((province) => (
                     <option key={province.id} value={province.id}>
                       {province.name}
                     </option>
@@ -424,11 +482,22 @@ export default function Locations({ kind }: { kind: "provinces" | "cities" }) {
           </div>
         )}
         <DataGrid
-          data={filtered}
+          data={rows}
           columns={gridColumns}
           getRowId={(row, index) => String(row.id ?? row.ibgeCode ?? index)}
           loading={state.loading && rows.length === 0}
+          error={state.error}
           emptyMessage={`No ${kind} found.`}
+          manualPagination
+          manualSorting
+          manualFiltering
+          totalRows={total}
+          pagination={{ pageIndex: Math.max(0, page - 1), pageSize }}
+          onPaginationChange={onPaginationChange}
+          sorting={[{ id: sortBy, desc: sortDir === "desc" }]}
+          onSortingChange={onSortingChange}
+          globalFilter={q}
+          onGlobalFilterChange={onGlobalFilterChange}
         />
       </ComponentCard>
     </>

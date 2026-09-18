@@ -1,11 +1,14 @@
 import { createAsyncThunk, createSlice } from "@reduxjs/toolkit";
 
 import { getApiErrorMessage } from "@/services/api";
-import type { User, UserInput } from "@/services/types";
+import type { PagedResult, PageQueryParams, User, UserInput } from "@/services/types";
 import { userService } from "@/services/userService";
 
 interface UserState {
   usersList: User[];
+  total: number;
+  page: number;
+  pageSize: number;
   loading: boolean;
   error: string | null;
 }
@@ -19,11 +22,15 @@ interface UpdateUserArgs {
   userData: UserInput;
 }
 
-export const fetchUsers = createAsyncThunk<User[], void, UserThunkConfig>(
+export const fetchUsers = createAsyncThunk<
+  PagedResult<User>,
+  PageQueryParams | void,
+  UserThunkConfig
+>(
   "user/fetchUsers",
-  async (_, { rejectWithValue }) => {
+  async (params, { rejectWithValue }) => {
     try {
-      return await userService.getUsers();
+      return await userService.getUsersPaged(params || { page: 1, pageSize: 25 });
     } catch (error: unknown) {
       return rejectWithValue(
         getApiErrorMessage(error, "Falha ao buscar usuários"),
@@ -68,6 +75,9 @@ export const updateUser = createAsyncThunk<
 
 const initialState: UserState = {
   usersList: [],
+  total: 0,
+  page: 1,
+  pageSize: 25,
   loading: false,
   error: null,
 };
@@ -88,7 +98,10 @@ const userSlice = createSlice({
       })
       .addCase(fetchUsers.fulfilled, (state, action) => {
         state.loading = false;
-        state.usersList = action.payload;
+        state.usersList = action.payload.items;
+        state.total = action.payload.total;
+        state.page = action.payload.page;
+        state.pageSize = action.payload.pageSize;
       })
       .addCase(fetchUsers.rejected, (state, action) => {
         state.loading = false;

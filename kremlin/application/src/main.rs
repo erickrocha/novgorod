@@ -49,34 +49,44 @@ impl Modify for SecurityAddon {
         endpoints::tenant_endpoint::get_by_uuid,
         endpoints::tenant_endpoint::list_all,
         endpoints::tenant_endpoint::update,
+        endpoints::tenant_endpoint::paged,
         endpoints::user_endpoint::get_by_id,
         endpoints::user_endpoint::add,
         endpoints::user_endpoint::list_all,
+        endpoints::user_endpoint::paged,
         endpoints::user_endpoint::update,
         endpoints::user_endpoint::change_password,
         endpoints::province_endpoint::list_all,
+        endpoints::province_endpoint::paged,
         endpoints::province_endpoint::get_by_id,
         endpoints::province_endpoint::add,
         endpoints::province_endpoint::update,
         endpoints::province_endpoint::import_csv,
         endpoints::city_endpoint::list_all,
+        endpoints::city_endpoint::paged,
         endpoints::city_endpoint::get_by_province,
-        endpoints::city_endpoint::get_by_id
-        ,endpoints::city_endpoint::add
-        ,endpoints::city_endpoint::update
-        ,endpoints::city_endpoint::import_csv
-        ,endpoints::catalog_endpoint::categories
-        ,endpoints::catalog_endpoint::attributes
-        ,endpoints::catalog_endpoint::attribute_values
-        ,endpoints::catalog_endpoint::products
-        ,endpoints::catalog_endpoint::product_attributes
-        ,endpoints::catalog_endpoint::skus
-        ,endpoints::catalog_endpoint::add_category
-        ,endpoints::catalog_endpoint::update_category
-        ,endpoints::catalog_endpoint::add_product
-        ,endpoints::catalog_endpoint::update_product
-        ,endpoints::catalog_endpoint::add_sku
-        ,endpoints::catalog_endpoint::update_sku
+        endpoints::city_endpoint::get_by_id,
+        endpoints::city_endpoint::add,
+        endpoints::city_endpoint::update,
+        endpoints::city_endpoint::import_csv,
+        endpoints::catalog_endpoint::categories,
+        endpoints::catalog_endpoint::categories_paged,
+        endpoints::catalog_endpoint::attributes,
+        endpoints::catalog_endpoint::attributes_paged,
+        endpoints::catalog_endpoint::attribute_values,
+        endpoints::catalog_endpoint::attribute_values_paged,
+        endpoints::catalog_endpoint::products,
+        endpoints::catalog_endpoint::products_paged,
+        endpoints::catalog_endpoint::product_attributes,
+        endpoints::catalog_endpoint::product_attributes_paged,
+        endpoints::catalog_endpoint::skus,
+        endpoints::catalog_endpoint::skus_paged,
+        endpoints::catalog_endpoint::add_category,
+        endpoints::catalog_endpoint::update_category,
+        endpoints::catalog_endpoint::add_product,
+        endpoints::catalog_endpoint::update_product,
+        endpoints::catalog_endpoint::add_sku,
+        endpoints::catalog_endpoint::update_sku,
     ),
     components(
         schemas(

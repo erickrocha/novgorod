@@ -5,6 +5,7 @@ use crate::endpoints::json::error_response_json::{
     BadRequestErrorJson, ForbiddenErrorJson, InternalServerErrorJson, NotFoundErrorJson,
     UnauthorizedErrorJson,
 };
+use crate::commons::pagination::PagedResponse;
 use crate::endpoints::json::province_json::ProvinceJson;
 use crate::infrastructure::mapper::{Mapper, ProvinceMapper};
 use axum::Json;
@@ -60,6 +61,129 @@ pub async fn list_all(
         Ok(list) => Ok(Json(ProvinceMapper::json_vec(list))),
         Err(_) => Ok(Json(Vec::new())),
     }
+}
+
+#[derive(Debug, Clone, serde::Deserialize, utoipa::IntoParams)]
+#[serde(rename_all = "camelCase")]
+pub struct ProvincePageQuery {
+    pub page: Option<u64>,
+    #[serde(alias = "page_size")]
+    pub page_size: Option<u64>,
+    pub q: Option<String>,
+    #[serde(alias = "sort_by")]
+    pub sort_by: Option<String>,
+    #[serde(alias = "sort_dir")]
+    pub sort_dir: Option<String>,
+    #[serde(alias = "country_code")]
+    pub country_code: Option<String>,
+}
+
+impl ProvincePageQuery {
+    pub fn to_page_query(&self) -> crate::commons::pagination::PageQuery {
+        crate::commons::pagination::PageQuery {
+            page: self.page,
+            page_size: self.page_size,
+            q: self.q.clone(),
+            sort_by: self.sort_by.clone(),
+            sort_dir: self.sort_dir.clone(),
+        }
+    }
+}
+
+const PROVINCE_SORT_FIELDS: &[&str] = &[
+    "id",
+    "name",
+    "acronym",
+    "countryCode",
+    "country_code",
+    "ibgeCode",
+    "ibge_code",
+];
+
+#[utoipa::path(
+    get,
+    tag = "Province",
+    path = "/province/paged",
+    params(ProvincePageQuery),
+    responses(
+        (status = 200, description = "Paged provinces", body = PagedResponse<ProvinceJson>),
+        (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
+        (status = 403, description = "Forbidden", body = ForbiddenErrorJson),
+        (status = 500, description = "Internal server error", body = InternalServerErrorJson),
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn paged(
+    state: State<AppState>,
+    Query(params): Query<ProvincePageQuery>,
+) -> HttpResponse<Json<crate::commons::pagination::PagedResponse<ProvinceJson>>> {
+    use business::commons::entity_mapper::EntityMapper;
+    use business::domain::province::ProvinceEntityMapper;
+    use business::sea_orm::{
+        ColumnTrait, Condition, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect,
+    };
+    use entity::province_entity;
+
+    let norm = crate::commons::pagination::NormalizedPagination::new(
+        &params.to_page_query(),
+        PROVINCE_SORT_FIELDS,
+        "name",
+    );
+
+    let mut query = province_entity::Entity::find();
+
+    if let Some(ref cc) = params.country_code {
+        let trimmed = cc.trim().to_ascii_uppercase();
+        if !trimmed.is_empty() {
+            query = query.filter(province_entity::Column::CountryCode.eq(trimmed));
+        }
+    }
+
+    if let Some(ref q) = norm.q {
+        let pattern = format!("%{}%", q);
+        query = query.filter(
+            Condition::any()
+                .add(province_entity::Column::Name.like(&pattern))
+                .add(province_entity::Column::Acronym.like(&pattern))
+                .add(province_entity::Column::IbgeCode.like(&pattern)),
+        );
+    }
+
+    let sort_col = match norm.sort_by.to_ascii_lowercase().as_str() {
+        "acronym" => province_entity::Column::Acronym,
+        "countrycode" | "country_code" => province_entity::Column::CountryCode,
+        "ibgecode" | "ibge_code" => province_entity::Column::IbgeCode,
+        "id" => province_entity::Column::Id,
+        _ => province_entity::Column::Name,
+    };
+
+    query = if norm.sort_dir.is_descending() {
+        query
+            .order_by_desc(sort_col)
+            .order_by_desc(province_entity::Column::Id)
+    } else {
+        query
+            .order_by_asc(sort_col)
+            .order_by_asc(province_entity::Column::Id)
+    };
+
+    let total = query.clone().count(state.conn.as_ref()).await.unwrap_or(0);
+    let models = query
+        .offset(norm.offset)
+        .limit(norm.page_size)
+        .all(state.conn.as_ref())
+        .await
+        .unwrap_or_default();
+
+    let domain_provinces = ProvinceEntityMapper::from_models(models);
+    let items = ProvinceMapper::json_vec(domain_provinces);
+
+    Ok(Json(crate::commons::pagination::PagedResponse::new(
+        items,
+        total,
+        norm.page,
+        norm.page_size,
+    )))
 }
 
 #[utoipa::path(
