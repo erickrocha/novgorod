@@ -5,6 +5,7 @@ pub mod category_use_case;
 pub mod city_use_case;
 pub mod product_attribute_use_case;
 pub mod product_attribute_value_use_case;
+pub mod product_image_use_case;
 pub mod product_use_case;
 pub mod province_use_case;
 pub mod sku_use_case;

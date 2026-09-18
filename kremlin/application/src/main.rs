@@ -87,6 +87,10 @@ impl Modify for SecurityAddon {
         endpoints::catalog_endpoint::update_product,
         endpoints::catalog_endpoint::add_sku,
         endpoints::catalog_endpoint::update_sku,
+        endpoints::product_image_endpoint::presign,
+        endpoints::product_image_endpoint::list,
+        endpoints::product_image_endpoint::delete,
+        endpoints::product_image_endpoint::set_primary,
     ),
     components(
         schemas(
@@ -101,13 +105,16 @@ impl Modify for SecurityAddon {
             endpoints::json::catalog_json::CategoryJson,
             endpoints::json::catalog_json::CatalogAttributeJson,
             endpoints::json::catalog_json::CatalogAttributeValueJson,
-            endpoints::json::catalog_json::CatalogAttributeValueJson,
             endpoints::json::catalog_json::ProductJson,
             endpoints::json::catalog_json::ProductAttributeJson,
             endpoints::json::catalog_json::SkuJson,
             endpoints::json::catalog_json::CategoryInputJson,
             endpoints::json::catalog_json::ProductInputJson,
             endpoints::json::catalog_json::SkuInputJson,
+            endpoints::json::product_image_json::ProductImagePresignItemRequest,
+            endpoints::json::product_image_json::ProductImagePresignBatchRequest,
+            endpoints::json::product_image_json::ProductImagePresignItemResponse,
+            endpoints::json::product_image_json::ProductImageJson,
         ),
     ),
     tags(
@@ -119,6 +126,7 @@ struct ApiDoc;
 #[derive(Clone)]
 pub struct AppState {
     pub conn: Arc<DatabaseConnection>,
+    pub storage: Arc<business::gateway::storage_gateway::StorageGateway>,
 }
 
 // ==================== Route Builders ====================
@@ -145,9 +153,14 @@ async fn start() -> anyhow::Result<()> {
 
     business::use_cases::user_use_case::UserUseCase::seed_sysadmin(&connection).await;
 
+    let storage = Arc::new(business::gateway::storage_gateway::StorageGateway::from_env().await);
+    crate::infrastructure::sqs_consumer::spawn_sqs_consumer(connection.clone(), storage.clone());
+
     let state = AppState {
         conn: Arc::new(connection),
+        storage,
     };
+
 
     log::info!("Starting server...");
 

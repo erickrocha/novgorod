@@ -7,6 +7,7 @@ pub mod city;
 pub mod enums;
 pub mod product;
 pub mod product_attribute;
+pub mod product_image;
 pub mod province;
 pub mod sku;
 pub mod tenant;

@@ -2,12 +2,14 @@ use std::str::FromStr;
 
 use crate::endpoints::json::access_token_json::AccessTokenJson;
 use crate::endpoints::json::city_json::CityJson;
+use crate::endpoints::json::product_image_json::ProductImageJson;
 use crate::endpoints::json::province_json::ProvinceJson;
 use crate::endpoints::json::tenant_json::TenantJson;
 use crate::endpoints::json::user_json::UserJson;
 use business::domain::access_token::AccessToken;
 use business::domain::city::City;
 use business::domain::enums::Role;
+use business::domain::product_image::ProductImage;
 use business::domain::province::Province;
 use business::domain::tenant::Tenant;
 use business::domain::user::User;
@@ -219,7 +221,60 @@ impl Mapper<City, CityJson> for CityMapper {
     }
 }
 
+pub struct ProductImageMapper;
+
+impl Mapper<ProductImage, ProductImageJson> for ProductImageMapper {
+    fn json(t: ProductImage) -> ProductImageJson {
+        ProductImageJson {
+            id: t.id.unwrap_or_default(),
+            uuid: t.uuid.unwrap_or_default(),
+            tenant_id: t.tenant_id,
+            product_id: t.product_id,
+            sku_id: t.sku_id,
+            alt_text: t.alt_text,
+            sort_order: t.sort_order,
+            is_primary: t.is_primary,
+            storage_provider: t.storage_provider,
+            bucket: t.bucket,
+            object_key: t.object_key,
+            original_filename: t.original_filename,
+            mime_type: t.mime_type,
+            size_bytes: t.size_bytes,
+            storage_status: t.storage_status,
+            cdn_url: t.cdn_url,
+        }
+    }
+
+    fn domain(u: ProductImageJson) -> ProductImage {
+        ProductImage {
+            id: Some(u.id),
+            uuid: Some(u.uuid),
+            tenant_id: u.tenant_id,
+            product_id: u.product_id,
+            sku_id: u.sku_id,
+            alt_text: u.alt_text,
+            sort_order: u.sort_order,
+            is_primary: u.is_primary,
+            storage_provider: u.storage_provider,
+            bucket: u.bucket,
+            object_key: u.object_key,
+            storage_identity_hash: None,
+            object_version: None,
+            etag: None,
+            checksum_sha256: None,
+            original_filename: u.original_filename,
+            mime_type: u.mime_type,
+            size_bytes: u.size_bytes,
+            width_px: None,
+            height_px: None,
+            storage_status: u.storage_status,
+            cdn_url: u.cdn_url,
+        }
+    }
+}
+
 #[cfg(test)]
+
 mod address_mapping_tests {
     use super::{canonical_address, country_code, optional_text};
 

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
-import { Pencil, Plus, RefreshCw } from "lucide-react";
+import { Image as ImageIcon, Pencil, Plus, RefreshCw } from "lucide-react";
 import type { ColumnDef, PaginationState, SortingState } from "@tanstack/react-table";
 import PageBreadcrumb from "@/components/common/PageBreadCrumb";
 import PageMeta from "@/components/common/PageMeta";
@@ -17,6 +17,7 @@ import {
 import { fetchTenants } from "@/store/tenantSlice";
 import { ROLES } from "@/utils/enums";
 import CatalogImportModal from "@/components/catalog/CatalogImportModal";
+import ProductImagesModal from "@/components/catalog/ProductImagesModal";
 import type { PageQueryParams } from "@/services/types";
 
 type CatalogRow = {
@@ -35,6 +36,7 @@ export default function CatalogList() {
   const { kind = "products" } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
   const [importOpen, setImportOpen] = useState(false);
+  const [photosProduct, setPhotosProduct] = useState<{ id: number; name?: string } | null>(null);
   const dispatch = useAppDispatch();
   const state = useAppSelector((s) => s.catalog);
   const tenants = useAppSelector((s) => s.tenant.tenantsList);
@@ -152,13 +154,25 @@ export default function CatalogList() {
       enableSorting: false,
       enableHiding: false,
       cell: ({ row }) => (
-        <Link
-          className="gap-1 text-brand-500 inline-flex items-center"
-          to={`/catalog/${kind}/${row.original.id}/edit`}
-        >
-          <Pencil size={15} />
-          Edit
-        </Link>
+        <div className="flex items-center gap-3">
+          {kind === "products" && (
+            <button
+              type="button"
+              className="inline-flex items-center gap-1 text-xs font-medium text-brand-600 hover:text-brand-700 dark:text-brand-400"
+              onClick={() => setPhotosProduct({ id: row.original.id, name: row.original.name })}
+            >
+              <ImageIcon size={14} />
+              Photos
+            </button>
+          )}
+          <Link
+            className="gap-1 text-brand-500 inline-flex items-center text-xs font-medium"
+            to={`/catalog/${kind}/${row.original.id}/edit`}
+          >
+            <Pencil size={14} />
+            Edit
+          </Link>
+        </div>
       ),
     },
   ];
@@ -225,6 +239,14 @@ export default function CatalogList() {
           }}
         />
       )}
+      {photosProduct && (
+        <ProductImagesModal
+          productId={photosProduct.id}
+          productName={photosProduct.name}
+          onClose={() => setPhotosProduct(null)}
+        />
+      )}
     </>
   );
 }
+

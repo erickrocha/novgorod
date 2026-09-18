@@ -55,5 +55,9 @@ pub fn resources_routes(state: AppState) -> Router<AppState> {
         .route("/skus/paged", get(skus_paged))
         .route("/skus", axum::routing::post(add_sku))
         .route("/skus/{id}", axum::routing::put(update_sku))
+        .route("/products/{id}/images/presign", axum::routing::post(crate::endpoints::product_image_endpoint::presign))
+        .route("/products/{id}/images", get(crate::endpoints::product_image_endpoint::list))
+        .route("/products/{id}/images/{image_id}", axum::routing::delete(crate::endpoints::product_image_endpoint::delete))
+        .route("/products/{id}/images/{image_id}/primary", axum::routing::put(crate::endpoints::product_image_endpoint::set_primary))
         .route_layer(middleware::from_fn_with_state(state, authentication))
 }
