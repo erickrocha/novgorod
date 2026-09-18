@@ -14,22 +14,17 @@ export const resources = {
 } as const;
 
 export const defaultNS = "common";
-export const fallbackLng = "en";
+export const fallbackLng = "pt-BR";
 
 const savedLng =
   typeof window !== "undefined"
     ? localStorage.getItem("i18nextLng") || localStorage.getItem("language")
     : null;
-const browserLng =
-  typeof window !== "undefined" ? navigator.language : fallbackLng;
-const browserBaseLng = browserLng.split("-")[0];
-const initialLng =
-  savedLng ||
-  (resources[browserLng as keyof typeof resources]
-    ? browserLng
-    : resources[browserBaseLng as keyof typeof resources]
-      ? browserBaseLng
-      : fallbackLng);
+const initialLng = (
+  savedLng && resources[savedLng as keyof typeof resources]
+    ? savedLng
+    : fallbackLng
+) as keyof typeof resources;
 
 i18n.use(initReactI18next).init({
   resources,

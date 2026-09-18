@@ -3,8 +3,8 @@
     "groups": {
       "menu": "Menu",
       "support": "Suporte",
-      "others": "Outros"
-      ,"systemSettings": "Configurações do sistema"
+      "others": "Outros",
+      "systemSettings": "Configurações do sistema"
     },
     "badges": {
       "new": "novo",
@@ -44,5 +44,16 @@
       "signIn": "Entrar",
       "signUp": "Cadastrar-se"
     }
+  },
+  "header": {
+    "searchPlaceholder": "Pesquisar ou digite um comando...",
+    "toggleSidebar": "Alternar menu lateral"
+  },
+  "userDropdown": {
+    "editProfile": "Editar perfil",
+    "accountSettings": "Configurações da conta",
+    "support": "Suporte",
+    "language": "Idioma",
+    "signOut": "Sair"
   }
 }

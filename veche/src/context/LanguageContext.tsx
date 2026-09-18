@@ -2,7 +2,7 @@ import type React from "react";
 import { createContext, useContext, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-export type LanguageCode = "en" | "ar" | "es" | "de";
+export type LanguageCode = "pt-BR" | "en";
 
 export type Language = {
   code: LanguageCode;
@@ -12,10 +12,8 @@ export type Language = {
 };
 
 export const AVAILABLE_LANGUAGES: Language[] = [
+  { code: "pt-BR", name: "Português (Brasil)", dir: "ltr" },
   { code: "en", name: "English", dir: "ltr" },
-  { code: "ar", name: "العربية", dir: "rtl" },
-  { code: "es", name: "Español", dir: "ltr" },
-  { code: "de", name: "Deutsch", dir: "ltr" },
 ];
 
 type LanguageContextType = {
@@ -26,17 +24,21 @@ type LanguageContextType = {
   availableLanguages: Language[];
 };
 
-const LanguageContext = createContext<LanguageContextType | undefined>(undefined);
+const LanguageContext = createContext<LanguageContextType | undefined>(
+  undefined,
+);
 
 export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) => {
   const { i18n } = useTranslation();
   const [language, setLanguageState] = useState<LanguageCode>(() => {
-    const currentLng = (i18n.resolvedLanguage || i18n.language || "en") as LanguageCode;
+    const currentLng = (i18n.resolvedLanguage ||
+      i18n.language ||
+      "pt-BR") as LanguageCode;
     return AVAILABLE_LANGUAGES.some((lang) => lang.code === currentLng)
       ? currentLng
-      : "en";
+      : "pt-BR";
   });
 
   const currentLanguage =
