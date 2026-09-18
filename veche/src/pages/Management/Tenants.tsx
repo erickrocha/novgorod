@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { Plus, RefreshCw } from "lucide-react";
+import { Pencil, Plus, RefreshCw } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import type { ColumnDef, PaginationState, SortingState } from "@tanstack/react-table";
 import PageBreadcrumb from "@/components/common/PageBreadCrumb";
 import PageMeta from "@/components/common/PageMeta";
@@ -13,6 +14,7 @@ import { ROLES } from "@/utils/enums";
 import type { Tenant } from "@/services/types";
 
 export default function Tenants() {
+  const { t } = useTranslation();
   const [searchParams, setSearchParams] = useSearchParams();
   const dispatch = useAppDispatch();
   const { tenantsList, total, loading, error } = useAppSelector((s) => s.tenant);
@@ -20,7 +22,7 @@ export default function Tenants() {
   const sysAdmin = user?.role === ROLES.SYS_ADMIN;
 
   const page = Number(searchParams.get("page") || "1");
-  const pageSize = Number(searchParams.get("pageSize") || "25");
+  const pageSize = Number(searchParams.get("pageSize") || "10");
   const q = searchParams.get("q") || "";
   const sortBy = searchParams.get("sortBy") || "id";
   const sortDir = (searchParams.get("sortDir") as "asc" | "desc") || "asc";
@@ -61,24 +63,25 @@ export default function Tenants() {
   };
   const columns: ColumnDef<Tenant, unknown>[] = [
     {
-      header: "Business name",
+      header: t("tenants.businessName", "Nome Fantasia"),
       id: "businessName",
       accessorFn: (row) => row.businessName || row.companyName || "—",
       enableSorting: true,
     },
     {
-      header: "Email",
+      header: t("tenants.email", "E-mail"),
       accessorKey: "email",
       enableSorting: true,
       cell: ({ getValue }) => getValue<string>() || "—",
     },
     {
-      header: "Phone",
+      header: t("tenants.phone", "Telefone"),
       accessorKey: "phone",
+      enableSorting: true,
       cell: ({ getValue }) => getValue<string>() || "—",
     },
     {
-      header: "Location",
+      header: t("tenants.location", "Localização"),
       id: "location",
       accessorFn: (row) =>
         [row.locality || row.city, row.administrativeArea || row.province]
@@ -91,46 +94,53 @@ export default function Tenants() {
       enableSorting: false,
       enableHiding: false,
       cell: ({ row }) => (
-        <Link
-          className="text-brand-500"
-          to={`/tenants/${row.original.id}/edit`}
-        >
-          Edit
-        </Link>
+        <div className="flex items-center justify-end text-end">
+          <Link
+            title={t("common.edit", "Editar")}
+            aria-label={t("common.edit", "Editar")}
+            className="h-7 w-7 rounded-md inline-flex items-center justify-center text-gray-500 hover:text-brand-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-brand-400 dark:hover:bg-white/5 transition-colors"
+            to={`/tenants/${row.original.id}/edit`}
+          >
+            <Pencil size={15} />
+          </Link>
+        </div>
       ),
     },
   ];
   return (
     <>
-      <PageMeta title="Tenants | Veche" description="Manage tenants" />
-      <PageBreadcrumb pageTitle="Tenants" />
-      <ComponentCard
-        title="Tenant management"
-        desc={
-          sysAdmin ? "Manage all tenants." : "Manage your tenant information."
-        }
-      >
-        <div className="mb-5 gap-3 flex justify-end">
-          <Button
-            variant="outline"
-            startIcon={<RefreshCw size={16} />}
-            onClick={() => dispatch(fetchTenants({ page, pageSize, q, sortBy, sortDir }))}
-          >
-            Refresh
-          </Button>
-          {sysAdmin && (
-            <Link to="/tenants/new">
-              <Button startIcon={<Plus size={16} />}>Add tenant</Button>
-            </Link>
-          )}
-        </div>
+      <PageMeta
+        title={`${t("tenants.title", "Empresas")} | Veche`}
+        description={t("tenants.title", "Empresas")}
+      />
+      <PageBreadcrumb pageTitle={t("tenants.title", "Empresas")} />
+      <ComponentCard>
         <DataGrid
           data={tenantsList}
           columns={columns}
+          actions={
+            <div className="gap-2 flex flex-wrap items-center">
+              <Button
+                size="sm"
+                variant="outline"
+                startIcon={<RefreshCw size={14} />}
+                onClick={() => dispatch(fetchTenants({ page, pageSize, q, sortBy, sortDir }))}
+              >
+                {t("tenants.refresh", "Atualizar")}
+              </Button>
+              {sysAdmin && (
+                <Link to="/tenants/new">
+                  <Button size="sm" startIcon={<Plus size={14} />}>
+                    {t("tenants.addTenant", "Nova empresa")}
+                  </Button>
+                </Link>
+              )}
+            </div>
+          }
           getRowId={(row, index) => String(row.id ?? row.uuid ?? index)}
           loading={loading && tenantsList.length === 0}
           error={error}
-          emptyMessage="No tenants found."
+          emptyMessage={t("tenants.noTenantsFound", "Nenhuma empresa encontrada.")}
           manualPagination
           manualSorting
           manualFiltering

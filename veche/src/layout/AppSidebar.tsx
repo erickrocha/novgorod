@@ -16,7 +16,6 @@ import {
   UserCircleIcon,
 } from "../icons";
 import { cn } from "../utils";
-import SidebarWidget from "./SidebarWidget";
 import { useAppSelector } from "@/store/hooks";
 import { ROLES } from "@/utils/enums";
 
@@ -390,30 +389,18 @@ const AppSidebar: React.FC = () => {
           !isExpanded && !isHovered ? "xl:justify-center" : "justify-start",
         )}
       >
-        <Link to="/">
+        <Link to="/" className="flex items-center">
           {isExpanded || isHovered || isMobileOpen ? (
-            <>
-              <img
-                className="dark:hidden"
-                src="/images/logo/logo.svg"
-                alt="Logo"
-                width={150}
-                height={40}
-              />
-              <img
-                className="hidden dark:block"
-                src="/images/logo/logo-dark.svg"
-                alt="Logo"
-                width={150}
-                height={40}
-              />
-            </>
+            <img
+              src="/images/logo.png"
+              alt="Novgorod Kremlin"
+              className="h-11 w-auto max-w-[170px] object-contain"
+            />
           ) : (
             <img
-              src="/images/logo/logo-icon.svg"
-              alt="Logo"
-              width={32}
-              height={32}
+              src="/images/logo-icon.png"
+              alt="Novgorod Kremlin"
+              className="h-9 w-9 object-contain"
             />
           )}
         </Link>
@@ -458,8 +445,6 @@ const AppSidebar: React.FC = () => {
             {isSysAdmin && <div>{(isExpanded || isHovered || isMobileOpen) && <h2 className="mb-4 flex text-xs leading-5 text-gray-400 uppercase">{t("sidebar.groups.systemSettings")}</h2>}{renderMenuItems(systemSettingsItems, "main")}</div>}
           </div>
         </nav>
-
-        {isExpanded || isHovered || isMobileOpen ? <SidebarWidget /> : null}
       </div>
     </aside>
   );

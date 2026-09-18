@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Pencil, RefreshCw, Upload, X } from "lucide-react";
+import { Pencil, Plus, RefreshCw, Upload, X } from "lucide-react";
 import Papa from "papaparse";
 import type { ColumnDef, PaginationState, SortingState } from "@tanstack/react-table";
 import PageBreadcrumb from "@/components/common/PageBreadCrumb";
@@ -53,7 +53,7 @@ export default function Locations({ kind }: { kind: "provinces" | "cities" }) {
   const [importError, setImportError] = useState("");
 
   const page = Number(searchParams.get("page") || "1");
-  const pageSize = Number(searchParams.get("pageSize") || "25");
+  const pageSize = Number(searchParams.get("pageSize") || "10");
   const q = searchParams.get("q") || "";
   const sortBy = searchParams.get("sortBy") || "id";
   const sortDir = (searchParams.get("sortDir") as "asc" | "desc") || "asc";
@@ -141,13 +141,17 @@ export default function Locations({ kind }: { kind: "provinces" | "cities" }) {
       enableSorting: false,
       enableHiding: false,
       cell: ({ row }) => (
-        <Button
-          variant="outline"
-          onClick={() => setEditing(row.original)}
-          startIcon={<Pencil size={15} />}
-        >
-          Edit
-        </Button>
+        <div className="flex items-center justify-end text-end">
+          <button
+            type="button"
+            title="Edit"
+            aria-label="Edit"
+            onClick={() => setEditing(row.original)}
+            className="h-7 w-7 rounded-md inline-flex items-center justify-center text-gray-500 hover:text-brand-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-brand-400 dark:hover:bg-white/5 transition-colors"
+          >
+            <Pencil size={15} />
+          </button>
+        </div>
       ),
     });
     return columns;
@@ -271,49 +275,9 @@ export default function Locations({ kind }: { kind: "provinces" | "cities" }) {
       />
       <PageBreadcrumb
         pageTitle={kind === "provinces" ? "Provinces" : "Cities"}
+        showTitle={false}
       />
-      <ComponentCard title={`Manage ${kind}`}>
-        <div className="mb-5 gap-3 flex flex-wrap justify-end">
-          <Button
-            variant="outline"
-            startIcon={<RefreshCw size={16} />}
-            onClick={() => {
-              if (kind === "provinces") {
-                dispatch(fetchProvinces({ page, pageSize, q, sortBy, sortDir }));
-              } else {
-                dispatch(fetchCities({ page, pageSize, q, sortBy, sortDir }));
-              }
-            }}
-          >
-            Refresh
-          </Button>
-          <label className="rounded-lg bg-brand-500 px-4 py-3 text-sm font-medium text-white inline-flex cursor-pointer items-center">
-            <Upload size={16} className="me-2" />
-            Import CSV
-            <input
-              type="file"
-              accept=".csv,text/csv"
-              className="hidden"
-              onChange={chooseImport}
-            />
-          </label>
-          <Button
-            onClick={() =>
-              setEditing(
-                kind === "provinces"
-                  ? { acronym: "", name: "", countryCode: "BR", ibgeCode: "" }
-                  : {
-                      provinceId: allProvinces[0]?.id || 0,
-                      name: "",
-                      ibgeCode: "",
-                    },
-              )
-            }
-          >
-            Add
-          </Button>
-        </div>
-
+      <ComponentCard>
         {kind === "provinces" && importError && (
           <div className="mb-4 rounded-lg border-error-200 bg-error-50 p-3 text-sm text-error-600 border">
             {importError}
@@ -484,6 +448,51 @@ export default function Locations({ kind }: { kind: "provinces" | "cities" }) {
         <DataGrid
           data={rows}
           columns={gridColumns}
+          actions={
+            <div className="gap-2 flex flex-wrap items-center">
+              <Button
+                size="sm"
+                variant="outline"
+                startIcon={<RefreshCw size={14} />}
+                onClick={() => {
+                  if (kind === "provinces") {
+                    dispatch(fetchProvinces({ page, pageSize, q, sortBy, sortDir }));
+                  } else {
+                    dispatch(fetchCities({ page, pageSize, q, sortBy, sortDir }));
+                  }
+                }}
+              >
+                Refresh
+              </Button>
+              <label className="rounded-lg bg-brand-500 px-3 py-1.5 text-xs font-medium text-white inline-flex cursor-pointer items-center shadow-theme-xs hover:bg-brand-600 transition-colors">
+                <Upload size={14} className="me-1.5" />
+                Import CSV
+                <input
+                  type="file"
+                  accept=".csv,text/csv"
+                  className="hidden"
+                  onChange={chooseImport}
+                />
+              </label>
+              <Button
+                size="sm"
+                startIcon={<Plus size={14} />}
+                onClick={() =>
+                  setEditing(
+                    kind === "provinces"
+                      ? { acronym: "", name: "", countryCode: "BR", ibgeCode: "" }
+                      : {
+                          provinceId: allProvinces[0]?.id || 0,
+                          name: "",
+                          ibgeCode: "",
+                        },
+                  )
+                }
+              >
+                Add
+              </Button>
+            </div>
+          }
           getRowId={(row, index) => String(row.id ?? row.ibgeCode ?? index)}
           loading={state.loading && rows.length === 0}
           error={state.error}

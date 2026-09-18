@@ -1,9 +1,12 @@
+import type React from "react";
+
 interface RadioProps {
   id: string; // Unique ID for the radio button
   name: string; // Radio group name
   value: string; // Value of the radio button
   checked: boolean; // Whether the radio button is checked
-  label: string; // Label for the radio button
+  label?: React.ReactNode; // Label for the radio button
+  children?: React.ReactNode;
   onChange: (value: string) => void; // Handler for value change
   className?: string; // Optional additional classes
   disabled?: boolean; // Optional disabled state for the radio button
@@ -15,6 +18,7 @@ const Radio: React.FC<RadioProps> = ({
   value,
   checked,
   label,
+  children,
   onChange,
   className = "",
   disabled = false,
@@ -55,7 +59,7 @@ const Radio: React.FC<RadioProps> = ({
           }`}
         ></span>
       </span>
-      {label}
+      {children || label}
     </label>
   );
 };

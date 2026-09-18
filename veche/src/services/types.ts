@@ -56,10 +56,7 @@ export interface Tenant {
 export type TenantInput = Omit<
   Tenant,
   "id" | "uuid" | "createdAt" | "createdBy" | "updatedAt" | "updatedBy"
-> & {
-  /** Supported by the existing name-only tenant creation flow. */
-  name?: string;
-};
+>;
 
 export interface TenantPlan {
   id?: number | null;

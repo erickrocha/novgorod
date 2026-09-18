@@ -1,0 +1,43 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Debug Kremlin (Backend)",
+      "program": "${workspaceFolder}/kremlin/target/debug/kremlin",
+      "args": [],
+      "cwd": "${workspaceFolder}/kremlin",
+      "envFile": "${workspaceFolder}/kremlin/.env",
+      "preLaunchTask": "build kremlin",
+      "stopOnEntry": false
+    },
+    {
+      "type": "chrome",
+      "request": "launch",
+      "name": "Debug Veche (Frontend - Chrome)",
+      "url": "http://localhost:5173",
+      "webRoot": "${workspaceFolder}/veche",
+      "sourceMaps": true,
+      "preLaunchTask": "start veche"
+    },
+    {
+      "type": "chrome",
+      "request": "attach",
+      "name": "Attach to Veche (Chrome)",
+      "port": 9222,
+      "urlFilter": "http://localhost:5173/*",
+      "webRoot": "${workspaceFolder}/veche"
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Full Stack: Kremlin & Veche",
+      "configurations": [
+        "Debug Kremlin (Backend)",
+        "Debug Veche (Frontend - Chrome)"
+      ],
+      "stopAll": true
+    }
+  ]
+}

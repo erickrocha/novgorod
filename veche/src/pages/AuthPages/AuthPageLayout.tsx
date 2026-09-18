@@ -16,18 +16,17 @@ export default function AuthLayout({
           <div className="relative z-1 flex items-center justify-center">
             <GridShape />
 
-            <div className="flex max-w-xs flex-col items-center">
+            <div className="flex max-w-sm flex-col items-center">
               <Link to="/" className="mb-4 block">
                 <img
-                  width={231}
-                  height={48}
-                  src="/images/logo/auth-logo.svg"
-                  alt="Logo"
+                  src="/images/logo.png"
+                  alt="Novgorod - E-Commerce Kremlin"
+                  className="h-32 w-auto object-contain drop-shadow-md"
                 />
               </Link>
 
               <p className="text-center text-gray-400 dark:text-white/60">
-                Free and Open-Source Tailwind CSS Admin Dashboard Template
+                Novgorod admin e-commerce
               </p>
             </div>
           </div>

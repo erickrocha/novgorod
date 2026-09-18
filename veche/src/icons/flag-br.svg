@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" id="flag-icons-br" viewBox="0 0 512 512">
+  <path fill="#009c3b" d="M0 0h512v512H0z"/>
+  <path fill="#ffdf00" d="M256 70l200 186-200 186L56 256z"/>
+  <circle fill="#002776" cx="256" cy="256" r="108"/>
+  <path fill="#ffffff" d="M152 245c48-28 160-28 212 22-6-8-52-42-212-22z"/>
+  <circle fill="#ffffff" cx="256" cy="226" r="3"/>
+  <circle fill="#ffffff" cx="232" cy="278" r="3.2"/>
+  <circle fill="#ffffff" cx="278" cy="288" r="3"/>
+  <circle fill="#ffffff" cx="248" cy="308" r="2.8"/>
+  <circle fill="#ffffff" cx="270" cy="268" r="2.8"/>
+  <circle fill="#ffffff" cx="214" cy="288" r="2.2"/>
+  <circle fill="#ffffff" cx="298" cy="298" r="2.2"/>
+  <circle fill="#ffffff" cx="240" cy="326" r="2.8"/>
+</svg>

@@ -74,7 +74,8 @@ export const ProtectedRoutes = () => (
                 <Route path="/line-chart" element={<LineChart />} />
                 <Route path="/bar-chart" element={<BarChart />} />
             </Route>
+            <Route path="/login" element={<Navigate to="/" replace />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
     </Suspense>
-
-)
+);

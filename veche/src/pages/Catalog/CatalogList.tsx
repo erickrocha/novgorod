@@ -15,7 +15,6 @@ import {
   fetchSkus,
 } from "@/store/catalogSlice";
 import { fetchTenants } from "@/store/tenantSlice";
-import { ROLES } from "@/utils/enums";
 import CatalogImportModal from "@/components/catalog/CatalogImportModal";
 import ProductImagesModal from "@/components/catalog/ProductImagesModal";
 import type { PageQueryParams } from "@/services/types";
@@ -40,12 +39,10 @@ export default function CatalogList() {
   const dispatch = useAppDispatch();
   const state = useAppSelector((s) => s.catalog);
   const tenants = useAppSelector((s) => s.tenant.tenantsList);
-  const user = useAppSelector((s) => s.auth.user);
-  const sys = user?.role === ROLES.SYS_ADMIN;
   const title = kind[0].toUpperCase() + kind.slice(1);
 
   const page = Number(searchParams.get("page") || "1");
-  const pageSize = Number(searchParams.get("pageSize") || "25");
+  const pageSize = Number(searchParams.get("pageSize") || "10");
   const q = searchParams.get("q") || "";
   const sortBy = searchParams.get("sortBy") || "id";
   const sortDir = (searchParams.get("sortDir") as "asc" | "desc") || "asc";
@@ -154,23 +151,25 @@ export default function CatalogList() {
       enableSorting: false,
       enableHiding: false,
       cell: ({ row }) => (
-        <div className="flex items-center gap-3">
+        <div className="flex items-center justify-end gap-1 text-end">
           {kind === "products" && (
             <button
               type="button"
-              className="inline-flex items-center gap-1 text-xs font-medium text-brand-600 hover:text-brand-700 dark:text-brand-400"
+              title="Photos"
+              aria-label="Photos"
+              className="h-7 w-7 rounded-md inline-flex items-center justify-center text-gray-500 hover:text-brand-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-brand-400 dark:hover:bg-white/5 transition-colors"
               onClick={() => setPhotosProduct({ id: row.original.id, name: row.original.name })}
             >
-              <ImageIcon size={14} />
-              Photos
+              <ImageIcon size={15} />
             </button>
           )}
           <Link
-            className="gap-1 text-brand-500 inline-flex items-center text-xs font-medium"
+            title="Edit"
+            aria-label="Edit"
+            className="h-7 w-7 rounded-md inline-flex items-center justify-center text-gray-500 hover:text-brand-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-brand-400 dark:hover:bg-white/5 transition-colors"
             to={`/catalog/${kind}/${row.original.id}/edit`}
           >
-            <Pencil size={14} />
-            Edit
+            <Pencil size={15} />
           </Link>
         </div>
       ),
@@ -184,36 +183,32 @@ export default function CatalogList() {
         description={`Manage ${title.toLowerCase()}`}
       />
       <PageBreadcrumb pageTitle={title} />
-      <ComponentCard
-        title={`${title} management`}
-        desc={
-          sys
-            ? "Manage catalog data across all tenants."
-            : "Manage catalog data for your tenant."
-        }
-      >
-        <div className="mb-5 gap-3 flex justify-end">
-          <Button
-            variant="outline"
-            startIcon={<RefreshCw size={16} />}
-            onClick={load}
-          >
-            Refresh
-          </Button>
-          {kind === "products" && (
-            <Button variant="outline" onClick={() => setImportOpen(true)}>
-              Import CSV/XLSX
-            </Button>
-          )}
-          <Link to={`/catalog/${kind}/new`}>
-            <Button startIcon={<Plus size={16} />}>
-              Add {kind === "skus" ? "SKU" : kind.slice(0, -1)}
-            </Button>
-          </Link>
-        </div>
+      <ComponentCard>
         <DataGrid
           data={rows}
           columns={columns}
+          actions={
+            <div className="gap-2 flex flex-wrap items-center">
+              <Button
+                size="sm"
+                variant="outline"
+                startIcon={<RefreshCw size={14} />}
+                onClick={load}
+              >
+                Refresh
+              </Button>
+              {kind === "products" && (
+                <Button size="sm" variant="outline" onClick={() => setImportOpen(true)}>
+                  Import CSV/XLSX
+                </Button>
+              )}
+              <Link to={`/catalog/${kind}/new`}>
+                <Button size="sm" startIcon={<Plus size={14} />}>
+                  Add {kind === "skus" ? "SKU" : kind.slice(0, -1)}
+                </Button>
+              </Link>
+            </div>
+          }
           getRowId={(row, index) => String(row.id ?? index)}
           loading={state.loading && rows.length === 0}
           error={state.error}

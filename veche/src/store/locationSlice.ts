@@ -21,11 +21,11 @@ const initialState: LocationState = {
   provinces: [],
   provincesTotal: 0,
   provincesPage: 1,
-  provincesPageSize: 25,
+  provincesPageSize: 10,
   cities: [],
   citiesTotal: 0,
   citiesPage: 1,
-  citiesPageSize: 25,
+  citiesPageSize: 10,
   loading: false,
   error: null,
   report: null,
@@ -37,7 +37,7 @@ export const fetchProvinces = createAsyncThunk<PagedResult<Province>, PageQueryP
   "location/fetchProvinces",
   async (params, { rejectWithValue }) => {
     try {
-      return await locationService.provincesPaged(params || { page: 1, pageSize: 25 });
+      return await locationService.provincesPaged(params || { page: 1, pageSize: 10 });
     } catch (e) {
       return rejectWithValue(fail(e));
     }
@@ -48,7 +48,7 @@ export const fetchCities = createAsyncThunk<PagedResult<City>, PageQueryParams |
   "location/fetchCities",
   async (params, { rejectWithValue }) => {
     try {
-      return await locationService.citiesPaged(params || { page: 1, pageSize: 25 });
+      return await locationService.citiesPaged(params || { page: 1, pageSize: 10 });
     } catch (e) {
       return rejectWithValue(fail(e));
     }

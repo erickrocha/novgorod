@@ -47,7 +47,7 @@ export const fetchTenants = createAsyncThunk<
   "tenant/fetchTenants",
   async (params, { rejectWithValue }) => {
     try {
-      return await tenantService.getTenantsPaged(params || { page: 1, pageSize: 25 });
+      return await tenantService.getTenantsPaged(params || { page: 1, pageSize: 10 });
     } catch (error: unknown) {
       return rejectWithValue(
         getApiErrorMessage(error, "Falha ao buscar tenants"),
@@ -79,7 +79,7 @@ export const createTenant = createAsyncThunk<
 >("tenant/createTenant", async (tenantData, { rejectWithValue, dispatch }) => {
   try {
     const payload: TenantInput =
-      typeof tenantData === "string" ? { name: tenantData } : tenantData;
+      typeof tenantData === "string" ? { businessName: tenantData } : tenantData;
     const newTenant = await tenantService.createTenant(payload);
     dispatch(fetchTenants());
     return newTenant;
@@ -131,7 +131,7 @@ const initialState: TenantState = {
   tenantsList: [],
   total: 0,
   page: 1,
-  pageSize: 25,
+  pageSize: 10,
   loading: false,
   error: null,
 };

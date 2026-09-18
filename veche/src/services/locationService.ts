@@ -2,7 +2,7 @@ import { api } from "./api";
 import type { City, ImportReport, PagedResult, PageQueryParams, Province } from "./types";
 
 export const locationService = {
-  async provinces(): Promise<Province[]> { return (await api.get<Province[]>("/province", { params: { countryCode: "BR" } })).data; },
+  async provinces(countryCode: string = "BR"): Promise<Province[]> { return (await api.get<Province[]>("/province", { params: { countryCode } })).data; },
   async provincesPaged(params?: PageQueryParams): Promise<PagedResult<Province>> {
     const finalParams = { countryCode: "BR", ...params };
     return (await api.get<PagedResult<Province>>("/province/paged", { params: finalParams })).data;
@@ -10,6 +10,9 @@ export const locationService = {
   async cities(): Promise<City[]> { return (await api.get<City[]>("/cities")).data; },
   async citiesPaged(params?: PageQueryParams): Promise<PagedResult<City>> {
     return (await api.get<PagedResult<City>>("/cities/paged", { params })).data;
+  },
+  async citiesByProvince(provinceId: number): Promise<City[]> {
+    return (await api.get<City[]>(`/cities/by-province/${provinceId}`)).data;
   },
   async createProvince(data: Province) { return (await api.post<Province>("/province", data)).data; },
   async updateProvince(id: number, data: Province) { return (await api.put<Province>(`/province/${id}`, data)).data; },

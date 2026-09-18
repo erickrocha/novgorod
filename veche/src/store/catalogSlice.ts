@@ -36,7 +36,7 @@ const initialState: CatalogState = {
   skus: [],
   skusTotal: 0,
   skusPage: 1,
-  pageSize: 25,
+  pageSize: 10,
   loading: false,
   error: null,
 };
@@ -49,7 +49,7 @@ export const fetchCategories = createAsyncThunk<
   { rejectValue: string }
 >("catalog/fetchCategories", async (params, { rejectWithValue }) => {
   try {
-    return await catalogService.categoriesPaged(params || { page: 1, pageSize: 25 });
+    return await catalogService.categoriesPaged(params || { page: 1, pageSize: 10 });
   } catch (e) {
     return rejectWithValue(fail(e));
   }
@@ -61,7 +61,7 @@ export const fetchProducts = createAsyncThunk<
   { rejectValue: string }
 >("catalog/fetchProducts", async (params, { rejectWithValue }) => {
   try {
-    return await catalogService.productsPaged(params || { page: 1, pageSize: 25 });
+    return await catalogService.productsPaged(params || { page: 1, pageSize: 10 });
   } catch (e) {
     return rejectWithValue(fail(e));
   }
@@ -73,7 +73,7 @@ export const fetchSkus = createAsyncThunk<
   { rejectValue: string }
 >("catalog/fetchSkus", async (params, { rejectWithValue }) => {
   try {
-    return await catalogService.skusPaged(params || { page: 1, pageSize: 25 });
+    return await catalogService.skusPaged(params || { page: 1, pageSize: 10 });
   } catch (e) {
     return rejectWithValue(fail(e));
   }

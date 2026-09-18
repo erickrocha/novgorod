@@ -8,10 +8,9 @@ import {
   type ColumnDef,
   type PaginationState,
   type SortingState,
-  type VisibilityState,
 } from "@tanstack/react-table";
 import { ChevronDown, ChevronUp, ChevronsUpDown } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 export interface DataGridProps<T> {
   data: T[];
@@ -32,6 +31,7 @@ export interface DataGridProps<T> {
   globalFilter?: string;
   onGlobalFilterChange?: (value: string) => void;
   editable?: boolean;
+  actions?: React.ReactNode;
 }
 
 export default function DataGrid<T>({
@@ -52,9 +52,10 @@ export default function DataGrid<T>({
   onSortingChange,
   globalFilter: controlledGlobalFilter,
   onGlobalFilterChange,
+  actions,
 }: DataGridProps<T>) {
   const [paginationState, setPaginationState] = useState<PaginationState>(
-    controlledPagination ?? { pageIndex: 0, pageSize: 25 },
+    controlledPagination ?? { pageIndex: 0, pageSize: 10 },
   );
   const [sortingState, setSortingState] = useState<SortingState>(
     controlledSorting ?? [],
@@ -62,7 +63,6 @@ export default function DataGrid<T>({
   const [globalFilterState, setGlobalFilterState] = useState(
     controlledGlobalFilter ?? "",
   );
-  const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
 
   useEffect(() => {
     if (controlledPagination) setPaginationState(controlledPagination);
@@ -82,7 +82,6 @@ export default function DataGrid<T>({
       pagination: paginationState,
       sorting: sortingState,
       globalFilter: globalFilterState,
-      columnVisibility,
     },
     onPaginationChange: (updater) => {
       const next =
@@ -102,7 +101,6 @@ export default function DataGrid<T>({
       setGlobalFilterState(next);
       onGlobalFilterChange?.(next);
     },
-    onColumnVisibilityChange: setColumnVisibility,
     getCoreRowModel: getCoreRowModel(),
     getFilteredRowModel: manualFiltering ? undefined : getFilteredRowModel(),
     getSortedRowModel: manualSorting ? undefined : getSortedRowModel(),
@@ -121,11 +119,6 @@ export default function DataGrid<T>({
     getRowId,
   });
 
-  const visibleColumns = useMemo(
-    () => table.getAllLeafColumns().filter((column) => column.getCanHide()),
-    [table],
-  );
-
   return (
     <div className="space-y-4">
       <div className="gap-3 flex flex-wrap items-center justify-between">
@@ -134,32 +127,15 @@ export default function DataGrid<T>({
             value={globalFilterState}
             onChange={(event) => table.setGlobalFilter(event.target.value)}
             placeholder="Search..."
-            className="h-11 min-w-64 rounded-lg border-gray-300 px-4 text-sm text-gray-800 focus:border-brand-300 focus:ring-brand-500/20 dark:border-gray-700 dark:text-white/90 border bg-transparent outline-none focus:ring-3"
+            className="h-9 min-w-64 rounded-lg border-gray-300 px-3 text-sm text-gray-800 focus:border-brand-300 focus:ring-brand-500/20 dark:border-gray-700 dark:text-white/90 border bg-transparent outline-none focus:ring-3"
           />
         ) : (
           <span />
         )}
-        {visibleColumns.length > 0 && (
-          <details className="relative">
-            <summary className="rounded-lg border-gray-300 px-3 py-2 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-300 cursor-pointer list-none border">
-              Columns
-            </summary>
-            <div className="end-0 mt-2 min-w-48 rounded-lg border-gray-200 bg-white p-3 shadow-lg dark:border-gray-700 dark:bg-gray-900 absolute z-10 border">
-              {visibleColumns.map((column) => (
-                <label
-                  key={column.id}
-                  className="gap-2 py-1 text-sm flex items-center"
-                >
-                  <input
-                    type="checkbox"
-                    checked={column.getIsVisible()}
-                    onChange={column.getToggleVisibilityHandler()}
-                  />
-                  {String(column.columnDef.header ?? column.id)}
-                </label>
-              ))}
-            </div>
-          </details>
+        {actions && (
+          <div className="flex flex-wrap items-center gap-2">
+            {actions}
+          </div>
         )}
       </div>
 
@@ -176,36 +152,40 @@ export default function DataGrid<T>({
                 {headerGroup.headers.map((header) => {
                   const canSort = header.column.getCanSort();
                   const sorted = header.column.getIsSorted();
+                  const isActions =
+                    header.id === "actions" || header.column.id === "actions";
                   return (
                     <th
                       key={header.id}
-                      className="px-4 py-3 font-medium text-gray-500 whitespace-nowrap"
+                      className={`px-3 py-1.5 text-xs font-semibold text-gray-500 whitespace-nowrap ${
+                        isActions ? "text-end w-px" : "text-start"
+                      }`}
                     >
-                      {header.isPlaceholder ? null : (
+                      {header.isPlaceholder ? null : canSort ? (
                         <button
                           type="button"
-                          className={
-                            canSort ? "gap-1 inline-flex items-center" : ""
-                          }
-                          onClick={
-                            canSort
-                              ? header.column.getToggleSortingHandler()
-                              : undefined
-                          }
+                          className="gap-1 inline-flex items-center text-start font-medium text-inherit"
+                          onClick={header.column.getToggleSortingHandler()}
                         >
                           {flexRender(
                             header.column.columnDef.header,
                             header.getContext(),
                           )}
-                          {canSort &&
-                            (sorted === "asc" ? (
-                              <ChevronUp size={14} />
-                            ) : sorted === "desc" ? (
-                              <ChevronDown size={14} />
-                            ) : (
-                              <ChevronsUpDown size={14} />
-                            ))}
+                          {sorted === "asc" ? (
+                            <ChevronUp size={14} />
+                          ) : sorted === "desc" ? (
+                            <ChevronDown size={14} />
+                          ) : (
+                            <ChevronsUpDown size={14} />
+                          )}
                         </button>
+                      ) : (
+                        <span className={isActions ? "inline-block text-end" : "inline-block text-start"}>
+                          {flexRender(
+                            header.column.columnDef.header,
+                            header.getContext(),
+                          )}
+                        </span>
                       )}
                     </th>
                   );
@@ -218,7 +198,7 @@ export default function DataGrid<T>({
               <tr>
                 <td
                   colSpan={columns.length}
-                  className="px-4 py-12 text-gray-500 text-center"
+                  className="px-4 py-6 text-gray-500 text-center text-xs"
                 >
                   Loading…
                 </td>
@@ -227,7 +207,7 @@ export default function DataGrid<T>({
               <tr>
                 <td
                   colSpan={columns.length}
-                  className="px-4 py-12 text-gray-500 text-center"
+                  className="px-4 py-6 text-gray-500 text-center text-xs"
                 >
                   {emptyMessage}
                 </td>
@@ -236,16 +216,24 @@ export default function DataGrid<T>({
               table.getRowModel().rows.map((row) => (
                 <tr
                   key={row.id}
-                  className="border-gray-100 dark:border-gray-800 border-t"
+                  className="border-gray-100 dark:border-gray-800 border-t hover:bg-gray-50/50 dark:hover:bg-white/[0.02] transition-colors"
                 >
-                  {row.getVisibleCells().map((cell) => (
-                    <td key={cell.id} className="px-4 py-4">
-                      {flexRender(
-                        cell.column.columnDef.cell,
-                        cell.getContext(),
-                      )}
-                    </td>
-                  ))}
+                  {row.getVisibleCells().map((cell) => {
+                    const isActions = cell.column.id === "actions";
+                    return (
+                      <td
+                        key={cell.id}
+                        className={`px-3 py-1.5 text-sm whitespace-nowrap leading-normal ${
+                          isActions ? "text-end w-px" : "text-start"
+                        }`}
+                      >
+                        {flexRender(
+                          cell.column.columnDef.cell,
+                          cell.getContext(),
+                        )}
+                      </td>
+                    );
+                  })}
                 </tr>
               ))
             )}

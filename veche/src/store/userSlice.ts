@@ -30,7 +30,7 @@ export const fetchUsers = createAsyncThunk<
   "user/fetchUsers",
   async (params, { rejectWithValue }) => {
     try {
-      return await userService.getUsersPaged(params || { page: 1, pageSize: 25 });
+      return await userService.getUsersPaged(params || { page: 1, pageSize: 10 });
     } catch (error: unknown) {
       return rejectWithValue(
         getApiErrorMessage(error, "Falha ao buscar usuários"),
@@ -77,7 +77,7 @@ const initialState: UserState = {
   usersList: [],
   total: 0,
   page: 1,
-  pageSize: 25,
+  pageSize: 10,
   loading: false,
   error: null,
 };

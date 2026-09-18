@@ -1,7 +1,8 @@
 import Label from "@/components/form/Label";
+import Input from "@/components/form/input/InputField";
 import Checkbox from "@/components/form/input/Checkbox";
 import Button from "@/components/ui/button/Button";
-import { ChevronLeftIcon, EyeCloseIcon, EyeIcon } from "@/icons";
+import { EyeCloseIcon, EyeIcon } from "@/icons";
 import { clearError, loginUser } from "@/store/authSlice";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import {
@@ -11,7 +12,7 @@ import {
   type FormEvent,
   type SetStateAction,
 } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 
 export default function SignInForm() {
@@ -19,14 +20,18 @@ export default function SignInForm() {
   const [isChecked, setIsChecked] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const navigate = useNavigate();
   const dispatch = useAppDispatch();
-  const error = useAppSelector((state) => state.auth.error);
+  const { loading, error } = useAppSelector((state) => state.auth);
   const { t } = useTranslation();
 
-  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!email || !password) return;
-    dispatch(loginUser({ email, password }));
+    const result = await dispatch(loginUser({ email, password }));
+    if (result.meta.requestStatus === "fulfilled") {
+      navigate("/");
+    }
   };
 
   const handleInputChange =
@@ -38,15 +43,6 @@ export default function SignInForm() {
 
   return (
     <div className="flex flex-1 flex-col">
-      <div className="mx-auto w-full max-w-md pt-10">
-        <Link
-          to="/"
-          className="inline-flex items-center text-sm text-gray-500 transition-colors hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300"
-        >
-          <ChevronLeftIcon className="size-5 rtl:rotate-180" />
-          Back to dashboard
-        </Link>
-      </div>
       <div className="mx-auto flex w-full max-w-md flex-1 flex-col justify-center">
         <div>
           <div className="mb-5 sm:mb-8">
@@ -111,27 +107,33 @@ export default function SignInForm() {
               </div>
             </div>
             <form onSubmit={handleSubmit}>
-              <div className="space-y-6">
+              <div className="space-y-5">
+                {error && (
+                  <div className="rounded-lg border border-error-200 bg-error-50 p-3 text-sm text-error-600 dark:border-error-800/40 dark:bg-error-950/40 dark:text-error-400">
+                    {error}
+                  </div>
+                )}
                 <div>
-                  <Label>
-                    Email <span className="text-error-500">*</span>{" "}
+                  <Label htmlFor="login-email">
+                    Email <span className="text-error-500">*</span>
                   </Label>
-                  <input
+                  <Input
                     id="login-email"
                     type="email"
-                    placeholder={t("auth.emailPlaceholder")}
+                    placeholder={t("auth.emailPlaceholder") || "Enter your email"}
                     value={email}
                     onChange={handleInputChange(setEmail)}
                     required
                     autoComplete="username"
+                    error={Boolean(error)}
                   />
                 </div>
                 <div>
-                  <Label>
-                    Password <span className="text-error-500">*</span>{" "}
+                  <Label htmlFor="login-password">
+                    Password <span className="text-error-500">*</span>
                   </Label>
                   <div className="relative">
-                    <input
+                    <Input
                       id="login-password"
                       type={showPassword ? "text" : "password"}
                       placeholder="••••••••"
@@ -139,17 +141,22 @@ export default function SignInForm() {
                       onChange={handleInputChange(setPassword)}
                       required
                       autoComplete="current-password"
+                      error={Boolean(error)}
+                      className="pe-11"
                     />
-                    <span
+                    <button
+                      type="button"
+                      tabIndex={-1}
                       onClick={() => setShowPassword(!showPassword)}
-                      className="absolute inset-e-4 top-1/2 z-30 -translate-y-1/2 cursor-pointer"
+                      className="absolute inset-e-4 top-1/2 z-20 -translate-y-1/2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition-colors"
+                      aria-label={showPassword ? "Hide password" : "Show password"}
                     >
                       {showPassword ? (
-                        <EyeIcon className="size-5 fill-gray-500 dark:fill-gray-400" />
+                        <EyeIcon className="size-5 fill-current" />
                       ) : (
-                        <EyeCloseIcon className="size-5 fill-gray-500 dark:fill-gray-400" />
+                        <EyeCloseIcon className="size-5 fill-current" />
                       )}
-                    </span>
+                    </button>
                   </div>
                 </div>
                 <div className="flex items-center justify-between">
@@ -167,24 +174,17 @@ export default function SignInForm() {
                   </Link>
                 </div>
                 <div>
-                  <Button className="w-full" size="sm">
-                    Sign in
+                  <Button
+                    className="w-full"
+                    size="sm"
+                    type="submit"
+                    disabled={loading}
+                  >
+                    {loading ? "Signing in..." : "Sign in"}
                   </Button>
                 </div>
               </div>
             </form>
-
-            <div className="mt-5">
-              <p className="text-center text-sm font-normal text-gray-700 sm:text-start dark:text-gray-400">
-                Don&apos;t have an account? {""}
-                <Link
-                  to="/signup"
-                  className="text-brand-500 hover:text-brand-600 dark:text-brand-400"
-                >
-                  Sign Up
-                </Link>
-              </p>
-            </div>
           </div>
         </div>
       </div>

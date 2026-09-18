@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { Plus, RefreshCw } from "lucide-react";
+import { Pencil, Plus, RefreshCw } from "lucide-react";
 import type { ColumnDef, PaginationState, SortingState } from "@tanstack/react-table";
 import PageBreadcrumb from "@/components/common/PageBreadCrumb";
 import PageMeta from "@/components/common/PageMeta";
@@ -17,12 +17,10 @@ export default function Users() {
   const [searchParams, setSearchParams] = useSearchParams();
   const dispatch = useAppDispatch();
   const { usersList, total, loading, error } = useAppSelector((s) => s.user);
-  const { user } = useAppSelector((s) => s.auth);
   const { tenantsList } = useAppSelector((s) => s.tenant);
-  const isSysAdmin = user?.role === ROLES.SYS_ADMIN;
 
   const page = Number(searchParams.get("page") || "1");
-  const pageSize = Number(searchParams.get("pageSize") || "25");
+  const pageSize = Number(searchParams.get("pageSize") || "10");
   const q = searchParams.get("q") || "";
   const sortBy = searchParams.get("sortBy") || "id";
   const sortDir = (searchParams.get("sortDir") as "asc" | "desc") || "asc";
@@ -114,12 +112,16 @@ export default function Users() {
       enableSorting: false,
       enableHiding: false,
       cell: ({ row }) => (
-        <Link
-          className="gap-1 text-brand-500 inline-flex items-center"
-          to={`/users/${row.original.id}/edit`}
-        >
-          Edit
-        </Link>
+        <div className="flex items-center justify-end text-end">
+          <Link
+            title="Edit"
+            aria-label="Edit"
+            className="h-7 w-7 rounded-md inline-flex items-center justify-center text-gray-500 hover:text-brand-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-brand-400 dark:hover:bg-white/5 transition-colors"
+            to={`/users/${row.original.id}/edit`}
+          >
+            <Pencil size={15} />
+          </Link>
+        </div>
       ),
     },
   ];
@@ -127,29 +129,25 @@ export default function Users() {
     <>
       <PageMeta title="Users | Veche" description="Manage users" />
       <PageBreadcrumb pageTitle="Users" />
-      <ComponentCard
-        title="User management"
-        desc={
-          isSysAdmin
-            ? "Manage users across all tenants."
-            : "Manage users in your tenant."
-        }
-      >
-        <div className="mb-5 gap-3 flex flex-wrap justify-end">
-          <Button
-            variant="outline"
-            startIcon={<RefreshCw size={16} />}
-            onClick={() => dispatch(fetchUsers({ page, pageSize, q, sortBy, sortDir }))}
-          >
-            Refresh
-          </Button>
-          <Link to="/users/new">
-            <Button startIcon={<Plus size={16} />}>Add user</Button>
-          </Link>
-        </div>
+      <ComponentCard>
         <DataGrid
           data={usersList}
           columns={columns}
+          actions={
+            <div className="gap-2 flex flex-wrap items-center">
+              <Button
+                size="sm"
+                variant="outline"
+                startIcon={<RefreshCw size={14} />}
+                onClick={() => dispatch(fetchUsers({ page, pageSize, q, sortBy, sortDir }))}
+              >
+                Refresh
+              </Button>
+              <Link to="/users/new">
+                <Button size="sm" startIcon={<Plus size={14} />}>Add user</Button>
+              </Link>
+            </div>
+          }
           getRowId={(row, index) => String(row.id ?? row.uuid ?? index)}
           loading={loading && usersList.length === 0}
           error={error}
