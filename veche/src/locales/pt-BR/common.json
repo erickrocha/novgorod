@@ -1,7 +1,48 @@
 {
   "sidebar": {
+    "groups": {
+      "menu": "Menu",
+      "support": "Suporte",
+      "others": "Outros"
+      ,"systemSettings": "Configurações do sistema"
+    },
+    "badges": {
+      "new": "novo",
+      "pro": "pro"
+    },
     "items": {
-      "users": "Usuários"
+      "dashboard": "Painel",
+      "ecommerceHome": "Comércio eletrônico",
+      "calendar": "Calendário",
+      "userProfile": "Perfil do usuário",
+      "users": "Usuários",
+      "tenants": "Tenants",
+      "catalog": "Catálogo",
+      "categories": "Categorias",
+      "products": "Produtos",
+      "skus": "SKUs",
+      "systemSettings": "Configurações do sistema",
+      "provinces": "Estados",
+      "cities": "Cidades",
+      "forms": "Formulários",
+      "formElements": "Elementos de formulário",
+      "tables": "Tabelas",
+      "basicTables": "Tabelas básicas",
+      "pages": "Páginas",
+      "blankPage": "Página em branco",
+      "charts": "Gráficos",
+      "lineChart": "Gráfico de linhas",
+      "barChart": "Gráfico de barras",
+      "uiElements": "Elementos de interface",
+      "alerts": "Alertas",
+      "avatar": "Avatar",
+      "badge": "Distintivo",
+      "buttons": "Botões",
+      "images": "Imagens",
+      "videos": "Vídeos",
+      "authentication": "Autenticação",
+      "signIn": "Entrar",
+      "signUp": "Cadastrar-se"
     }
   }
 }

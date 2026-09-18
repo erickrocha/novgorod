@@ -9,4 +9,5 @@ pub struct ProvinceJson {
     pub acronym: String,
     pub name: String,
     pub country_code: String,
+    pub ibge_code: Option<String>,
 }

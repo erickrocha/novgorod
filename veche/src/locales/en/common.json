@@ -17,6 +17,7 @@
       "menu": "Menu",
       "support": "Support",
       "others": "Others"
+      ,"systemSettings": "System Settings"
     },
     "badges": {
       "new": "new",
@@ -52,6 +53,13 @@
       "calendar": "Calendar",
       "userProfile": "User Profile",
       "users": "Users",
+      "tenants": "Tenants",
+      "catalog": "Catalog",
+      "categories": "Categories",
+      "skus": "SKUs",
+      "systemSettings": "System Settings",
+      "provinces": "Provinces",
+      "cities": "Cities",
       "task": "Task",
       "taskList": "List",
       "kanban": "Kanban",

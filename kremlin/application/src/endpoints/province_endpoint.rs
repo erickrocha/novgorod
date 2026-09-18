@@ -9,9 +9,14 @@ use crate::endpoints::json::province_json::ProvinceJson;
 use crate::infrastructure::mapper::{Mapper, ProvinceMapper};
 use axum::Json;
 use axum::extract::Extension;
+use axum::extract::Multipart;
 use axum::extract::{Path, Query, State};
+use axum::http::StatusCode;
+use business::domain::enums::Role;
+use business::domain::user::User;
 use business::gateway::province_gateway::ProvinceGateway;
 use business::use_cases::province_use_case::ProvinceUseCase;
+use serde::Serialize;
 
 #[derive(Debug, serde::Deserialize, utoipa::IntoParams)]
 #[serde(rename_all = "camelCase")]
@@ -86,6 +91,154 @@ pub async fn get_by_id(
             ErrorKey::RequiredParameterMissing,
         )),
     }
+}
+
+fn require_sysadmin(user: &User, locale: Locale) -> Result<(), ExceptionResponse> {
+    (user.role == Role::SysAdmin)
+        .then_some(())
+        .ok_or(ExceptionResponse::Forbidden(
+            locale,
+            ErrorKey::InvalidParameterValue,
+        ))
+}
+
+#[utoipa::path(post, tag = "Province", path = "/province", request_body = ProvinceJson, responses((status = 201, body = ProvinceJson)))]
+pub async fn add(
+    state: State<AppState>,
+    Extension(locale): Extension<Locale>,
+    Extension(user): Extension<User>,
+    Json(payload): Json<ProvinceJson>,
+) -> HttpResponse<(StatusCode, Json<ProvinceJson>)> {
+    require_sysadmin(&user, locale)?;
+    let use_case = ProvinceUseCase::new(ProvinceGateway::new(state.conn.as_ref().clone()));
+    use_case
+        .save(ProvinceMapper::domain(payload))
+        .await
+        .map(|value| (StatusCode::CREATED, Json(ProvinceMapper::json(value))))
+        .map_err(|_| ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))
+}
+
+#[utoipa::path(put, tag = "Province", path = "/province/{id}", params(("id" = i64, Path)), request_body = ProvinceJson, responses((status = 200, body = ProvinceJson)))]
+pub async fn update(
+    state: State<AppState>,
+    Extension(locale): Extension<Locale>,
+    Extension(user): Extension<User>,
+    Path(id): Path<i64>,
+    Json(mut payload): Json<ProvinceJson>,
+) -> HttpResponse<Json<ProvinceJson>> {
+    require_sysadmin(&user, locale)?;
+    payload.id = Some(id);
+    let use_case = ProvinceUseCase::new(ProvinceGateway::new(state.conn.as_ref().clone()));
+    use_case
+        .save(ProvinceMapper::domain(payload))
+        .await
+        .map(|value| Json(ProvinceMapper::json(value)))
+        .map_err(|_| ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct ImportReport {
+    pub inserted: usize,
+    pub updated: usize,
+    pub skipped: usize,
+    pub errors: Vec<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct ProvinceCsv {
+    ibge_code: String,
+    acronym: String,
+    name: String,
+    country_code: String,
+}
+
+#[utoipa::path(post, tag = "Province", path = "/province/import", request_body(content_type = "multipart/form-data", content = String), responses((status = 200, body = ImportReport)))]
+pub async fn import_csv(
+    state: State<AppState>,
+    Extension(locale): Extension<Locale>,
+    Extension(user): Extension<User>,
+    mut multipart: Multipart,
+) -> HttpResponse<Json<ImportReport>> {
+    require_sysadmin(&user, locale)?;
+    let mut bytes = None;
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|_| ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?
+    {
+        if field.name() == Some("file") {
+            bytes = Some(field.bytes().await.map_err(|_| {
+                ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue)
+            })?);
+        }
+    }
+    let Some(bytes) = bytes else {
+        return Err(ExceptionResponse::BadRequest(
+            locale,
+            ErrorKey::RequiredParameterMissing,
+        ));
+    };
+    let mut reader = csv::Reader::from_reader(bytes.as_ref());
+    let gateway = ProvinceGateway::new(state.conn.as_ref().clone());
+    let use_case = ProvinceUseCase::new(gateway);
+    let mut report = ImportReport {
+        inserted: 0,
+        updated: 0,
+        skipped: 0,
+        errors: Vec::new(),
+    };
+    for (index, row) in reader.deserialize::<ProvinceCsv>().enumerate() {
+        let row = match row {
+            Ok(row) => row,
+            Err(error) => {
+                report.skipped += 1;
+                report.errors.push(format!("row {}: {error}", index + 2));
+                continue;
+            }
+        };
+        let code = row.ibge_code.trim().to_string();
+        if code.is_empty()
+            || row.acronym.trim().is_empty()
+            || row.name.trim().is_empty()
+            || row.country_code.trim().len() != 2
+        {
+            report.skipped += 1;
+            report
+                .errors
+                .push(format!("row {}: invalid required value", index + 2));
+            continue;
+        }
+        let existing = use_case
+            .find_all()
+            .await
+            .map_err(|_| ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?
+            .into_iter()
+            .find(|value| value.ibge_code.as_deref() == Some(code.as_str()));
+        let is_update = existing.is_some();
+        let payload = ProvinceJson {
+            id: existing.as_ref().and_then(|v| v.id),
+            uuid: existing.and_then(|v| v.uuid),
+            acronym: row.acronym.trim().to_ascii_uppercase(),
+            name: row.name.trim().to_string(),
+            country_code: row.country_code.trim().to_ascii_uppercase(),
+            ibge_code: Some(code),
+        };
+        if use_case
+            .save(ProvinceMapper::domain(payload))
+            .await
+            .is_err()
+        {
+            report.skipped += 1;
+            report
+                .errors
+                .push(format!("row {}: database error", index + 2));
+        } else if is_update {
+            report.updated += 1;
+        } else {
+            report.inserted += 1;
+        }
+    }
+    Ok(Json(report))
 }
 
 #[cfg(test)]

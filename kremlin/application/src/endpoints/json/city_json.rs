@@ -8,4 +8,5 @@ pub struct CityJson {
     pub uuid: Option<String>,
     pub province_id: i64,
     pub name: String,
+    pub ibge_code: Option<String>,
 }

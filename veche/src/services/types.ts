@@ -88,6 +88,10 @@ export interface User {
   updatedBy?: string | null;
 }
 
+export interface Province { id?: number; uuid?: string; ibgeCode?: string | null; acronym: string; name: string; countryCode: string }
+export interface City { id?: number; uuid?: string; ibgeCode?: string | null; provinceId: number; name: string }
+export interface ImportReport { inserted: number; updated: number; skipped: number; errors: string[] }
+
 export type UserInput = Pick<User, "email"> &
   Partial<
     Omit<

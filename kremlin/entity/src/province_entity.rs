@@ -18,6 +18,7 @@ pub struct Model {
     pub acronym: String,
     pub name: String,
     pub country_code: String,
+    pub ibge_code: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
@@ -27,6 +28,7 @@ pub enum Column {
     Acronym,
     Name,
     CountryCode,
+    IbgeCode,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DerivePrimaryKey)]
@@ -55,6 +57,7 @@ impl ColumnTrait for Column {
             Self::Acronym => ColumnType::String(StringLen::N(10u32)).def(),
             Self::Name => ColumnType::String(StringLen::N(255u32)).def(),
             Self::CountryCode => ColumnType::String(StringLen::N(2u32)).def(),
+            Self::IbgeCode => ColumnType::String(StringLen::N(2u32)).def(),
         }
     }
 }

@@ -14,6 +14,7 @@ mod m20260917_000011_create_table_sku;
 mod m20260917_000012_create_table_sku_attribute_value;
 mod m20260917_000013_create_table_sku_stock;
 mod m20260917_000014_create_table_product_image;
+mod m20260917_000015_add_ibge_location_codes;
 
 pub struct Migrator;
 
@@ -35,6 +36,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260917_000012_create_table_sku_attribute_value::Migration),
             Box::new(m20260917_000013_create_table_sku_stock::Migration),
             Box::new(m20260917_000014_create_table_product_image::Migration),
+            Box::new(m20260917_000015_add_ibge_location_codes::Migration),
         ]
     }
 }
@@ -53,12 +55,12 @@ mod tests {
             .collect();
         let unique: HashSet<&str> = names.iter().copied().collect();
 
-        assert_eq!(names.len(), 14);
+        assert_eq!(names.len(), 15);
         assert_eq!(unique.len(), names.len());
         assert!(names.windows(2).all(|pair| pair[0] < pair[1]));
         assert_eq!(
             names.last().copied(),
-            Some("m20260917_000014_create_table_product_image")
+            Some("m20260917_000015_add_ibge_location_codes")
         );
     }
 }

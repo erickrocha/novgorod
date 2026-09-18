@@ -142,4 +142,5 @@ export const getApiErrorMessage = (
 export { authService } from "./authService";
 export { tenantService } from "./tenantService";
 export { userService } from "./userService";
+export { locationService } from "./locationService";
 export type * from "./types";

@@ -9,6 +9,7 @@ pub struct City {
     pub uuid: Option<String>,
     pub province_id: i64,
     pub name: String,
+    pub ibge_code: Option<String>,
 }
 
 pub struct CityEntityMapper {}
@@ -26,6 +27,10 @@ impl EntityMapper<City, Model, ActiveModel> for CityEntityMapper {
             },
             province_id: Set(d.province_id),
             name: Set(d.name),
+            ibge_code: match d.ibge_code {
+                Some(code) => Set(Some(code)),
+                None => NotSet,
+            },
         }
     }
 
@@ -35,6 +40,7 @@ impl EntityMapper<City, Model, ActiveModel> for CityEntityMapper {
             uuid: Some(uuid_to_string(e.uuid)),
             province_id: e.province_id,
             name: e.name,
+            ibge_code: e.ibge_code,
         }
     }
 
@@ -47,6 +53,7 @@ impl EntityMapper<City, Model, ActiveModel> for CityEntityMapper {
                 uuid: e.uuid.take().map(uuid_to_string),
                 province_id: e.province_id.take().unwrap_or_default(),
                 name: e.name.take().unwrap_or_default(),
+                ibge_code: e.ibge_code.take().flatten(),
             },
         }
     }

@@ -1,5 +1,6 @@
 import {Suspense} from "react";
-import {Route, Routes} from "react-router-dom";
+import type React from "react";
+import {Navigate, Route, Routes} from "react-router-dom";
 import AppLayout from "@/layout/AppLayout.tsx";
 import UserProfiles from "@/pages/UserProfiles.tsx";
 import Calendar from "@/pages/Calendar";
@@ -22,6 +23,14 @@ import Tenants from "@/pages/Management/Tenants";
 import TenantForm from "@/pages/Management/TenantForm";
 import CatalogList from "@/pages/Catalog/CatalogList";
 import CatalogForm from "@/pages/Catalog/CatalogForm";
+import Locations from "@/pages/Management/Locations";
+import { useAppSelector } from "@/store/hooks";
+import { ROLES } from "@/utils/enums";
+
+const SysAdminOnly = ({ children }: { children: React.ReactNode }) => {
+    const role = useAppSelector((state) => state.auth.user?.role);
+    return role === ROLES.SYS_ADMIN ? <>{children}</> : <Navigate to="/" replace />;
+};
 
 
 export const ProtectedRoutes = () => (
@@ -42,6 +51,8 @@ export const ProtectedRoutes = () => (
                 <Route path="/catalog/:kind" element={<CatalogList />} />
                 <Route path="/catalog/:kind/new" element={<CatalogForm />} />
                 <Route path="/catalog/:kind/:id/edit" element={<CatalogForm />} />
+                <Route path="/system-settings/provinces" element={<SysAdminOnly><Locations kind="provinces" /></SysAdminOnly>} />
+                <Route path="/system-settings/cities" element={<SysAdminOnly><Locations kind="cities" /></SysAdminOnly>} />
                 <Route path="/calendar" element={<Calendar />} />
                 <Route path="/blank" element={<Blank />} />
 

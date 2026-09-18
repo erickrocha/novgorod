@@ -17,6 +17,7 @@ tokio = { workspace = true }
 tracing-subscriber = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+csv = { workspace = true }
 
 #module dependencies
 axum = { version = "0.8.9", features = ["multipart"] }

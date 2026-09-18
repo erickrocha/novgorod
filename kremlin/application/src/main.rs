@@ -56,9 +56,15 @@ impl Modify for SecurityAddon {
         endpoints::user_endpoint::change_password,
         endpoints::province_endpoint::list_all,
         endpoints::province_endpoint::get_by_id,
+        endpoints::province_endpoint::add,
+        endpoints::province_endpoint::update,
+        endpoints::province_endpoint::import_csv,
         endpoints::city_endpoint::list_all,
         endpoints::city_endpoint::get_by_province,
         endpoints::city_endpoint::get_by_id
+        ,endpoints::city_endpoint::add
+        ,endpoints::city_endpoint::update
+        ,endpoints::city_endpoint::import_csv
         ,endpoints::catalog_endpoint::categories
         ,endpoints::catalog_endpoint::attributes
         ,endpoints::catalog_endpoint::attribute_values

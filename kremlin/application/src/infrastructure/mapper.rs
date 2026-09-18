@@ -179,6 +179,7 @@ impl Mapper<Province, ProvinceJson> for ProvinceMapper {
             uuid: t.uuid,
             acronym: t.acronym,
             name: t.name,
+            ibge_code: t.ibge_code,
             country_code: t.country_code,
         }
     }
@@ -190,6 +191,7 @@ impl Mapper<Province, ProvinceJson> for ProvinceMapper {
             acronym: u.acronym,
             name: u.name,
             country_code: u.country_code,
+            ibge_code: u.ibge_code,
         }
     }
 }
@@ -202,6 +204,7 @@ impl Mapper<City, CityJson> for CityMapper {
             uuid: t.uuid,
             province_id: t.province_id,
             name: t.name,
+            ibge_code: t.ibge_code,
         }
     }
 
@@ -211,6 +214,7 @@ impl Mapper<City, CityJson> for CityMapper {
             uuid: u.uuid,
             province_id: u.province_id,
             name: u.name,
+            ibge_code: u.ibge_code,
         }
     }
 }

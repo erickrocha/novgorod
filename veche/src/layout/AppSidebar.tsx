@@ -17,6 +17,8 @@ import {
 } from "../icons";
 import { cn } from "../utils";
 import SidebarWidget from "./SidebarWidget";
+import { useAppSelector } from "@/store/hooks";
+import { ROLES } from "@/utils/enums";
 
 type NavItem = {
   name: string;
@@ -144,10 +146,13 @@ const othersItems: NavItem[] = [
   },
 ];
 
+const systemSettingsItems: NavItem[] = [{ icon: <BoxCubeIcon fontSize={24} />, name: "System Settings", key: "systemSettings", subItems: [{ name: "Provinces", key: "provinces", path: "/system-settings/provinces" }, { name: "Cities", key: "cities", path: "/system-settings/cities" }] }];
+
 const AppSidebar: React.FC = () => {
   const { isExpanded, isMobileOpen, isHovered, setIsHovered, setIsMobileOpen } =
     useSidebar();
   const { t } = useTranslation();
+  const isSysAdmin = useAppSelector((state) => state.auth.user?.role === ROLES.SYS_ADMIN);
   const location = useLocation();
   const [openSubmenu, setOpenSubmenu] = useState<{
     type: "main" | "others";
@@ -450,6 +455,7 @@ const AppSidebar: React.FC = () => {
               </h2>
               {renderMenuItems(othersItems, "others")}
             </div>
+            {isSysAdmin && <div>{(isExpanded || isHovered || isMobileOpen) && <h2 className="mb-4 flex text-xs leading-5 text-gray-400 uppercase">{t("sidebar.groups.systemSettings")}</h2>}{renderMenuItems(systemSettingsItems, "main")}</div>}
           </div>
         </nav>
 

@@ -29,6 +29,16 @@ impl ProvinceGateway {
             .all(&self.db)
             .await
     }
+
+    pub async fn find_by_ibge_code(
+        &self,
+        code: &str,
+    ) -> Result<Option<province_entity::Model>, DbErr> {
+        ProvinceQuery::find()
+            .filter(province_entity::Column::IbgeCode.eq(code))
+            .one(&self.db)
+            .await
+    }
 }
 
 #[async_trait]

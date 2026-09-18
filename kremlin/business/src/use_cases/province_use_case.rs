@@ -31,6 +31,23 @@ impl ProvinceUseCase {
         }
     }
 
+    pub async fn save(&self, province: Province) -> Result<Province, BusinessError> {
+        let model = self
+            .gateway
+            .persist(province)
+            .await
+            .map_err(|e| BusinessError::new(format!("Database error: {e}")))?;
+        Ok(ProvinceEntityMapper::from_active_model(model))
+    }
+
+    pub async fn find_by_ibge_code(&self, code: &str) -> Result<Option<Province>, BusinessError> {
+        self.gateway
+            .find_by_ibge_code(code)
+            .await
+            .map(|v| v.map(ProvinceEntityMapper::from_model))
+            .map_err(|e| BusinessError::new(e.to_string()))
+    }
+
     pub async fn find_by_uuid(&self, uuid: String) -> Result<Province, BusinessError> {
         log::info!(
             "[ProvinceUseCase::find_by_uuid] Executing for uuid: {}",
@@ -70,6 +87,15 @@ impl ProvinceUseCase {
                 BusinessError::new(msg)
             })?;
 
+        Ok(ProvinceEntityMapper::from_models(models))
+    }
+
+    pub async fn find_all(&self) -> Result<Vec<Province>, BusinessError> {
+        let models = self
+            .gateway
+            .find_all()
+            .await
+            .map_err(|e| BusinessError::new(e.to_string()))?;
         Ok(ProvinceEntityMapper::from_models(models))
     }
 }

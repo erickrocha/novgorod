@@ -29,6 +29,13 @@ impl CityGateway {
             .all(&self.db)
             .await
     }
+
+    pub async fn find_by_ibge_code(&self, code: &str) -> Result<Option<city_entity::Model>, DbErr> {
+        CityQuery::find()
+            .filter(city_entity::Column::IbgeCode.eq(code))
+            .one(&self.db)
+            .await
+    }
 }
 
 #[async_trait]

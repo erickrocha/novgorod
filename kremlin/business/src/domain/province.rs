@@ -10,6 +10,7 @@ pub struct Province {
     pub acronym: String,
     pub name: String,
     pub country_code: String,
+    pub ibge_code: Option<String>,
 }
 
 pub struct ProvinceEntityMapper {}
@@ -28,6 +29,10 @@ impl EntityMapper<Province, Model, ActiveModel> for ProvinceEntityMapper {
             acronym: Set(d.acronym),
             name: Set(d.name),
             country_code: Set(d.country_code),
+            ibge_code: match d.ibge_code {
+                Some(code) => Set(Some(code)),
+                None => NotSet,
+            },
         }
     }
 
@@ -38,6 +43,7 @@ impl EntityMapper<Province, Model, ActiveModel> for ProvinceEntityMapper {
             acronym: e.acronym,
             name: e.name,
             country_code: e.country_code,
+            ibge_code: e.ibge_code,
         }
     }
 
@@ -51,6 +57,7 @@ impl EntityMapper<Province, Model, ActiveModel> for ProvinceEntityMapper {
                 acronym: e.acronym.take().unwrap_or_default(),
                 name: e.name.take().unwrap_or_default(),
                 country_code: e.country_code.take().unwrap_or_default(),
+                ibge_code: e.ibge_code.take().flatten(),
             },
         }
     }

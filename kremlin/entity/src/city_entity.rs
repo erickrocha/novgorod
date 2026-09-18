@@ -17,6 +17,7 @@ pub struct Model {
     pub uuid: Uuid,
     pub province_id: i64,
     pub name: String,
+    pub ibge_code: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
@@ -25,6 +26,7 @@ pub enum Column {
     Uuid,
     ProvinceId,
     Name,
+    IbgeCode,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DerivePrimaryKey)]
@@ -52,6 +54,7 @@ impl ColumnTrait for Column {
             Self::Uuid => ColumnType::VarBinary(StringLen::None).def().unique(),
             Self::ProvinceId => ColumnType::Integer.def(),
             Self::Name => ColumnType::String(StringLen::N(255u32)).def(),
+            Self::IbgeCode => ColumnType::String(StringLen::N(7u32)).def(),
         }
     }
 }

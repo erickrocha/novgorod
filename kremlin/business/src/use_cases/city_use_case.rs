@@ -31,6 +31,23 @@ impl CityUseCase {
         }
     }
 
+    pub async fn save(&self, city: City) -> Result<City, BusinessError> {
+        let model = self
+            .gateway
+            .persist(city)
+            .await
+            .map_err(|e| BusinessError::new(format!("Database error: {e}")))?;
+        Ok(CityEntityMapper::from_active_model(model))
+    }
+
+    pub async fn find_by_ibge_code(&self, code: &str) -> Result<Option<City>, BusinessError> {
+        self.gateway
+            .find_by_ibge_code(code)
+            .await
+            .map(|v| v.map(CityEntityMapper::from_model))
+            .map_err(|e| BusinessError::new(e.to_string()))
+    }
+
     pub async fn find_by_uuid(&self, uuid: String) -> Result<City, BusinessError> {
         log::info!("[CityUseCase::find_by_uuid] Executing for uuid: {}", uuid);
         let model = self.gateway.find_by_uuid(uuid.clone()).await.map_err(|e| {

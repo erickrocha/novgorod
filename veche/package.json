@@ -1,4 +1,4 @@
-  {
+{
   "name": "veche",
   "private": true,
   "version": "2.4.0",
@@ -24,6 +24,7 @@
     "leaflet": "^1.9.4",
     "lucide-react": "^1.47.0",
     "maplibre-gl": "^6.8.0",
+    "papaparse": "^5.7.0",
     "prismjs": "^1.30.0",
     "react": "^19.2.7",
     "react-apexcharts": "^2.1.1",
@@ -43,7 +44,8 @@
     "simplebar-react": "^3.3.2",
     "swiper": "^12.1.4",
     "tailwind-merge": "^3.6.0",
-    "temporal-polyfill": "^1.0.1"
+    "temporal-polyfill": "^1.0.1",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -52,6 +54,7 @@
     "@types/jsvectormap": "^1.7.0",
     "@types/leaflet": "^1.9.21",
     "@types/node": "^26.4.1",
+    "@types/papaparse": "^5.5.2",
     "@types/prismjs": "^1.26.5",
     "@types/react": "^19.0.12",
     "@types/react-dom": "^19.0.4",
