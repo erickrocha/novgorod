@@ -79,7 +79,10 @@ impl RelationTrait for Relation {
         match self {
             Self::Sku => Entity::belongs_to(super::sku_entity::Entity)
                 .from((Column::TenantId, Column::SkuId))
-                .to((super::sku_entity::Column::TenantId, super::sku_entity::Column::Id))
+                .to((
+                    super::sku_entity::Column::TenantId,
+                    super::sku_entity::Column::Id,
+                ))
                 .into(),
         }
     }

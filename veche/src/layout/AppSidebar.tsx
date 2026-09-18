@@ -1,7 +1,7 @@
 import { useSidebar } from "@/context/SidebarContext";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Link, useLocation } from "react-router";
+import { Link, useLocation } from "react-router-dom";
 import {
   BoxCubeIcon,
   CalenderIcon,
@@ -53,6 +53,28 @@ const navItems: NavItem[] = [
     name: "User Profile",
     key: "userProfile",
     path: "/profile",
+  },
+  {
+    icon: <UserCircleIcon fontSize={24} />,
+    name: "Users",
+    key: "users",
+    path: "/users",
+  },
+  {
+    icon: <BoxCubeIcon fontSize={24} />,
+    name: "Tenants",
+    key: "tenants",
+    path: "/tenants",
+  },
+  {
+    icon: <TableIcon fontSize={24} />,
+    name: "Catalog",
+    key: "catalog",
+    subItems: [
+      { name: "Categories", key: "categories", path: "/catalog/categories" },
+      { name: "Products", key: "products", path: "/catalog/products" },
+      { name: "SKUs", key: "skus", path: "/catalog/skus" },
+    ],
   },
   {
     name: "Forms",

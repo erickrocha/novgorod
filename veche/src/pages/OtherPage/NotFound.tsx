@@ -1,7 +1,7 @@
 import GridShape from "@/components/common/GridShape";
 import PageMeta from "@/components/common/PageMeta";
 import { cn } from "@/utils";
-import { Link } from "react-router";
+import { Link } from "react-router-dom";
 
 interface NotFoundProps {
   className?: string;

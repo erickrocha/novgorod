@@ -86,7 +86,9 @@ impl RelationTrait for Relation {
                 .from((Column::TenantId, Column::ParentId))
                 .to((Column::TenantId, Column::Id))
                 .into(),
-            Self::ProductCategory => Entity::has_many(super::product_category_entity::Entity).into(),
+            Self::ProductCategory => {
+                Entity::has_many(super::product_category_entity::Entity).into()
+            }
             Self::Tenant => Entity::belongs_to(super::tenant_entity::Entity)
                 .from(Column::TenantId)
                 .to(super::tenant_entity::Column::Id)

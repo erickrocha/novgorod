@@ -1,5 +1,5 @@
 import {Suspense} from "react";
-import {Route, Routes} from "react-router";
+import {Route, Routes} from "react-router-dom";
 import AppLayout from "@/layout/AppLayout.tsx";
 import UserProfiles from "@/pages/UserProfiles.tsx";
 import Calendar from "@/pages/Calendar";
@@ -16,17 +16,32 @@ import Buttons from "@/pages/UiElements/Buttons";
 import Images from "@/pages/UiElements/Images";
 import Videos from "@/pages/UiElements/Videos";
 import {ScrollToTop} from "@/components/common/ScrollToTop.tsx";
+import Users from "@/pages/Management/Users";
+import UserForm from "@/pages/Management/UserForm";
+import Tenants from "@/pages/Management/Tenants";
+import TenantForm from "@/pages/Management/TenantForm";
+import CatalogList from "@/pages/Catalog/CatalogList";
+import CatalogForm from "@/pages/Catalog/CatalogForm";
 
 
 export const ProtectedRoutes = () => (
     <Suspense fallback={<div className="route-loading-state">Loading...</div>}>
+        <ScrollToTop />
         <Routes>
-            <ScrollToTop />
             <Route element={<AppLayout />}>
                 <Route index path="/" element={<Home />} />
 
                 {/* Others Page */}
                 <Route path="/profile" element={<UserProfiles />} />
+                <Route path="/users" element={<Users />} />
+                <Route path="/users/new" element={<UserForm />} />
+                <Route path="/users/:id/edit" element={<UserForm />} />
+                <Route path="/tenants" element={<Tenants />} />
+                <Route path="/tenants/new" element={<TenantForm />} />
+                <Route path="/tenants/:id/edit" element={<TenantForm />} />
+                <Route path="/catalog/:kind" element={<CatalogList />} />
+                <Route path="/catalog/:kind/new" element={<CatalogForm />} />
+                <Route path="/catalog/:kind/:id/edit" element={<CatalogForm />} />
                 <Route path="/calendar" element={<Calendar />} />
                 <Route path="/blank" element={<Blank />} />
 

@@ -1,4 +1,4 @@
-import { BrowserRouter } from "react-router";
+import { BrowserRouter } from "react-router-dom";
 import { Sparkles } from "lucide-react";
 import "./styles/main.scss";
 import { store } from "@/store";

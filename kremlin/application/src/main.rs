@@ -24,20 +24,6 @@ use utoipa_swagger_ui::SwaggerUi;
 
 struct SecurityAddon;
 
-fn migration_lock_name() -> String {
-    env::var("MIGRATION_LOCK_NAME").unwrap_or_else(|_| "novgorod_migrations".to_owned())
-}
-
-fn migration_lock_id(name: &str) -> i64 {
-    // Stable FNV-1a hash: PostgreSQL advisory locks use a numeric key.
-    let mut hash = 0xcbf29ce484222325u64;
-    for byte in name.as_bytes() {
-        hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(0x100000001b3);
-    }
-    hash as i64
-}
-
 impl Modify for SecurityAddon {
     fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
         if let Some(components) = openapi.components.as_mut() {
@@ -79,6 +65,12 @@ impl Modify for SecurityAddon {
         ,endpoints::catalog_endpoint::products
         ,endpoints::catalog_endpoint::product_attributes
         ,endpoints::catalog_endpoint::skus
+        ,endpoints::catalog_endpoint::add_category
+        ,endpoints::catalog_endpoint::update_category
+        ,endpoints::catalog_endpoint::add_product
+        ,endpoints::catalog_endpoint::update_product
+        ,endpoints::catalog_endpoint::add_sku
+        ,endpoints::catalog_endpoint::update_sku
     ),
     components(
         schemas(
@@ -97,6 +89,9 @@ impl Modify for SecurityAddon {
             endpoints::json::catalog_json::ProductJson,
             endpoints::json::catalog_json::ProductAttributeJson,
             endpoints::json::catalog_json::SkuJson,
+            endpoints::json::catalog_json::CategoryInputJson,
+            endpoints::json::catalog_json::ProductInputJson,
+            endpoints::json::catalog_json::SkuInputJson,
         ),
     ),
     tags(

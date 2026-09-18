@@ -1,10 +1,10 @@
-pub mod city_gateway;
-pub mod province_gateway;
-pub mod tenant_gateway;
-pub mod user_gateway;
-pub mod category_gateway;
 pub mod catalog_attribute_gateway;
+pub mod category_gateway;
+pub mod city_gateway;
 pub mod product_attribute_gateway;
 pub mod product_attribute_value_gateway;
 pub mod product_gateway;
+pub mod province_gateway;
 pub mod sku_gateway;
+pub mod tenant_gateway;
+pub mod user_gateway;

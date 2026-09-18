@@ -1,12 +1,15 @@
 use crate::AppState;
 use crate::authentication::authentication_middleware::authentication;
+use crate::endpoints::catalog_endpoint::{
+    add_category, add_product, add_sku, attribute_values, attributes, categories,
+    product_attributes, products, skus, update_category, update_product, update_sku,
+};
 use crate::endpoints::city_endpoint::{
     get_by_id as get_city_by_id, get_by_province, list_all as list_cities,
 };
 use crate::endpoints::province_endpoint::{
     get_by_id as get_province_by_id, list_all as list_provinces,
 };
-use crate::endpoints::catalog_endpoint::{categories, attributes, attribute_values, products, product_attributes, skus};
 use axum::routing::get;
 use axum::{Router, middleware};
 
@@ -19,10 +22,16 @@ pub fn resources_routes(state: AppState) -> Router<AppState> {
         .route("/province", get(list_provinces))
         .route("/province/{id}", get(get_province_by_id))
         .route("/categories", get(categories))
+        .route("/categories", axum::routing::post(add_category))
+        .route("/categories/{id}", axum::routing::put(update_category))
         .route("/catalog-attributes", get(attributes))
         .route("/catalog-attribute-values", get(attribute_values))
         .route("/products", get(products))
+        .route("/products", axum::routing::post(add_product))
+        .route("/products/{id}", axum::routing::put(update_product))
         .route("/product-attributes", get(product_attributes))
         .route("/skus", get(skus))
+        .route("/skus", axum::routing::post(add_sku))
+        .route("/skus/{id}", axum::routing::put(update_sku))
         .route_layer(middleware::from_fn_with_state(state, authentication))
 }

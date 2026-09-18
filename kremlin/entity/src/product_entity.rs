@@ -96,8 +96,12 @@ impl ColumnTrait for Column {
 impl RelationTrait for Relation {
     fn def(&self) -> RelationDef {
         match self {
-            Self::ProductAttribute => Entity::has_many(super::product_attribute_entity::Entity).into(),
-            Self::ProductCategory => Entity::has_many(super::product_category_entity::Entity).into(),
+            Self::ProductAttribute => {
+                Entity::has_many(super::product_attribute_entity::Entity).into()
+            }
+            Self::ProductCategory => {
+                Entity::has_many(super::product_category_entity::Entity).into()
+            }
             Self::ProductImage => Entity::has_many(super::product_image_entity::Entity).into(),
             Self::Sku => Entity::has_many(super::sku_entity::Entity).into(),
             Self::Tenant => Entity::belongs_to(super::tenant_entity::Entity)

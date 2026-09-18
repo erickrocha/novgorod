@@ -79,7 +79,9 @@ impl RelationTrait for Relation {
             Self::CatalogAttributeValue => {
                 Entity::has_many(super::catalog_attribute_value_entity::Entity).into()
             }
-            Self::ProductAttribute => Entity::has_many(super::product_attribute_entity::Entity).into(),
+            Self::ProductAttribute => {
+                Entity::has_many(super::product_attribute_entity::Entity).into()
+            }
             Self::Tenant => Entity::belongs_to(super::tenant_entity::Entity)
                 .from(Column::TenantId)
                 .to(super::tenant_entity::Column::Id)

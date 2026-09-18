@@ -1,5 +1,5 @@
 use crate::commons::entity_mapper::EntityMapper;
-use crate::commons::functions::{string_to_uuid};
+use crate::commons::functions::string_to_uuid;
 use crate::commons::gateway::{Gateway, tenant_delete, tenant_select};
 use crate::domain::user::{User, UserEntityMapper};
 use entity::prelude::UserEntity as UserQuery;

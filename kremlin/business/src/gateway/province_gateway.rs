@@ -1,5 +1,5 @@
 use crate::commons::entity_mapper::EntityMapper;
-use crate::commons::functions::{string_to_uuid};
+use crate::commons::functions::string_to_uuid;
 use crate::commons::gateway::Gateway;
 use crate::domain::province::{Province, ProvinceEntityMapper};
 use entity::prelude::ProvinceEntity as ProvinceQuery;

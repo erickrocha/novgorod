@@ -3,10 +3,8 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme {
-  --font-*: initial;
   --font-outfit: Outfit, sans-serif;
 
-  --breakpoint-*: initial;
   --breakpoint-2xsm: 375px;
   --breakpoint-xsm: 425px;
   --breakpoint-3xl: 2000px;

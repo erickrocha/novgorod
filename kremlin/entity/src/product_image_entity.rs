@@ -131,7 +131,10 @@ impl RelationTrait for Relation {
         match self {
             Self::Product => Entity::belongs_to(super::product_entity::Entity)
                 .from((Column::TenantId, Column::ProductId))
-                .to((super::product_entity::Column::TenantId, super::product_entity::Column::Id))
+                .to((
+                    super::product_entity::Column::TenantId,
+                    super::product_entity::Column::Id,
+                ))
                 .into(),
             Self::Sku => Entity::belongs_to(super::sku_entity::Entity)
                 .from((Column::TenantId, Column::SkuId, Column::ProductId))

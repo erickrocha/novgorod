@@ -7,7 +7,7 @@ import { useSidebar } from "@/context/SidebarContext";
 import { cn } from "@/utils";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Link } from "react-router";
+import { Link } from "react-router-dom";
 
 const AppHeader: React.FC = () => {
   const { t } = useTranslation("header");

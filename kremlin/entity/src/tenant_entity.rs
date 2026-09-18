@@ -103,7 +103,9 @@ impl ColumnTrait for Column {
 impl RelationTrait for Relation {
     fn def(&self) -> RelationDef {
         match self {
-            Self::CatalogAttribute => Entity::has_many(super::catalog_attribute_entity::Entity).into(),
+            Self::CatalogAttribute => {
+                Entity::has_many(super::catalog_attribute_entity::Entity).into()
+            }
             Self::Category => Entity::has_many(super::category_entity::Entity).into(),
             Self::Product => Entity::has_many(super::product_entity::Entity).into(),
         }

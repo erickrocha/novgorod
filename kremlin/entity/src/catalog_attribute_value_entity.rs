@@ -82,7 +82,9 @@ impl RelationTrait for Relation {
                     super::catalog_attribute_entity::Column::Id,
                 ))
                 .into(),
-            Self::SkuAttributeValue => Entity::has_many(super::sku_attribute_value_entity::Entity).into(),
+            Self::SkuAttributeValue => {
+                Entity::has_many(super::sku_attribute_value_entity::Entity).into()
+            }
         }
     }
 }
