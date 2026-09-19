@@ -21,6 +21,14 @@ interface FilterableComboboxProps {
   className?: string;
 }
 
+function normalizeText(text?: string | null): string {
+  if (!text) return "";
+  return text
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
 export default function FilterableCombobox({
   id,
   value,
@@ -41,20 +49,28 @@ export default function FilterableCombobox({
 
   // Find currently selected option
   const selectedOption = useMemo(() => {
+    if (!value) return undefined;
+    const target = normalizeText(value);
     return options.find(
       (opt) =>
-        opt.value.toLowerCase() === value.toLowerCase() ||
-        opt.label.toLowerCase() === value.toLowerCase(),
+        normalizeText(opt.value) === target ||
+        normalizeText(opt.label) === target,
     );
   }, [options, value]);
 
-  // When dropdown opens or value changes, reset filter query to empty so all options show initially
+  // When dropdown opens or closes, reset filter query
   useEffect(() => {
     if (!isOpen) {
       setQuery("");
       setHighlightedIndex(-1);
     }
   }, [isOpen]);
+
+  const handleSelect = (option: ComboboxOption) => {
+    onChange(option.value, option);
+    setIsOpen(false);
+    setQuery("");
+  };
 
   // Close on outside click
   useEffect(() => {
@@ -63,6 +79,16 @@ export default function FilterableCombobox({
         containerRef.current &&
         !containerRef.current.contains(event.target as Node)
       ) {
+        if (isOpen && query.trim()) {
+          const q = normalizeText(query.trim());
+          const match = options.find(
+            (opt) =>
+              normalizeText(opt.value) === q || normalizeText(opt.label) === q,
+          );
+          if (match) {
+            handleSelect(match);
+          }
+        }
         setIsOpen(false);
       }
     };
@@ -71,25 +97,19 @@ export default function FilterableCombobox({
       return () =>
         document.removeEventListener("mousedown", handleClickOutside);
     }
-  }, [isOpen]);
+  }, [isOpen, query, options]);
 
-  // Filtered options based on query
+  // Filtered options based on query (accent-insensitive)
   const filteredOptions = useMemo(() => {
-    const q = query.trim().toLowerCase();
+    const q = normalizeText(query.trim());
     if (!q) return options;
     return options.filter(
       (opt) =>
-        opt.label.toLowerCase().includes(q) ||
-        opt.value.toLowerCase().includes(q) ||
-        (opt.sublabel && opt.sublabel.toLowerCase().includes(q)),
+        normalizeText(opt.label).includes(q) ||
+        normalizeText(opt.value).includes(q) ||
+        (opt.sublabel && normalizeText(opt.sublabel).includes(q)),
     );
   }, [options, query]);
-
-  const handleSelect = (option: ComboboxOption) => {
-    onChange(option.value, option);
-    setIsOpen(false);
-    setQuery("");
-  };
 
   const handleClear = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -125,6 +145,8 @@ export default function FilterableCombobox({
       e.preventDefault();
       if (isOpen && highlightedIndex >= 0 && highlightedIndex < filteredOptions.length) {
         handleSelect(filteredOptions[highlightedIndex]);
+      } else if (isOpen && filteredOptions.length === 1) {
+        handleSelect(filteredOptions[0]);
       } else if (!isOpen) {
         setIsOpen(true);
       }
@@ -132,6 +154,11 @@ export default function FilterableCombobox({
       e.preventDefault();
       setIsOpen(false);
     } else if (e.key === "Tab") {
+      if (isOpen && highlightedIndex >= 0 && highlightedIndex < filteredOptions.length) {
+        handleSelect(filteredOptions[highlightedIndex]);
+      } else if (isOpen && filteredOptions.length === 1) {
+        handleSelect(filteredOptions[0]);
+      }
       setIsOpen(false);
     }
   };
@@ -224,13 +251,22 @@ export default function FilterableCombobox({
         <div className="absolute z-50 mt-1 max-h-60 w-full overflow-y-auto rounded-lg border border-gray-200 bg-white py-1 shadow-lg dark:border-gray-700 dark:bg-gray-900">
           {filteredOptions.length === 0 ? (
             <div className="px-4 py-3 text-center text-sm text-gray-500 dark:text-gray-400">
-              {loading ? "Loading options..." : emptyText}
+              {loading ? (
+                <div className="flex items-center justify-center gap-2">
+                  <Loader2 size={16} className="animate-spin text-brand-500" />
+                  <span>{emptyText}</span>
+                </div>
+              ) : (
+                emptyText
+              )}
             </div>
           ) : (
             filteredOptions.map((opt, idx) => {
               const isSelected =
-                opt.value.toLowerCase() === value.toLowerCase() ||
-                opt.label.toLowerCase() === value.toLowerCase();
+                Boolean(value) && (
+                  normalizeText(opt.value) === normalizeText(value) ||
+                  normalizeText(opt.label) === normalizeText(value)
+                );
               const isHighlighted = idx === highlightedIndex;
 
               return (

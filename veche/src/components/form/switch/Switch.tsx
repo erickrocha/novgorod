@@ -1,26 +1,35 @@
 import { useState } from "react";
 
 interface SwitchProps {
-  label: string;
+  label?: string;
+  checked?: boolean;
   defaultChecked?: boolean;
   disabled?: boolean;
   onChange?: (checked: boolean) => void;
   color?: "blue" | "gray"; // Added prop to toggle color theme
+  id?: string;
+  className?: string;
 }
 
 const Switch: React.FC<SwitchProps> = ({
   label,
+  checked,
   defaultChecked = false,
   disabled = false,
   onChange,
   color = "blue", // Default to blue color
+  id,
+  className = "",
 }) => {
-  const [isChecked, setIsChecked] = useState(defaultChecked);
+  const [internalChecked, setInternalChecked] = useState(defaultChecked);
+  const isChecked = checked !== undefined ? checked : internalChecked;
 
   const handleToggle = () => {
     if (disabled) return;
     const newCheckedState = !isChecked;
-    setIsChecked(newCheckedState);
+    if (checked === undefined) {
+      setInternalChecked(newCheckedState);
+    }
     if (onChange) {
       onChange(newCheckedState);
     }
@@ -30,7 +39,7 @@ const Switch: React.FC<SwitchProps> = ({
     color === "blue"
       ? {
           background: isChecked
-            ? "bg-brand-500 "
+            ? "bg-brand-500"
             : "bg-gray-200 dark:bg-white/10", // Blue version
           knob: isChecked
             ? "translate-x-full bg-white"
@@ -47,9 +56,10 @@ const Switch: React.FC<SwitchProps> = ({
 
   return (
     <label
+      id={id}
       className={`flex cursor-pointer select-none items-center gap-3 text-sm font-medium ${
-        disabled ? "text-gray-400" : "text-gray-700 dark:text-gray-400"
-      }`}
+        disabled ? "text-gray-400 cursor-not-allowed" : "text-gray-700 dark:text-gray-400"
+      } ${className}`}
       onClick={handleToggle} // Toggle when the label itself is clicked
     >
       <div className="relative">
@@ -64,7 +74,7 @@ const Switch: React.FC<SwitchProps> = ({
           className={`absolute left-0.5 top-0.5 h-5 w-5 rounded-full shadow-theme-sm duration-150 ease-linear transform ${switchColors.knob}`}
         ></div>
       </div>
-      {label}
+      {label && <span>{label}</span>}
     </label>
   );
 };

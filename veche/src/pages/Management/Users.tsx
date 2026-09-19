@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { Link, useSearchParams } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { Pencil, Plus, RefreshCw } from "lucide-react";
 import type { ColumnDef, PaginationState, SortingState } from "@tanstack/react-table";
 import PageBreadcrumb from "@/components/common/PageBreadCrumb";
@@ -14,6 +15,7 @@ import { ROLES } from "@/utils/enums";
 import type { User } from "@/services/types";
 
 export default function Users() {
+  const { t } = useTranslation();
   const [searchParams, setSearchParams] = useSearchParams();
   const dispatch = useAppDispatch();
   const { usersList, total, loading, error } = useAppSelector((s) => s.user);
@@ -65,16 +67,16 @@ export default function Users() {
   };
   const columns: ColumnDef<User, unknown>[] = [
     {
-      header: "Name",
+      header: t("users.name", "Nome"),
       accessorKey: "name",
       enableSorting: true,
       cell: ({ getValue }) => (
         <span className="font-medium">{getValue<string>() || "—"}</span>
       ),
     },
-    { header: "Email", accessorKey: "email", enableSorting: true },
+    { header: t("users.email", "E-mail"), accessorKey: "email", enableSorting: true },
     {
-      header: "Role",
+      header: t("users.role", "Função / Perfil"),
       accessorKey: "role",
       enableSorting: true,
       cell: ({ row }) => (
@@ -93,16 +95,16 @@ export default function Users() {
       ),
     },
     {
-      header: "Tenant",
+      header: t("users.tenant", "Empresa"),
       id: "tenant",
       cell: ({ row }) => tenantName(row.original.tenantId),
     },
     {
-      header: "Status",
+      header: t("users.enabled", "Status"),
       accessorKey: "enabled",
       cell: ({ row }) => (
         <Badge size="sm" color={row.original.enabled ? "success" : "light"}>
-          {row.original.enabled ? "Enabled" : "Disabled"}
+          {row.original.enabled ? t("users.active", "Ativo") : t("users.disabled", "Inativo")}
         </Badge>
       ),
     },
@@ -114,8 +116,8 @@ export default function Users() {
       cell: ({ row }) => (
         <div className="flex items-center justify-end text-end">
           <Link
-            title="Edit"
-            aria-label="Edit"
+            title={t("users.editUser", "Editar usuário")}
+            aria-label={t("users.editUser", "Editar usuário")}
             className="h-7 w-7 rounded-md inline-flex items-center justify-center text-gray-500 hover:text-brand-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-brand-400 dark:hover:bg-white/5 transition-colors"
             to={`/users/${row.original.id}/edit`}
           >
@@ -127,8 +129,11 @@ export default function Users() {
   ];
   return (
     <>
-      <PageMeta title="Users | Veche" description="Manage users" />
-      <PageBreadcrumb pageTitle="Users" />
+      <PageMeta
+        title={`${t("users.title", "Usuários")} | Veche`}
+        description={t("users.manageUsers", "Gerenciar usuários")}
+      />
+      <PageBreadcrumb pageTitle={t("users.title", "Usuários")} />
       <ComponentCard>
         <DataGrid
           data={usersList}
@@ -141,17 +146,19 @@ export default function Users() {
                 startIcon={<RefreshCw size={14} />}
                 onClick={() => dispatch(fetchUsers({ page, pageSize, q, sortBy, sortDir }))}
               >
-                Refresh
+                {t("users.refresh", "Atualizar")}
               </Button>
               <Link to="/users/new">
-                <Button size="sm" startIcon={<Plus size={14} />}>Add user</Button>
+                <Button size="sm" startIcon={<Plus size={14} />}>
+                  {t("users.addUser", "Novo usuário")}
+                </Button>
               </Link>
             </div>
           }
           getRowId={(row, index) => String(row.id ?? row.uuid ?? index)}
           loading={loading && usersList.length === 0}
           error={error}
-          emptyMessage="No users found."
+          emptyMessage={t("users.noUsersFound", "Nenhum usuário encontrado.")}
           manualPagination
           manualSorting
           manualFiltering

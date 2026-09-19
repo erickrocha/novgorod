@@ -1,4 +1,16 @@
+import { useNavigate } from "react-router-dom";
+import { useAppDispatch } from "@/store/hooks";
+import { logout } from "@/store/authSlice";
+
 export default function DangerZone() {
+  const dispatch = useAppDispatch();
+  const navigate = useNavigate();
+
+  const handleLogout = () => {
+    dispatch(logout());
+    navigate("/signin");
+  };
+
   return (
     <div className="mb-6 rounded-2xl border border-gray-200  p-5 lg:p-6 dark:border-gray-800 ">
       <h4 className="text-lg mb-4 font-semibold text-gray-800 lg:mb-6 dark:text-white/90">
@@ -15,7 +27,10 @@ export default function DangerZone() {
             </p>
           </div>
           <div>
-            <button className="shadow-theme-xs flex h-10 items-center justify-center gap-2 rounded-lg border border-gray-300 bg-white py-2.5 pr-4 pl-3.5 text-sm font-medium text-gray-700 hover:bg-gray-50 hover:text-gray-800 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-white/3 dark:hover:text-gray-200">
+            <button
+              onClick={handleLogout}
+              className="shadow-theme-xs flex h-10 items-center justify-center gap-2 rounded-lg border border-gray-300 bg-white py-2.5 pr-4 pl-3.5 text-sm font-medium text-gray-700 hover:bg-gray-50 hover:text-gray-800 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-white/3 dark:hover:text-gray-200"
+            >
               <svg
                 xmlns="http://www.w3.org/2000/svg"
                 width="20"

@@ -11,6 +11,7 @@ import DataGrid from "@/components/data-grid/DataGrid";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { fetchTenants } from "@/store/tenantSlice";
 import { ROLES } from "@/utils/enums";
+import { formatPhone } from "@/utils/taxId";
 import type { Tenant } from "@/services/types";
 
 export default function Tenants() {
@@ -78,7 +79,10 @@ export default function Tenants() {
       header: t("tenants.phone", "Telefone"),
       accessorKey: "phone",
       enableSorting: true,
-      cell: ({ getValue }) => getValue<string>() || "—",
+      cell: ({ getValue }) => {
+        const val = getValue<string>();
+        return val ? formatPhone(val) : "—";
+      },
     },
     {
       header: t("tenants.location", "Localização"),

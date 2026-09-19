@@ -17,6 +17,7 @@ import {
 import { fetchTenants } from "@/store/tenantSlice";
 import CatalogImportModal from "@/components/catalog/CatalogImportModal";
 import ProductImagesModal from "@/components/catalog/ProductImagesModal";
+import { ROLES } from "@/utils/enums";
 import type { PageQueryParams } from "@/services/types";
 
 type CatalogRow = {
@@ -39,6 +40,8 @@ export default function CatalogList() {
   const dispatch = useAppDispatch();
   const state = useAppSelector((s) => s.catalog);
   const tenants = useAppSelector((s) => s.tenant.tenantsList);
+  const { user } = useAppSelector((s) => s.auth);
+  const canImport = user?.role === ROLES.SYS_ADMIN || user?.role === ROLES.TENANT_OWNER;
   const title = kind[0].toUpperCase() + kind.slice(1);
 
   const page = Number(searchParams.get("page") || "1");
@@ -197,7 +200,7 @@ export default function CatalogList() {
               >
                 Refresh
               </Button>
-              {kind === "products" && (
+              {kind === "products" && canImport && (
                 <Button size="sm" variant="outline" onClick={() => setImportOpen(true)}>
                   Import CSV/XLSX
                 </Button>

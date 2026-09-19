@@ -18,6 +18,13 @@ import { createTenant, fetchTenants, updateTenant } from "@/store/tenantSlice";
 import { locationService } from "@/services/locationService";
 import { useLanguage } from "@/context/LanguageContext";
 import { ROLES } from "@/utils/enums";
+import {
+  formatCnpj,
+  formatPhone,
+  formatPostalCode,
+  isValidCnpj,
+  stripNonDigits,
+} from "@/utils/taxId";
 import type { TenantInput, Province, City } from "@/services/types";
 
 export default function TenantForm() {
@@ -58,6 +65,9 @@ export default function TenantForm() {
     countryCode: defaultCountryCode,
   });
 
+  const [taxIdError, setTaxIdError] = useState<string | null>(null);
+  const [taxIdTouched, setTaxIdTouched] = useState(false);
+
   const [provinces, setProvinces] = useState<Province[]>([]);
   const [loadingProvinces, setLoadingProvinces] = useState(false);
   const [cities, setCities] = useState<City[]>([]);
@@ -81,8 +91,9 @@ export default function TenantForm() {
     setLoadingCities(true);
     try {
       const list = await locationService.citiesByProvince(provinceId);
-      setCities(list);
-    } catch {
+      setCities(Array.isArray(list) ? list : []);
+    } catch (err) {
+      console.error("Failed to load cities for province", provinceId, err);
       setCities([]);
     } finally {
       setLoadingCities(false);
@@ -96,15 +107,17 @@ export default function TenantForm() {
       setForm({
         businessName: existing.businessName || "",
         companyName: existing.companyName || "",
-        taxId: existing.taxId || "",
+        taxId: existing.taxId ? formatCnpj(existing.taxId) : "",
         email: existing.email || "",
-        phone: existing.phone || "",
+        phone: existing.phone ? formatPhone(existing.phone) : "",
         website: existing.website || "",
         addressLine1: existing.addressLine1 || "",
         addressLine2: existing.addressLine2 || "",
         locality: existing.locality || existing.city || "",
         administrativeArea: provVal,
-        postalCode: existing.postalCode || existing.zipcode || "",
+        postalCode: (existing.postalCode || existing.zipcode)
+          ? formatPostalCode(existing.postalCode || existing.zipcode)
+          : "",
         countryCode: existing.countryCode || defaultCountryCode,
       });
 
@@ -118,6 +131,9 @@ export default function TenantForm() {
           loadCities(match.id);
         }
       }
+
+      setTaxIdError(null);
+      setTaxIdTouched(false);
     }
   }, [existing, provinces, defaultCountryCode, loadCities]);
 
@@ -125,9 +141,14 @@ export default function TenantForm() {
     setForm((current) => ({ ...current, [key]: value }));
 
   const handleProvinceChange = (val: string, option?: ComboboxOption) => {
+    const searchVal = val.trim().toLowerCase();
     const prov =
       (option?.data as Province) ||
-      provinces.find((p) => p.acronym === val || p.name === val);
+      provinces.find(
+        (p) =>
+          p.acronym.toLowerCase() === searchVal ||
+          p.name.toLowerCase() === searchVal,
+      );
     const chosenAcronym = prov ? prov.acronym : val;
     setForm((prev) => ({
       ...prev,
@@ -135,12 +156,27 @@ export default function TenantForm() {
       locality: "",
     }));
 
-    if (prov && prov.id) {
-      loadCities(prov.id);
+    if (prov && prov.id != null) {
+      loadCities(Number(prov.id));
     } else {
       setCities([]);
     }
   };
+
+  // Ensure cities are loaded whenever administrativeArea is set and provinces are loaded
+  useEffect(() => {
+    if (!form.administrativeArea || provinces.length === 0) {
+      return;
+    }
+    const target = form.administrativeArea.trim().toLowerCase();
+    const prov = provinces.find(
+      (p) =>
+        p.acronym.toLowerCase() === target || p.name.toLowerCase() === target,
+    );
+    if (prov && prov.id != null) {
+      loadCities(Number(prov.id));
+    }
+  }, [form.administrativeArea, provinces, loadCities]);
 
   const provinceOptions: ComboboxOption[] = useMemo(() => {
     return provinces.map((p) => ({
@@ -159,8 +195,62 @@ export default function TenantForm() {
     }));
   }, [cities]);
 
+  const handleTaxIdChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const formatted = formatCnpj(e.target.value);
+    set("taxId", formatted);
+
+    const digits = stripNonDigits(formatted);
+    if (digits.length === 14) {
+      if (!isValidCnpj(digits)) {
+        setTaxIdError(t("tenants.invalidTaxId", "CNPJ inválido"));
+      } else {
+        setTaxIdError(null);
+      }
+    } else if (taxIdTouched) {
+      if (!digits) {
+        setTaxIdError(t("tenants.taxIdRequired", "CNPJ é obrigatório"));
+      } else {
+        setTaxIdError(t("tenants.invalidTaxId", "CNPJ inválido"));
+      }
+    } else {
+      setTaxIdError(null);
+    }
+  };
+
+  const handleTaxIdBlur = () => {
+    setTaxIdTouched(true);
+    const digits = stripNonDigits(form.taxId);
+    if (!digits) {
+      setTaxIdError(t("tenants.taxIdRequired", "CNPJ é obrigatório"));
+    } else if (!isValidCnpj(digits)) {
+      setTaxIdError(t("tenants.invalidTaxId", "CNPJ inválido"));
+    } else {
+      setTaxIdError(null);
+    }
+  };
+
+  const handlePhoneChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    set("phone", formatPhone(e.target.value));
+  };
+
+  const handlePostalCodeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    set("postalCode", formatPostalCode(e.target.value));
+  };
+
   const submit = async (e: FormEvent) => {
     e.preventDefault();
+
+    setTaxIdTouched(true);
+    const digits = stripNonDigits(form.taxId);
+    if (!digits) {
+      setTaxIdError(t("tenants.taxIdRequired", "CNPJ é obrigatório"));
+      return;
+    }
+    if (!isValidCnpj(digits)) {
+      setTaxIdError(t("tenants.invalidTaxId", "CNPJ inválido"));
+      return;
+    }
+
     const payload = Object.fromEntries(
       Object.entries(form).map(([k, v]) => [
         k,
@@ -169,6 +259,9 @@ export default function TenantForm() {
     ) as TenantInput;
 
     payload.countryCode = form.countryCode || defaultCountryCode || "BR";
+    payload.taxId = digits;
+    payload.phone = form.phone ? stripNonDigits(form.phone) || null : null;
+    payload.postalCode = form.postalCode ? stripNonDigits(form.postalCode) || null : null;
 
     const result =
       editing && existing?.id
@@ -218,8 +311,12 @@ export default function TenantForm() {
                 id="taxId"
                 required
                 value={form.taxId}
-                onChange={(e) => set("taxId", e.target.value)}
-                placeholder={t("tenants.taxIdPlaceholder", "CNPJ")}
+                onChange={handleTaxIdChange}
+                onBlur={handleTaxIdBlur}
+                error={Boolean(taxIdError)}
+                hint={taxIdError || undefined}
+                maxLength={18}
+                placeholder={t("tenants.taxIdPlaceholder", "00.000.000/0000-00")}
               />
             </div>
           </div>
@@ -245,8 +342,9 @@ export default function TenantForm() {
                 id="phone"
                 type="tel"
                 value={form.phone}
-                onChange={(e) => set("phone", e.target.value)}
-                placeholder={t("tenants.phonePlaceholder", "Telefone")}
+                onChange={handlePhoneChange}
+                maxLength={15}
+                placeholder={t("tenants.phonePlaceholder", "(00) 00000-0000")}
               />
             </div>
             <div>
@@ -298,8 +396,9 @@ export default function TenantForm() {
                 <Input
                   id="postalCode"
                   value={form.postalCode}
-                  onChange={(e) => set("postalCode", e.target.value)}
-                  placeholder={t("tenants.postalCodePlaceholder", "CEP")}
+                  onChange={handlePostalCodeChange}
+                  maxLength={9}
+                  placeholder={t("tenants.postalCodePlaceholder", "00000-000")}
                 />
               </div>
             </div>
@@ -354,9 +453,13 @@ export default function TenantForm() {
                       ? t("tenants.loadingCities", "Carregando cidades...")
                       : t("tenants.selectOrSearchCity", "Selecione ou busque a cidade...")
                   }
-                  disabled={!form.administrativeArea}
+                  disabled={!form.administrativeArea || loadingCities}
                   loading={loadingCities}
-                  emptyText={t("tenants.noCityFound", "Nenhuma cidade encontrada")}
+                  emptyText={
+                    loadingCities
+                      ? t("tenants.loadingCities", "Carregando cidades...")
+                      : t("tenants.noCityFound", "Nenhuma cidade encontrada")
+                  }
                 />
               </div>
             </div>

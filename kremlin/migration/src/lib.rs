@@ -15,6 +15,19 @@ mod m20260917_000012_create_table_sku_attribute_value;
 mod m20260917_000013_create_table_sku_stock;
 mod m20260917_000014_create_table_product_image;
 mod m20260917_000015_add_ibge_location_codes;
+mod m20260919_000001_create_table_shipping_rate;
+mod m20260919_000002_create_table_customer;
+mod m20260919_000003_create_table_customer_address;
+mod m20260919_000004_create_table_tax_rule;
+mod m20260919_000005_create_table_campaign;
+mod m20260919_000006_create_table_campaign_target;
+mod m20260919_000007_create_table_coupon;
+mod m20260919_000009_create_table_cart;
+mod m20260919_000010_create_table_cart_item;
+mod m20260919_000011_create_table_orders;
+mod m20260919_000012_create_table_order_item;
+mod m20260919_000013_create_table_order_status_history;
+mod m20260919_000014_create_table_coupon_redemption;
 
 pub struct Migrator;
 

@@ -4,7 +4,9 @@ import { getLanguage, languages, type Locale } from "@/i18n/languages";
 import { cn } from "@/utils";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Link } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
+import { useAppDispatch, useAppSelector } from "@/store/hooks";
+import { logout } from "@/store/authSlice";
 import { Dropdown } from "../ui/dropdown/Dropdown";
 import { DropdownItem } from "../ui/dropdown/DropdownItem";
 
@@ -13,6 +15,9 @@ export default function UserDropdown() {
   const [isSubDropdownOpen, setIsSubDropdownOpen] = useState(false);
   const subDropdownRef = useRef<HTMLLIElement>(null);
   const { t } = useTranslation();
+  const navigate = useNavigate();
+  const dispatch = useAppDispatch();
+  const { user } = useAppSelector((state) => state.auth);
   const { language: locale, setLanguage } = useLanguage();
   const currentLang = getLanguage(locale as Locale);
   const CurrentFlagIcon = currentLang.FlagIcon;
@@ -36,12 +41,21 @@ export default function UserDropdown() {
     setIsSubDropdownOpen(false);
   };
 
+  const handleSignOut = () => {
+    closeDropdown();
+    dispatch(logout());
+    navigate("/signin");
+  };
+
   useEffect(() => {
     return () => {
       setIsOpen(false);
       setIsSubDropdownOpen(false);
     };
   }, []);
+
+  const displayName = user?.name || user?.email?.split("@")[0] || "User";
+  const displayEmail = user?.email || "";
 
   return (
     <div className="relative">
@@ -53,7 +67,7 @@ export default function UserDropdown() {
           <img src="/images/user/owner.png" alt="User" />
         </span>
 
-        <span className="me-1 text-theme-sm font-medium block">Musharof</span>
+        <span className="me-1 text-theme-sm font-medium block">{displayName}</span>
         <svg
           className={`stroke-gray-500 dark:stroke-gray-400 transition-transform duration-200 ${
             isOpen ? "rotate-180" : ""
@@ -81,11 +95,13 @@ export default function UserDropdown() {
       >
         <div>
           <span className="text-theme-sm font-medium text-gray-700 dark:text-gray-400 block no-underline">
-            Musharof Chowdhury
+            {displayName}
           </span>
-          <span className="mt-0.5 text-theme-xs text-gray-500 dark:text-gray-400 block no-underline">
-            randomuser@pimjo.com
-          </span>
+          {displayEmail && (
+            <span className="mt-0.5 text-theme-xs text-gray-500 dark:text-gray-400 block no-underline">
+              {displayEmail}
+            </span>
+          )}
         </div>
 
         <ul className="gap-1 border-gray-200 pt-4 pb-3 dark:border-gray-800 flex flex-col border-b">
@@ -251,9 +267,10 @@ export default function UserDropdown() {
             )}
           </li>
         </ul>
-        <Link
-          to="/signin"
-          className="group mt-3 gap-3 rounded-lg px-3 py-2 text-theme-sm font-medium text-gray-700 hover:bg-gray-100 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-white/5 dark:hover:text-gray-300 flex items-center"
+        <button
+          type="button"
+          onClick={handleSignOut}
+          className="group mt-3 gap-3 rounded-lg px-3 py-2 text-theme-sm font-medium text-gray-700 hover:bg-gray-100 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-white/5 dark:hover:text-gray-300 flex items-center w-full text-start"
         >
           <svg
             className="fill-gray-500 group-hover:fill-gray-700 dark:group-hover:fill-gray-300"
@@ -271,7 +288,7 @@ export default function UserDropdown() {
             />
           </svg>
           {t("userDropdown.signOut")}
-        </Link>
+        </button>
       </Dropdown>
     </div>
   );

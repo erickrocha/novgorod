@@ -7,7 +7,17 @@ export type CategoryInput = Omit<Category, "id" | "uuid">;
 export type ProductInput = Omit<Product, "id" | "uuid">;
 export type SkuInput = Omit<Sku, "id" | "uuid">;
 export const catalogService = {
-  async importCatalog(file: File, tenantId: number, editedRows: unknown[]) { const body = new FormData(); body.append("file", file); body.append("tenantId", String(tenantId)); body.append("editedRows", JSON.stringify(editedRows)); return (await api.post("/catalog/import", body, { headers: { "Content-Type": "multipart/form-data" } })).data; },
+  async importCatalog(file: File, tenantId?: number | null, editedRows?: unknown[]) {
+    const body = new FormData();
+    body.append("file", file);
+    if (tenantId) {
+      body.append("tenantId", String(tenantId));
+    }
+    if (editedRows) {
+      body.append("editedRows", JSON.stringify(editedRows));
+    }
+    return (await api.post("/catalog/import", body, { headers: { "Content-Type": "multipart/form-data" } })).data;
+  },
   async categories() { return (await api.get<Category[]>("/categories")).data; },
   async categoriesPaged(params?: PageQueryParams) { return (await api.get<PagedResult<Category>>("/categories/paged", { params })).data; },
   async products() { return (await api.get<Product[]>("/products")).data; },

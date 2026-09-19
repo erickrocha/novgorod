@@ -53,11 +53,6 @@ pub async fn import(
     Extension(user): Extension<User>,
     mut multipart: Multipart,
 ) -> HttpResponse<Json<CatalogImportResult>> {
-    let tenant_id = if user.role == Role::SysAdmin {
-        None
-    } else {
-        user.tenant_id
-    };
     let mut requested_tenant = None;
     let mut rows_json = None;
     let mut file_bytes = None;
@@ -68,28 +63,37 @@ pub async fn import(
     {
         let name = field.name().unwrap_or_default().to_string();
         if name == "tenantId" {
-            requested_tenant = field.text().await.ok().and_then(|v| v.parse::<i64>().ok());
+            requested_tenant = field
+                .text()
+                .await
+                .ok()
+                .and_then(|v| v.parse::<i64>().ok())
+                .filter(|&id| id > 0);
         } else if name == "editedRows" {
             rows_json = field.text().await.ok();
         } else if name == "file" {
             file_bytes = field.bytes().await.ok();
         }
     }
-    let tenant_id = tenant_id
-        .or(requested_tenant)
-        .ok_or(ExceptionResponse::Forbidden(
+
+    let tenant_id = match user.role {
+        Role::SysAdmin => requested_tenant
+            .or(user.tenant_id)
+            .ok_or(ExceptionResponse::BadRequest(
+                locale,
+                ErrorKey::RequiredParameterMissing,
+            ))?,
+        Role::TenantOwner => user.tenant_id.ok_or(ExceptionResponse::Forbidden(
             locale,
             ErrorKey::InvalidParameterValue,
-        ))?;
-    if user.role != Role::SysAdmin
-        && requested_tenant.is_some()
-        && requested_tenant != user.tenant_id
-    {
-        return Err(ExceptionResponse::Forbidden(
-            locale,
-            ErrorKey::InvalidParameterValue,
-        ));
-    }
+        ))?,
+        Role::TenantUser => {
+            return Err(ExceptionResponse::Forbidden(
+                locale,
+                ErrorKey::InvalidParameterValue,
+            ));
+        }
+    };
     let rows: Vec<CatalogRow> = if let Some(json) = rows_json {
         serde_json::from_str(&json)
             .map_err(|_| ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?

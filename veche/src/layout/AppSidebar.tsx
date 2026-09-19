@@ -10,8 +10,6 @@ import {
   HorizontaLDots,
   ListIcon,
   PageIcon,
-  PieChartIcon,
-  PlugInIcon,
   TableIcon,
   UserCircleIcon,
 } from "../icons";
@@ -111,40 +109,6 @@ const navItems: NavItem[] = [
   },
 ];
 
-const othersItems: NavItem[] = [
-  {
-    icon: <PieChartIcon fontSize={24} />,
-    name: "Charts",
-    key: "charts",
-    subItems: [
-      { name: "Line Chart", key: "lineChart", path: "/line-chart" },
-      { name: "Bar Chart", key: "barChart", path: "/bar-chart" },
-    ],
-  },
-  {
-    icon: <BoxCubeIcon fontSize={24} />,
-    name: "UI Elements",
-    key: "uiElements",
-    subItems: [
-      { name: "Alerts", key: "alerts", path: "/alerts", pro: false },
-      { name: "Avatar", key: "avatar", path: "/avatars", pro: false },
-      { name: "Badge", key: "badge", path: "/badge", pro: false },
-      { name: "Buttons", key: "buttons", path: "/buttons", pro: false },
-      { name: "Images", key: "images", path: "/images", pro: false },
-      { name: "Videos", key: "videos", path: "/videos", pro: false },
-    ],
-  },
-  {
-    icon: <PlugInIcon fontSize={24} />,
-    name: "Authentication",
-    key: "authentication",
-    subItems: [
-      { name: "Sign In", key: "signIn", path: "/signin", pro: false },
-      { name: "Sign Up", key: "signUp", path: "/signup", pro: false },
-    ],
-  },
-];
-
 const systemSettingsItems: NavItem[] = [{ icon: <BoxCubeIcon fontSize={24} />, name: "System Settings", key: "systemSettings", subItems: [{ name: "Provinces", key: "provinces", path: "/system-settings/provinces" }, { name: "Cities", key: "cities", path: "/system-settings/cities" }] }];
 
 const AppSidebar: React.FC = () => {
@@ -154,7 +118,7 @@ const AppSidebar: React.FC = () => {
   const isSysAdmin = useAppSelector((state) => state.auth.user?.role === ROLES.SYS_ADMIN);
   const location = useLocation();
   const [openSubmenu, setOpenSubmenu] = useState<{
-    type: "main" | "others";
+    type: "main" | "systemSettings";
     index: number;
   } | null>(null);
   const [subMenuHeight, setSubMenuHeight] = useState<Record<string, number>>(
@@ -179,15 +143,20 @@ const AppSidebar: React.FC = () => {
   useEffect(() => {
     let submenuMatched = false;
 
-    ["main", "others"].forEach((menuType) => {
-      const items = menuType === "main" ? navItems : othersItems;
+    const groups: { type: "main" | "systemSettings"; items: NavItem[] }[] = [
+      { type: "main", items: navItems },
+      ...(isSysAdmin
+        ? [{ type: "systemSettings" as const, items: systemSettingsItems }]
+        : []),
+    ];
 
+    groups.forEach(({ type, items }) => {
       items.forEach((nav, index) => {
         if (nav.subItems) {
           nav.subItems.forEach((subItem) => {
             if (isActive(subItem.path)) {
               setOpenSubmenu({
-                type: menuType as "main" | "others",
+                type,
                 index,
               });
               submenuMatched = true;
@@ -200,7 +169,7 @@ const AppSidebar: React.FC = () => {
     if (!submenuMatched) {
       setOpenSubmenu(null);
     }
-  }, [location, isActive]);
+  }, [location, isActive, isSysAdmin]);
 
   useEffect(() => {
     if (openSubmenu !== null) {
@@ -214,7 +183,10 @@ const AppSidebar: React.FC = () => {
     }
   }, [openSubmenu]);
 
-  const handleSubmenuToggle = (index: number, menuType: "main" | "others") => {
+  const handleSubmenuToggle = (
+    index: number,
+    menuType: "main" | "systemSettings",
+  ) => {
     setOpenSubmenu((prevOpenSubmenu) => {
       if (
         prevOpenSubmenu &&
@@ -227,7 +199,10 @@ const AppSidebar: React.FC = () => {
     });
   };
 
-  const renderMenuItems = (items: NavItem[], menuType: "main" | "others") => (
+  const renderMenuItems = (
+    items: NavItem[],
+    menuType: "main" | "systemSettings",
+  ) => (
     <ul className="flex flex-col gap-1">
       {items.map((nav, index) => (
         <li key={nav.name}>
@@ -426,23 +401,16 @@ const AppSidebar: React.FC = () => {
               {renderMenuItems(navItems, "main")}
             </div>
 
-            <div>
-              <h2
-                className={`mb-4 flex text-xs leading-5 text-gray-400 uppercase ${
-                  !isExpanded && !isHovered
-                    ? "xl:justify-center"
-                    : "justify-start"
-                }`}
-              >
-                {isExpanded || isHovered || isMobileOpen ? (
-                  t("sidebar.groups.others")
-                ) : (
-                  <HorizontaLDots className="size-6" />
+            {isSysAdmin && (
+              <div>
+                {(isExpanded || isHovered || isMobileOpen) && (
+                  <h2 className="mb-4 flex text-xs leading-5 text-gray-400 uppercase">
+                    {t("sidebar.groups.systemSettings")}
+                  </h2>
                 )}
-              </h2>
-              {renderMenuItems(othersItems, "others")}
-            </div>
-            {isSysAdmin && <div>{(isExpanded || isHovered || isMobileOpen) && <h2 className="mb-4 flex text-xs leading-5 text-gray-400 uppercase">{t("sidebar.groups.systemSettings")}</h2>}{renderMenuItems(systemSettingsItems, "main")}</div>}
+                {renderMenuItems(systemSettingsItems, "systemSettings")}
+              </div>
+            )}
           </div>
         </nav>
       </div>
