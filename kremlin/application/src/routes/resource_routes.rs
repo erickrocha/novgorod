@@ -1,10 +1,16 @@
 use crate::AppState;
 use crate::authentication::authentication_middleware::authentication;
-use crate::endpoints::catalog_endpoint::{
-    add_category, add_product, add_sku, attribute_values, attribute_values_paged, attributes,
-    attributes_paged, categories, categories_paged, product_attributes, product_attributes_paged,
-    products, products_paged, skus, skus_paged, update_category, update_product, update_sku,
+use crate::endpoints::catalog_attribute_endpoint::{
+    attribute_values, attribute_values_paged, attributes, attributes_paged, product_attributes,
+    product_attributes_paged,
 };
+use crate::endpoints::category_endpoint::{
+    add_category, categories, categories_paged, update_category,
+};
+use crate::endpoints::product_endpoint::{
+    add_product, products, products_paged, update_product,
+};
+use crate::endpoints::sku_endpoint::{add_sku, skus, skus_paged, update_sku};
 use crate::endpoints::catalog_import_endpoint::import as import_catalog;
 use crate::endpoints::city_endpoint::{
     add as add_city, import_csv as import_cities, paged as paged_cities, update as update_city,

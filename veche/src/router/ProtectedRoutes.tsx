@@ -24,6 +24,13 @@ import TenantForm from "@/pages/Management/TenantForm";
 import CatalogList from "@/pages/Catalog/CatalogList";
 import CatalogForm from "@/pages/Catalog/CatalogForm";
 import Locations from "@/pages/Management/Locations";
+import Orders from "@/pages/Sales/Orders";
+import Carts from "@/pages/Sales/Carts";
+import Customers from "@/pages/Customers/Customers";
+import Campaigns from "@/pages/Marketing/Campaigns";
+import Coupons from "@/pages/Marketing/Coupons";
+import ShippingRates from "@/pages/Operations/ShippingRates";
+import TaxRules from "@/pages/Operations/TaxRules";
 import { useAppSelector } from "@/store/hooks";
 import { ROLES } from "@/utils/enums";
 
@@ -51,6 +58,22 @@ export const ProtectedRoutes = () => (
                 <Route path="/catalog/:kind" element={<CatalogList />} />
                 <Route path="/catalog/:kind/new" element={<CatalogForm />} />
                 <Route path="/catalog/:kind/:id/edit" element={<CatalogForm />} />
+
+                {/* Sales & Orders */}
+                <Route path="/orders" element={<Orders />} />
+                <Route path="/carts" element={<Carts />} />
+
+                {/* Customers */}
+                <Route path="/customers" element={<Customers />} />
+
+                {/* Marketing */}
+                <Route path="/marketing/campaigns" element={<Campaigns />} />
+                <Route path="/marketing/coupons" element={<Coupons />} />
+
+                {/* Operations & Settings */}
+                <Route path="/operations/shipping-rates" element={<ShippingRates />} />
+                <Route path="/operations/tax-rules" element={<TaxRules />} />
+
                 <Route path="/system-settings/provinces" element={<SysAdminOnly><Locations kind="provinces" /></SysAdminOnly>} />
                 <Route path="/system-settings/cities" element={<SysAdminOnly><Locations kind="cities" /></SysAdminOnly>} />
                 <Route path="/calendar" element={<Calendar />} />

@@ -118,3 +118,210 @@ export interface PageQueryParams {
   sortDir?: "asc" | "desc";
   [key: string]: unknown;
 }
+
+// ==================== Shipping Rate ====================
+export interface ShippingRate {
+  id: number;
+  uuid?: string;
+  tenantId?: number | null;
+  uf: string;
+  priceCents: number;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}
+export type ShippingRateInput = Omit<ShippingRate, "id" | "uuid" | "createdAt" | "updatedAt">;
+
+// ==================== Tax Rule ====================
+export interface TaxRule {
+  id: number;
+  uuid?: string;
+  tenantId?: number | null;
+  name: string;
+  ufOrigem?: string | null;
+  ufDestino?: string | null;
+  ncm?: string | null;
+  origemMercadoria?: number | null;
+  cst?: string | null;
+  aliquotaIcms?: number | null;
+  aliquotaIpi?: number | null;
+  aliquotaPis?: number | null;
+  aliquotaCofins?: number | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}
+export type TaxRuleInput = Omit<TaxRule, "id" | "uuid" | "createdAt" | "updatedAt">;
+
+// ==================== Customer & Addresses ====================
+export interface Customer {
+  id: number;
+  uuid?: string;
+  tenantId?: number | null;
+  name: string;
+  email: string;
+  cpf?: string | null;
+  phone?: string | null;
+  marketingConsent: boolean;
+  active: boolean;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}
+export type CustomerInput = Omit<Customer, "id" | "uuid" | "createdAt" | "updatedAt"> & {
+  password?: string;
+};
+
+export interface CustomerAddress {
+  id: number;
+  uuid?: string;
+  tenantId?: number | null;
+  customerId: number;
+  recipientName: string;
+  phone?: string | null;
+  cep: string;
+  street: string;
+  number: string;
+  complement?: string | null;
+  neighborhood?: string | null;
+  city: string;
+  uf: string;
+  isDefault: boolean;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}
+export type CustomerAddressInput = Omit<CustomerAddress, "id" | "uuid" | "createdAt" | "updatedAt">;
+
+// ==================== Orders, Items & Status Timeline ====================
+export interface Orders {
+  id: number;
+  uuid?: string;
+  tenantId?: number | null;
+  orderNumber: string;
+  customerId: number;
+  status: string;
+  subtotalCents: number;
+  discountCents: number;
+  shippingCents: number;
+  totalCents: number;
+  couponId?: number | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}
+export type OrdersInput = Omit<Orders, "id" | "uuid" | "createdAt" | "updatedAt">;
+
+export interface OrderItem {
+  id: number;
+  uuid?: string;
+  tenantId?: number | null;
+  orderId: number;
+  skuId: number;
+  skuCode?: string | null;
+  productName: string;
+  quantity: number;
+  unitPriceCents: number;
+  discountCents: number;
+  ncm?: string | null;
+  cfop?: string | null;
+  totalCents: number;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}
+export type OrderItemInput = Omit<OrderItem, "id" | "uuid" | "createdAt" | "updatedAt">;
+
+export interface OrderStatusHistory {
+  id: number;
+  uuid?: string;
+  tenantId?: number | null;
+  orderId: number;
+  fromStatus?: string | null;
+  toStatus: string;
+  actorType: string;
+  actorId?: number | null;
+  note?: string | null;
+  createdAt?: string | null;
+}
+export type OrderStatusHistoryInput = Omit<OrderStatusHistory, "id" | "uuid" | "createdAt">;
+
+// ==================== Shopping Cart ====================
+export interface Cart {
+  id: number;
+  uuid?: string;
+  tenantId?: number | null;
+  customerId?: number | null;
+  sessionToken?: string | null;
+  status: string;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}
+export type CartInput = Omit<Cart, "id" | "uuid" | "createdAt" | "updatedAt">;
+
+export interface CartItem {
+  id: number;
+  uuid?: string;
+  tenantId?: number | null;
+  cartId: number;
+  skuId: number;
+  quantity: number;
+  unitPriceCents: number;
+  totalCents: number;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}
+export type CartItemInput = Omit<CartItem, "id" | "uuid" | "createdAt" | "updatedAt">;
+
+// ==================== Marketing: Campaign & Coupon ====================
+export interface Campaign {
+  id: number;
+  uuid?: string;
+  tenantId?: number | null;
+  name: string;
+  description?: string | null;
+  campaignType: string;
+  startsAt?: string | null;
+  endsAt?: string | null;
+  budgetLimitCents?: number | null;
+  active: boolean;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}
+export type CampaignInput = Omit<Campaign, "id" | "uuid" | "createdAt" | "updatedAt">;
+
+export interface CampaignTarget {
+  id: number;
+  uuid?: string;
+  tenantId?: number | null;
+  campaignId: number;
+  targetType: string;
+  targetId: number;
+  createdAt?: string | null;
+}
+export type CampaignTargetInput = Omit<CampaignTarget, "id" | "uuid" | "createdAt">;
+
+export interface Coupon {
+  id: number;
+  uuid?: string;
+  tenantId?: number | null;
+  code: string;
+  campaignId?: number | null;
+  couponType: string;
+  value: number;
+  minOrderCents?: number | null;
+  maxUses?: number | null;
+  maxUsesPerCustomer?: number | null;
+  startsAt?: string | null;
+  expiresAt?: string | null;
+  active: boolean;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}
+export type CouponInput = Omit<Coupon, "id" | "uuid" | "createdAt" | "updatedAt">;
+
+export interface CouponRedemption {
+  id: number;
+  uuid?: string;
+  tenantId?: number | null;
+  couponId: number;
+  orderId: number;
+  customerId: number;
+  createdAt?: string | null;
+}
+export type CouponRedemptionInput = Omit<CouponRedemption, "id" | "uuid" | "createdAt">;
+

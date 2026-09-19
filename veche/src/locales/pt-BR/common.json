@@ -1,4 +1,14 @@
 {
+  "common": {
+    "home": "Início",
+    "edit": "Editar",
+    "close": "Fechar",
+    "saveChanges": "Salvar alterações",
+    "viewMore": "Ver mais",
+    "delete": "Excluir",
+    "filter": "Filtrar",
+    "seeAll": "Ver tudo"
+  },
   "sidebar": {
     "groups": {
       "menu": "Menu",
@@ -17,6 +27,16 @@
       "userProfile": "Perfil do usuário",
       "users": "Usuários",
       "tenants": "Empresas",
+      "sales": "Vendas",
+      "orders": "Pedidos",
+      "carts": "Carrinhos de Compras",
+      "customers": "Clientes",
+      "marketing": "Marketing",
+      "campaigns": "Campanhas",
+      "coupons": "Cupons",
+      "operations": "Operações",
+      "shippingRates": "Tabelas de Frete",
+      "taxRules": "Regras Tributárias",
       "catalog": "Catálogo",
       "categories": "Categorias",
       "products": "Produtos",
@@ -150,5 +170,75 @@
     "importButton": "Importar catálogo",
     "importing": "Importando…",
     "importFailed": "Falha na importação do catálogo."
+  },
+  "ecommerce": {
+    "title": "Painel de Comércio Eletrônico",
+    "metrics": {
+      "customers": "Clientes",
+      "orders": "Pedidos"
+    },
+    "months": {
+      "jan": "Jan",
+      "feb": "Fev",
+      "mar": "Mar",
+      "apr": "Abr",
+      "may": "Mai",
+      "jun": "Jun",
+      "jul": "Jul",
+      "aug": "Ago",
+      "sep": "Set",
+      "oct": "Out",
+      "nov": "Nov",
+      "dec": "Dez"
+    },
+    "monthlySales": {
+      "title": "Vendas Mensais",
+      "series": "Vendas"
+    },
+    "monthlyTarget": {
+      "title": "Meta Mensal",
+      "subtitle": "Meta definida para cada mês",
+      "earned": "Você faturou {amount} hoje, valor superior ao mês anterior. Continue com o ótimo trabalho!",
+      "target": "Meta",
+      "revenue": "Receita",
+      "today": "Hoje"
+    },
+    "statistics": {
+      "title": "Estatísticas",
+      "subtitle": "Metas definidas para cada mês",
+      "sales": "Vendas",
+      "revenue": "Receita",
+      "monthly": "Mensal",
+      "quarterly": "Trimestral",
+      "annually": "Anual",
+      "selectDateRange": "Selecione o período"
+    },
+    "recentOrders": {
+      "title": "Pedidos Recentes",
+      "products": "Produtos",
+      "category": "Categoria",
+      "price": "Preço",
+      "status": "Status",
+      "variants": "{count, plural, one {# Variante} other {# Variantes}}",
+      "categories": {
+        "laptop": "Notebook",
+        "watch": "Relógio",
+        "smartphone": "Smartphone",
+        "electronics": "Eletrônicos",
+        "accessories": "Acessórios"
+      },
+      "statuses": {
+        "delivered": "Entregue",
+        "pending": "Pendente",
+        "canceled": "Cancelado"
+      }
+    },
+    "demographic": {
+      "title": "Demografia dos Clientes",
+      "subtitle": "Número de clientes com base no país",
+      "customers": "{count} Clientes",
+      "usa": "EUA",
+      "france": "França"
+    }
   }
 }

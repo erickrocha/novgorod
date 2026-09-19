@@ -50,6 +50,19 @@ impl MigratorTrait for Migrator {
             Box::new(m20260917_000013_create_table_sku_stock::Migration),
             Box::new(m20260917_000014_create_table_product_image::Migration),
             Box::new(m20260917_000015_add_ibge_location_codes::Migration),
+            Box::new(m20260919_000001_create_table_shipping_rate::Migration),
+            Box::new(m20260919_000002_create_table_customer::Migration),
+            Box::new(m20260919_000003_create_table_customer_address::Migration),
+            Box::new(m20260919_000004_create_table_tax_rule::Migration),
+            Box::new(m20260919_000005_create_table_campaign::Migration),
+            Box::new(m20260919_000006_create_table_campaign_target::Migration),
+            Box::new(m20260919_000007_create_table_coupon::Migration),
+            Box::new(m20260919_000009_create_table_cart::Migration),
+            Box::new(m20260919_000010_create_table_cart_item::Migration),
+            Box::new(m20260919_000011_create_table_orders::Migration),
+            Box::new(m20260919_000012_create_table_order_item::Migration),
+            Box::new(m20260919_000013_create_table_order_status_history::Migration),
+            Box::new(m20260919_000014_create_table_coupon_redemption::Migration),
         ]
     }
 }
@@ -68,12 +81,12 @@ mod tests {
             .collect();
         let unique: HashSet<&str> = names.iter().copied().collect();
 
-        assert_eq!(names.len(), 15);
+        assert_eq!(names.len(), 28);
         assert_eq!(unique.len(), names.len());
         assert!(names.windows(2).all(|pair| pair[0] < pair[1]));
         assert_eq!(
             names.last().copied(),
-            Some("m20260917_000015_add_ibge_location_codes")
+            Some("m20260919_000014_create_table_coupon_redemption")
         );
     }
 }

@@ -8,11 +8,10 @@ import {
   ChevronDownIcon,
   GridIcon,
   HorizontaLDots,
-  ListIcon,
-  PageIcon,
   TableIcon,
   UserCircleIcon,
 } from "../icons";
+import { Megaphone, ShoppingBag, Truck, Users as UsersIcon } from "lucide-react";
 import { cn } from "../utils";
 import { useAppSelector } from "@/store/hooks";
 import { ROLES } from "@/utils/enums";
@@ -42,16 +41,47 @@ const navItems: NavItem[] = [
     subItems: [{ name: "Ecommerce", key: "ecommerceHome", path: "/" }],
   },
   {
-    icon: <CalenderIcon fontSize={24} />,
-    name: "Calendar",
-    key: "calendar",
-    path: "/calendar",
+    icon: <ShoppingBag size={24} />,
+    name: "Sales",
+    key: "sales",
+    subItems: [
+      { name: "Orders", key: "orders", path: "/orders" },
+      { name: "Shopping Carts", key: "carts", path: "/carts" },
+    ],
   },
   {
-    icon: <UserCircleIcon fontSize={24} />,
-    name: "User Profile",
-    key: "userProfile",
-    path: "/profile",
+    icon: <TableIcon fontSize={24} />,
+    name: "Catalog",
+    key: "catalog",
+    subItems: [
+      { name: "Categories", key: "categories", path: "/catalog/categories" },
+      { name: "Products", key: "products", path: "/catalog/products" },
+      { name: "SKUs", key: "skus", path: "/catalog/skus" },
+    ],
+  },
+  {
+    icon: <UsersIcon size={24} />,
+    name: "Customers",
+    key: "customers",
+    path: "/customers",
+  },
+  {
+    icon: <Megaphone size={24} />,
+    name: "Marketing",
+    key: "marketing",
+    subItems: [
+      { name: "Campaigns", key: "campaigns", path: "/marketing/campaigns" },
+      { name: "Coupons", key: "coupons", path: "/marketing/coupons" },
+    ],
+  },
+  {
+    icon: <Truck size={24} />,
+    name: "Operations",
+    key: "operations",
+    subItems: [
+      { name: "Shipping Rates", key: "shippingRates", path: "/operations/shipping-rates" },
+      { name: "Tax Rules", key: "taxRules", path: "/operations/tax-rules" },
+    ],
   },
   {
     icon: <UserCircleIcon fontSize={24} />,
@@ -66,46 +96,10 @@ const navItems: NavItem[] = [
     path: "/tenants",
   },
   {
-    icon: <TableIcon fontSize={24} />,
-    name: "Catalog",
-    key: "catalog",
-    subItems: [
-      { name: "Categories", key: "categories", path: "/catalog/categories" },
-      { name: "Products", key: "products", path: "/catalog/products" },
-      { name: "SKUs", key: "skus", path: "/catalog/skus" },
-    ],
-  },
-  {
-    name: "Forms",
-    key: "forms",
-    icon: <ListIcon fontSize={24} />,
-    subItems: [
-      {
-        name: "Form Elements",
-        key: "formElements",
-        path: "/form-elements",
-        pro: false,
-      },
-    ],
-  },
-  {
-    name: "Tables",
-    key: "tables",
-    icon: <TableIcon fontSize={24} />,
-    subItems: [
-      {
-        name: "Basic Tables",
-        key: "basicTables",
-        path: "/basic-tables",
-        pro: false,
-      },
-    ],
-  },
-  {
-    name: "Pages",
-    key: "pages",
-    icon: <PageIcon fontSize={24} />,
-    subItems: [{ name: "Blank Page", key: "blankPage", path: "/blank" }],
+    icon: <CalenderIcon fontSize={24} />,
+    name: "Calendar",
+    key: "calendar",
+    path: "/calendar",
   },
 ];
 
@@ -141,34 +135,36 @@ const AppSidebar: React.FC = () => {
   );
 
   useEffect(() => {
-    let submenuMatched = false;
+    queueMicrotask(() => {
+      let submenuMatched = false;
 
-    const groups: { type: "main" | "systemSettings"; items: NavItem[] }[] = [
-      { type: "main", items: navItems },
-      ...(isSysAdmin
-        ? [{ type: "systemSettings" as const, items: systemSettingsItems }]
-        : []),
-    ];
+      const groups: { type: "main" | "systemSettings"; items: NavItem[] }[] = [
+        { type: "main", items: navItems },
+        ...(isSysAdmin
+          ? [{ type: "systemSettings" as const, items: systemSettingsItems }]
+          : []),
+      ];
 
-    groups.forEach(({ type, items }) => {
-      items.forEach((nav, index) => {
-        if (nav.subItems) {
-          nav.subItems.forEach((subItem) => {
-            if (isActive(subItem.path)) {
-              setOpenSubmenu({
-                type,
-                index,
-              });
-              submenuMatched = true;
-            }
-          });
-        }
+      groups.forEach(({ type, items }) => {
+        items.forEach((nav, index) => {
+          if (nav.subItems) {
+            nav.subItems.forEach((subItem) => {
+              if (isActive(subItem.path)) {
+                setOpenSubmenu({
+                  type,
+                  index,
+                });
+                submenuMatched = true;
+              }
+            });
+          }
+        });
       });
-    });
 
-    if (!submenuMatched) {
-      setOpenSubmenu(null);
-    }
+      if (!submenuMatched) {
+        setOpenSubmenu(null);
+      }
+    });
   }, [location, isActive, isSysAdmin]);
 
   useEffect(() => {
