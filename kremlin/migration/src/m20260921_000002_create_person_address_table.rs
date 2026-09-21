@@ -12,7 +12,7 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(PersonAddress::Table)
                     .if_not_exists()
-                    .col(pk_auto(PersonAddress::Id))
+                    .col(pk_auto(PersonAddress::Id).big_integer())
                     .col(uuid_uniq(PersonAddress::Uuid))
                     .col(big_integer(PersonAddress::TenantId))
                     .col(big_integer(PersonAddress::PersonId).not_null())
@@ -27,12 +27,12 @@ impl MigrationTrait for Migration {
                     .col(date_time(PersonAddress::UpdatedAt))
                     .col(string_len_null(PersonAddress::UpdatedBy, 255))
                     .index(
-                    Index::create()
-                        .name("uq_persons_address_tenant_id_id")
-                        .col(Person::TenantId)
-                        .col(Person::Id)
-                        .unique(),
-                )
+                        Index::create()
+                            .name("uq_persons_address_tenant_id_id")
+                            .col(PersonAddress::TenantId)
+                            .col(PersonAddress::Id)
+                            .unique(),
+                    )
                     .to_owned(),
             )
             .await?;
@@ -42,7 +42,7 @@ impl MigrationTrait for Migration {
                 ForeignKey::create()
                     .name("fk_person_address_person")
                     .from_tbl(PersonAddress::Table)
-                    .from_col(PersonAddress::Id)
+                    .from_col(PersonAddress::PersonId)
                     .from_col(PersonAddress::TenantId)
                     .to_tbl(Person::Table)
                     .to_col(Person::Id)
