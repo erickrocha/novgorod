@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { Pencil, Plus, RefreshCw, Truck } from "lucide-react";
 import type { ColumnDef, PaginationState, SortingState } from "@tanstack/react-table";
 import PageBreadcrumb from "@/components/common/PageBreadCrumb";
@@ -23,6 +24,7 @@ const BRAZIL_UFS = [
 ];
 
 export default function ShippingRates() {
+  const { t } = useTranslation();
   const [searchParams, setSearchParams] = useSearchParams();
   const dispatch = useAppDispatch();
   const tenants = useAppSelector((s) => s.tenant.tenantsList);
@@ -172,7 +174,7 @@ export default function ShippingRates() {
 
   const columns: ColumnDef<ShippingRate, unknown>[] = [
     {
-      header: "State (UF)",
+      header: t("operations.shippingRates.ufCol", "State (UF)"),
       accessorKey: "uf",
       enableSorting: true,
       cell: ({ getValue }) => (
@@ -182,7 +184,7 @@ export default function ShippingRates() {
       ),
     },
     {
-      header: "Shipping Rate",
+      header: t("operations.shippingRates.priceCol", "Shipping Rate"),
       accessorKey: "priceCents",
       enableSorting: true,
       cell: ({ getValue }) => {
@@ -197,7 +199,7 @@ export default function ShippingRates() {
     ...(isSysAdmin
       ? [
           {
-            header: "Tenant",
+            header: t("common.tenant", "Tenant"),
             id: "tenant",
             cell: ({ row }: { row: { original: ShippingRate } }) =>
               tenantName(row.original.tenantId),
@@ -205,7 +207,7 @@ export default function ShippingRates() {
         ]
       : []),
     {
-      header: "Last Updated",
+      header: t("operations.shippingRates.updatedAtCol", "Last Updated"),
       accessorKey: "updatedAt",
       cell: ({ getValue }) => {
         const dateStr = getValue<string>();
@@ -220,8 +222,8 @@ export default function ShippingRates() {
         <div className="flex items-center justify-end">
           <button
             type="button"
-            title="Edit"
-            aria-label="Edit"
+            title={t("common.edit", "Edit")}
+            aria-label={t("common.edit", "Edit")}
             className="h-8 w-8 rounded-md inline-flex items-center justify-center text-gray-500 hover:text-brand-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-brand-400 dark:hover:bg-white/5 transition-colors"
             onClick={() => openEditModal(row.original)}
           >
@@ -235,10 +237,10 @@ export default function ShippingRates() {
   return (
     <>
       <PageMeta
-        title="Shipping Rates | Veche"
-        description="Manage regional shipping rates by state/UF"
+        title={`${t("operations.shippingRates.title", "Shipping Rates")} | Veche`}
+        description={t("operations.shippingRates.desc", "Manage regional shipping rates by state/UF")}
       />
-      <PageBreadcrumb pageTitle="Shipping Rates" />
+      <PageBreadcrumb pageTitle={t("operations.shippingRates.title", "Shipping Rates")} />
       <ComponentCard>
         <DataGrid
           data={rates}
@@ -251,21 +253,21 @@ export default function ShippingRates() {
                 startIcon={<RefreshCw size={14} />}
                 onClick={loadData}
               >
-                Refresh
+                {t("common.refresh", "Refresh")}
               </Button>
               <Button
                 size="sm"
                 startIcon={<Plus size={14} />}
                 onClick={openCreateModal}
               >
-                Add Rate
+                {t("operations.shippingRates.addRate", "Add Rate")}
               </Button>
             </div>
           }
           getRowId={(row, index) => String(row.id ?? index)}
           loading={loading && rates.length === 0}
           error={error}
-          emptyMessage="No shipping rates found."
+          emptyMessage={t("operations.shippingRates.emptyMessage", "No shipping rates found.")}
           manualPagination
           manualSorting
           manualFiltering
@@ -290,10 +292,10 @@ export default function ShippingRates() {
           </div>
           <div>
             <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
-              {editingRate ? "Edit Shipping Rate" : "Add Shipping Rate"}
+              {editingRate ? t("operations.shippingRates.editRate", "Edit Shipping Rate") : t("operations.shippingRates.newRate", "Add Shipping Rate")}
             </h3>
             <p className="text-xs text-gray-500 dark:text-gray-400">
-              Configure flat shipping rate for the destination state.
+              {t("operations.shippingRates.modalDesc", "Configure flat shipping rate for the destination state.")}
             </p>
           </div>
         </div>
@@ -306,7 +308,7 @@ export default function ShippingRates() {
 
         <form onSubmit={handleSave} className="space-y-4">
           <div>
-            <Label htmlFor="uf">Destination State (UF)</Label>
+            <Label htmlFor="uf">{t("operations.shippingRates.ufLabel", "Destination State (UF)")}</Label>
             <select
               id="uf"
               value={formData.uf}
@@ -323,7 +325,7 @@ export default function ShippingRates() {
           </div>
 
           <div>
-            <Label htmlFor="price">Rate Price (R$)</Label>
+            <Label htmlFor="price">{t("operations.shippingRates.priceLabel", "Rate Price (R$)")}</Label>
             <Input
               id="price"
               type="number"
@@ -338,7 +340,7 @@ export default function ShippingRates() {
 
           {isSysAdmin && (
             <div>
-              <Label htmlFor="tenantId">Tenant</Label>
+              <Label htmlFor="tenantId">{t("common.tenant", "Tenant")}</Label>
               <select
                 id="tenantId"
                 value={formData.tenantId || ""}
@@ -350,10 +352,10 @@ export default function ShippingRates() {
                 }
                 className="h-11 rounded-lg border-gray-300 px-3 text-sm w-full border bg-white dark:bg-gray-800 dark:border-gray-700 dark:text-white"
               >
-                <option value="">Default / None</option>
-                {tenants.map((t) => (
-                  <option key={t.id} value={t.id ?? ""}>
-                    {t.businessName || t.companyName}
+                <option value="">{t("customers.defaultNone", "Default / None")}</option>
+                {tenants.map((tTenant) => (
+                  <option key={tTenant.id} value={tTenant.id ?? ""}>
+                    {tTenant.businessName || tTenant.companyName}
                   </option>
                 ))}
               </select>
@@ -366,10 +368,10 @@ export default function ShippingRates() {
               variant="outline"
               onClick={() => setModalOpen(false)}
             >
-              Cancel
+              {t("common.cancel", "Cancel")}
             </Button>
             <Button type="submit" disabled={saving}>
-              {saving ? "Saving…" : "Save Rate"}
+              {saving ? t("common.saving", "Saving…") : editingRate ? t("operations.shippingRates.saveRate", "Update Rate") : t("operations.shippingRates.createRate", "Save Rate")}
             </Button>
           </div>
         </form>

@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import PageBreadcrumb from "@/components/common/PageBreadCrumb";
 import PageMeta from "@/components/common/PageMeta";
 import ComponentCard from "@/components/common/ComponentCard";
 import Input from "@/components/form/input/InputField";
 import Label from "@/components/form/Label";
 import Button from "@/components/ui/button/Button";
+import { Image as ImageIcon } from "lucide-react";
 import ProductImagesManager from "@/components/catalog/ProductImagesManager";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import {
@@ -20,6 +22,7 @@ import { fetchTenants } from "@/store/tenantSlice";
 import { ROLES } from "@/utils/enums";
 
 export default function CatalogForm() {
+  const { t } = useTranslation();
   const { kind = "products", id } = useParams();
   const editing = Boolean(id);
   const nav = useNavigate();
@@ -30,7 +33,13 @@ export default function CatalogForm() {
 
   const sys = currentUser?.role === ROLES.SYS_ADMIN;
   const ownTenant = currentUser?.tenantId ?? currentUser?.tenant_id;
-  const title = kind[0].toUpperCase() + kind.slice(1);
+  const defaultTitle = kind[0].toUpperCase() + kind.slice(1);
+  const formTitle = editing
+    ? t(`catalog.${kind}.editTitle`, `Edit ${defaultTitle}`)
+    : t(`catalog.${kind}.addTitle`, `Add ${defaultTitle}`);
+  const formDesc = editing
+    ? t(`catalog.${kind}.editDesc`, `Update ${defaultTitle.toLowerCase()} details and hierarchy.`)
+    : t(`catalog.${kind}.addDesc`, `Create a new ${defaultTitle.toLowerCase()} in the catalog.`);
 
   const existing: any =
     kind === "categories"
@@ -141,18 +150,18 @@ export default function CatalogForm() {
   return (
     <>
       <PageMeta
-        title={`${editing ? "Edit" : "Add"} ${title} | Veche`}
-        description="Catalog form"
+        title={`${formTitle} | Veche`}
+        description={formDesc}
       />
-      <PageBreadcrumb pageTitle={`${editing ? "Edit" : "Add"} ${title}`} />
+      <PageBreadcrumb pageTitle={formTitle} />
 
       <div className="space-y-6">
-        <ComponentCard title={`${editing ? "Edit" : "Add"} ${title}`}>
+        <ComponentCard title={formTitle} desc={formDesc}>
           <form onSubmit={submit} className="space-y-5">
             <div className="grid gap-5 md:grid-cols-2">
               {sys && (
                 <div>
-                  <Label>Tenant</Label>
+                  <Label>{t("catalog.form.tenant", "Tenant")}</Label>
                   <input
                     list="catalog-tenants"
                     required
@@ -173,7 +182,7 @@ export default function CatalogForm() {
               {kind !== "skus" ? (
                 <>
                   <div>
-                    <Label>Name</Label>
+                    <Label>{t("catalog.form.name", "Name")}</Label>
                     <Input
                       required
                       value={form.name}
@@ -181,7 +190,7 @@ export default function CatalogForm() {
                     />
                   </div>
                   <div>
-                    <Label>Slug</Label>
+                    <Label>{t("catalog.form.slug", "Slug")}</Label>
                     <Input
                       required
                       value={form.slug}
@@ -191,14 +200,14 @@ export default function CatalogForm() {
                   {kind === "products" && (
                     <>
                       <div>
-                        <Label>Brand</Label>
+                        <Label>{t("catalog.form.brand", "Brand")}</Label>
                         <Input
                           value={form.brand}
                           onChange={(e) => setField("brand", e.target.value)}
                         />
                       </div>
                       <div>
-                        <Label>NCM</Label>
+                        <Label>{t("catalog.form.ncm", "NCM")}</Label>
                         <Input
                           required
                           value={form.ncm}
@@ -206,7 +215,7 @@ export default function CatalogForm() {
                         />
                       </div>
                       <div className="md:col-span-2">
-                        <Label>Description</Label>
+                        <Label>{t("catalog.form.description", "Description")}</Label>
                         <Input
                           value={form.description}
                           onChange={(e) => setField("description", e.target.value)}
@@ -218,7 +227,7 @@ export default function CatalogForm() {
               ) : (
                 <>
                   <div>
-                    <Label>Product ID</Label>
+                    <Label>{t("catalog.form.productId", "Product ID")}</Label>
                     <Input
                       required
                       type="number"
@@ -227,7 +236,7 @@ export default function CatalogForm() {
                     />
                   </div>
                   <div>
-                    <Label>Code</Label>
+                    <Label>{t("catalog.form.code", "Code")}</Label>
                     <Input
                       required
                       value={form.code}
@@ -235,7 +244,7 @@ export default function CatalogForm() {
                     />
                   </div>
                   <div>
-                    <Label>Variant key</Label>
+                    <Label>{t("catalog.form.variantKey", "Variant key")}</Label>
                     <Input
                       required
                       value={form.variantKey}
@@ -243,7 +252,7 @@ export default function CatalogForm() {
                     />
                   </div>
                   <div>
-                    <Label>Price (cents)</Label>
+                    <Label>{t("catalog.form.priceCents", "Price (cents)")}</Label>
                     <Input
                       required
                       type="number"
@@ -256,13 +265,13 @@ export default function CatalogForm() {
               )}
             </div>
 
-            <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+            <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300 cursor-pointer">
               <input
                 type="checkbox"
                 checked={form.active}
                 onChange={(e) => setField("active", e.target.checked)}
               />
-              Active
+              {t("catalog.form.active", "Active")}
             </label>
 
             {catalogState.error && (
@@ -273,10 +282,12 @@ export default function CatalogForm() {
 
             <div className="flex justify-end gap-3">
               <Link to={`/catalog/${kind}`}>
-                <Button variant="outline">Cancel</Button>
+                <Button variant="outline">{t("common.cancel", "Cancel")}</Button>
               </Link>
               <Button disabled={catalogState.loading}>
-                {editing ? "Save changes" : "Create"}
+                {editing
+                  ? t("catalog.form.saveChanges", t("common.saveChanges", "Save changes"))
+                  : t("catalog.form.create", t("common.create", "Create"))}
               </Button>
             </div>
           </form>
@@ -284,7 +295,17 @@ export default function CatalogForm() {
 
         {/* Product Photos Section (Available when editing an existing product) */}
         {kind === "products" && editing && existing?.id && (
-          <ComponentCard title="Product Media & Photos">
+          <ComponentCard
+            title={t("catalog.products.mediaTitle", "Product Media & Photos")}
+            desc={t("catalog.products.mediaDesc", "Upload and manage product gallery images.")}
+            action={
+              <Link to={`/catalog/products/${existing.id}/photos`}>
+                <Button variant="outline" size="sm" startIcon={<ImageIcon size={14} />}>
+                  {t("catalog.photos.openFullPage", "Página Completa de Fotos")}
+                </Button>
+              </Link>
+            }
+          >
             <ProductImagesManager productId={Number(existing.id)} />
           </ComponentCard>
         )}

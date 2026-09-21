@@ -2,12 +2,14 @@ import GridShape from "@/components/common/GridShape";
 import ThemeTogglerTwo from "@/components/common/ThemeTogglerTwo";
 import React from "react";
 import { Link } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 
 export default function AuthLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  const { t } = useTranslation();
   return (
     <div className="relative z-1 bg-white p-6 sm:p-0 dark:bg-gray-900">
       <div className="relative flex h-screen w-full flex-col justify-center sm:p-0 lg:flex-row dark:bg-gray-900">
@@ -26,7 +28,7 @@ export default function AuthLayout({
               </Link>
 
               <p className="text-center text-gray-400 dark:text-white/60">
-                Novgorod admin e-commerce
+                {t("auth.adminEcommerce", "Novgorod admin e-commerce")}
               </p>
             </div>
           </div>

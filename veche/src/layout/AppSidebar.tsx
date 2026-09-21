@@ -113,6 +113,7 @@ const AppSidebar: React.FC = () => {
     useSidebar();
   const { t } = useTranslation();
   const isSysAdmin = useAppSelector((state) => state.auth.user?.role === ROLES.SYS_ADMIN);
+  const activeTenant = useAppSelector((state) => state.tenant.activeTenant);
   const location = useLocation();
   const [openSubmenu, setOpenSubmenu] = useState<{
     type: "main" | "systemSettings";
@@ -359,23 +360,27 @@ const AppSidebar: React.FC = () => {
     >
       <div
         className={cn(
-          "flex py-8",
+          "flex py-6 px-1",
           !isExpanded && !isHovered ? "xl:justify-center" : "justify-start",
         )}
       >
-        <Link to="/" className="flex items-center">
-          {isExpanded || isHovered || isMobileOpen ? (
-            <img
-              src="/images/logo.png"
-              alt="Novgorod Kremlin"
-              className="h-11 w-auto max-w-[170px] object-contain"
-            />
-          ) : (
-            <img
-              src="/images/logo-icon.png"
-              alt="Novgorod Kremlin"
-              className="h-9 w-9 object-contain"
-            />
+        <Link to="/" className="flex items-center gap-3">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand-50 text-brand-500 border border-brand-100 shadow-[0_2px_6px_rgba(29,111,209,0.15)] dark:bg-brand-950/50">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <polygon points="12 2 2 7 12 12 22 7 12 2" />
+              <polyline points="2 17 12 22 22 17" />
+              <polyline points="2 12 12 17 22 12" />
+            </svg>
+          </div>
+          {(isExpanded || isHovered || isMobileOpen) && (
+            <div className="flex flex-col min-w-0">
+              <span className="text-2xl font-bold lowercase tracking-tight text-gray-900 font-heading leading-none dark:text-white">
+                veche
+              </span>
+              <span className="mt-1 text-[0.65rem] font-semibold uppercase tracking-[0.2em] text-gray-500 dark:text-gray-400 truncate max-w-[170px]">
+                {activeTenant?.businessName || activeTenant?.companyName || "Admin"}
+              </span>
+            </div>
           )}
         </Link>
       </div>

@@ -47,10 +47,10 @@ export default function SignInForm() {
         <div>
           <div className="mb-5 sm:mb-8">
             <h1 className="mb-2 text-title-sm font-semibold text-gray-800 sm:text-title-md dark:text-white/90">
-              Sign In
+              {t("auth.signInTitle", "Sign In")}
             </h1>
             <p className="text-sm text-gray-500 dark:text-gray-400">
-              Enter your email and password to sign in!
+              {t("auth.signInSubtitle", "Enter your email and password to sign in!")}
             </p>
           </div>
           <div>
@@ -80,7 +80,7 @@ export default function SignInForm() {
                     fill="#EB4335"
                   />
                 </svg>
-                Sign in with Google
+                {t("auth.signInGoogle", "Sign in with Google")}
               </button>
               <button className="inline-flex items-center justify-center gap-3 rounded-lg bg-gray-100 px-7 py-3 text-sm font-normal text-gray-700 transition-colors hover:bg-gray-200 hover:text-gray-800 dark:bg-white/5 dark:text-white/90 dark:hover:bg-white/10">
                 <svg
@@ -93,7 +93,7 @@ export default function SignInForm() {
                 >
                   <path d="M15.6705 1.875H18.4272L12.4047 8.75833L19.4897 18.125H13.9422L9.59717 12.4442L4.62554 18.125H1.86721L8.30887 10.7625L1.51221 1.875H7.20054L11.128 7.0675L15.6705 1.875ZM14.703 16.475H16.2305L6.37054 3.43833H4.73137L14.703 16.475Z" />
                 </svg>
-                Sign in with X
+                {t("auth.signInX", "Sign in with X")}
               </button>
             </div>
             <div className="relative py-3 sm:py-5">
@@ -102,7 +102,7 @@ export default function SignInForm() {
               </div>
               <div className="relative flex justify-center text-sm">
                 <span className="bg-white p-2 text-gray-400 sm:px-5 sm:py-2 dark:bg-gray-900">
-                  Or
+                  {t("auth.or", "Or")}
                 </span>
               </div>
             </div>
@@ -115,7 +115,7 @@ export default function SignInForm() {
                 )}
                 <div>
                   <Label htmlFor="login-email">
-                    Email <span className="text-error-500">*</span>
+                    {t("auth.email", "Email")} <span className="text-error-500">*</span>
                   </Label>
                   <Input
                     id="login-email"
@@ -130,7 +130,7 @@ export default function SignInForm() {
                 </div>
                 <div>
                   <Label htmlFor="login-password">
-                    Password <span className="text-error-500">*</span>
+                    {t("auth.password", "Password")} <span className="text-error-500">*</span>
                   </Label>
                   <div className="relative">
                     <Input
@@ -163,14 +163,14 @@ export default function SignInForm() {
                   <div className="flex items-center gap-3">
                     <Checkbox checked={isChecked} onChange={setIsChecked} />
                     <span className="block text-theme-sm font-normal text-gray-700 dark:text-gray-400">
-                      Keep me logged in
+                      {t("auth.keepLoggedIn", "Keep me logged in")}
                     </span>
                   </div>
                   <Link
                     to="/reset-password"
                     className="text-sm text-brand-500 hover:text-brand-600 dark:text-brand-400"
                   >
-                    Forgot password?
+                    {t("auth.forgotPassword", "Forgot password?")}
                   </Link>
                 </div>
                 <div>
@@ -180,7 +180,7 @@ export default function SignInForm() {
                     type="submit"
                     disabled={loading}
                   >
-                    {loading ? "Signing in..." : "Sign in"}
+                    {loading ? t("auth.signingIn", "Signing in...") : t("auth.signIn", "Sign in")}
                   </Button>
                 </div>
               </div>

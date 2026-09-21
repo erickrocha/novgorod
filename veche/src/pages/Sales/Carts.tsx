@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { Eye, Package, RefreshCw, ShoppingCart } from "lucide-react";
 import type { ColumnDef, PaginationState, SortingState } from "@tanstack/react-table";
 import PageBreadcrumb from "@/components/common/PageBreadCrumb";
@@ -22,6 +23,7 @@ const CART_STATUS_COLORS: Record<string, "success" | "warning" | "info" | "light
 };
 
 export default function CartsPage() {
+  const { t } = useTranslation();
   const [searchParams, setSearchParams] = useSearchParams();
   const dispatch = useAppDispatch();
   const tenants = useAppSelector((s) => s.tenant.tenantsList);
@@ -132,7 +134,7 @@ export default function CartsPage() {
 
   const columns: ColumnDef<Cart, unknown>[] = [
     {
-      header: "Cart ID",
+      header: t("sales.carts.cartId", "Cart ID"),
       accessorKey: "id",
       enableSorting: true,
       cell: ({ getValue }) => (
@@ -142,13 +144,13 @@ export default function CartsPage() {
       ),
     },
     {
-      header: "Customer / Session",
+      header: t("sales.carts.owner", "Customer / Session"),
       id: "owner",
       cell: ({ row }) => (
         <div>
           {row.original.customerId ? (
             <span className="font-medium text-gray-900 dark:text-white">
-              Customer #{row.original.customerId}
+              {t("sales.orders.customer", "Customer")} #{row.original.customerId}
             </span>
           ) : (
             <span className="text-gray-500 font-mono text-xs">
@@ -159,7 +161,7 @@ export default function CartsPage() {
       ),
     },
     {
-      header: "Status",
+      header: t("sales.carts.status", "Status"),
       accessorKey: "status",
       enableSorting: true,
       cell: ({ getValue }) => {
@@ -167,7 +169,7 @@ export default function CartsPage() {
         const color = CART_STATUS_COLORS[status] || "light";
         return (
           <Badge size="sm" color={color}>
-            {status}
+            {t(`sales.carts.statuses.${status}`, status)}
           </Badge>
         );
       },
@@ -175,7 +177,7 @@ export default function CartsPage() {
     ...(isSysAdmin
       ? [
           {
-            header: "Tenant",
+            header: t("sales.carts.tenant", "Tenant"),
             id: "tenant",
             cell: ({ row }: { row: { original: Cart } }) =>
               tenantName(row.original.tenantId),
@@ -183,7 +185,7 @@ export default function CartsPage() {
         ]
       : []),
     {
-      header: "Created At",
+      header: t("sales.carts.date", "Date"),
       accessorKey: "createdAt",
       enableSorting: true,
       cell: ({ getValue }) => {
@@ -199,8 +201,8 @@ export default function CartsPage() {
         <div className="flex items-center justify-end">
           <button
             type="button"
-            title="View Cart Items"
-            aria-label="View Items"
+            title={t("sales.carts.viewDetails", "View Details")}
+            aria-label={t("sales.carts.viewDetails", "View Details")}
             className="h-8 w-8 rounded-md inline-flex items-center justify-center text-gray-500 hover:text-brand-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-brand-400 dark:hover:bg-white/5 transition-colors"
             onClick={() => openCartDetails(row.original)}
           >
@@ -216,11 +218,14 @@ export default function CartsPage() {
   return (
     <>
       <PageMeta
-        title="Shopping Carts | Veche"
-        description="Monitor active and abandoned shopping carts"
+        title={`${t("sales.carts.title", "Shopping Carts")} | Veche`}
+        description={t("sales.carts.desc", "Monitor active and abandoned shopping carts")}
       />
-      <PageBreadcrumb pageTitle="Shopping Carts" />
-      <ComponentCard>
+      <PageBreadcrumb pageTitle={t("sales.carts.title", "Shopping Carts")} />
+      <ComponentCard
+        title={t("sales.carts.title", "Shopping Carts")}
+        desc={t("sales.carts.desc", "Monitor active and abandoned shopping carts")}
+      >
         <DataGrid
           data={carts}
           columns={columns}
@@ -232,14 +237,14 @@ export default function CartsPage() {
                 startIcon={<RefreshCw size={14} />}
                 onClick={loadCarts}
               >
-                Refresh
+                {t("sales.carts.refresh", t("common.refresh", "Refresh"))}
               </Button>
             </div>
           }
           getRowId={(row, index) => String(row.id ?? index)}
           loading={loading && carts.length === 0}
           error={error}
-          emptyMessage="No carts found."
+          emptyMessage={t("sales.carts.emptyMessage", "No carts found.")}
           manualPagination
           manualSorting
           manualFiltering
@@ -268,19 +273,19 @@ export default function CartsPage() {
                 </div>
                 <div>
                   <h3 className="text-lg font-bold text-gray-900 dark:text-white flex items-center gap-2">
-                    Cart #{selectedCart.id}
+                    {t("sales.carts.detailTitle", { id: selectedCart.id, defaultValue: `Cart #${selectedCart.id}` })}
                     <Badge
                       size="sm"
                       color={
                         CART_STATUS_COLORS[selectedCart.status.toUpperCase()] || "light"
                       }
                     >
-                      {selectedCart.status.toUpperCase()}
+                      {t(`sales.carts.statuses.${selectedCart.status.toUpperCase()}`, selectedCart.status.toUpperCase())}
                     </Badge>
                   </h3>
                   <p className="text-xs text-gray-500 dark:text-gray-400">
                     {selectedCart.customerId
-                      ? `Customer #${selectedCart.customerId}`
+                      ? `${t("sales.orders.customer", "Customer")} #${selectedCart.customerId}`
                       : "Anonymous Session"}
                   </p>
                 </div>
@@ -289,25 +294,25 @@ export default function CartsPage() {
 
             {loadingItems ? (
               <div className="py-8 text-center text-sm text-gray-500">
-                Loading cart items…
+                {t("common.loading", "Loading cart items…")}
               </div>
             ) : items.length === 0 ? (
               <div className="py-8 text-center text-sm text-gray-500">
-                This cart has no active items.
+                {t("sales.carts.emptyMessage", "This cart has no active items.")}
               </div>
             ) : (
               <div className="space-y-4">
                 <h4 className="text-sm font-semibold text-gray-900 dark:text-white flex items-center gap-2">
-                  <Package size={16} /> Cart Items ({items.length})
+                  <Package size={16} /> {t("sales.carts.itemsTitle", { count: items.length, defaultValue: `Cart Items (${items.length})` })}
                 </h4>
                 <div className="rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden">
                   <table className="w-full text-left text-xs">
                     <thead className="bg-gray-50 dark:bg-gray-800/60 text-gray-500 border-b border-gray-200 dark:border-gray-800">
                       <tr>
-                        <th className="p-2.5">SKU ID</th>
+                        <th className="p-2.5">{t("catalog.columns.skuId", "SKU ID")}</th>
                         <th className="p-2.5 text-center">Quantity</th>
-                        <th className="p-2.5 text-right">Unit Price</th>
-                        <th className="p-2.5 text-right">Total</th>
+                        <th className="p-2.5 text-right">{t("catalog.form.priceCents", "Unit Price")}</th>
+                        <th className="p-2.5 text-right">{t("sales.orders.total", "Total")}</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
@@ -331,7 +336,7 @@ export default function CartsPage() {
                     <tfoot className="bg-gray-50/50 dark:bg-gray-800/40 border-t border-gray-200 dark:border-gray-800 font-bold text-sm">
                       <tr>
                         <td colSpan={3} className="p-3 text-right">
-                          Estimated Total:
+                          {t("sales.orders.total", "Total")}:
                         </td>
                         <td className="p-3 text-right text-brand-600 dark:text-brand-400">
                           {formatCurrency(cartTotalCents)}

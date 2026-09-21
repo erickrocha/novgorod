@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { Pencil, Plus, RefreshCw, Upload, X } from "lucide-react";
 import Papa from "papaparse";
 import type { ColumnDef, PaginationState, SortingState } from "@tanstack/react-table";
@@ -43,6 +44,7 @@ const isProvinceRowInvalid = (row: ProvinceCsvRow) =>
   row.country_code.trim().length !== 2;
 
 export default function Locations({ kind }: { kind: "provinces" | "cities" }) {
+  const { t } = useTranslation();
   const [searchParams, setSearchParams] = useSearchParams();
   const dispatch = useAppDispatch();
   const state = useAppSelector((s) => s.location);
@@ -118,13 +120,13 @@ export default function Locations({ kind }: { kind: "provinces" | "cities" }) {
   const gridColumns: ColumnDef<Province | City, unknown>[] = useMemo(() => {
     const columns: ColumnDef<Province | City, unknown>[] = [
       {
-        header: "IBGE code",
+        header: t("locations.columns.ibgeCode", "IBGE code"),
         accessorKey: "ibgeCode",
         enableSorting: true,
         cell: ({ getValue }) => getValue<string>() || "—",
       },
       {
-        header: "Name",
+        header: t("locations.columns.name", "Name"),
         accessorKey: "name",
         enableSorting: true,
         cell: ({ getValue }) => (
@@ -133,7 +135,7 @@ export default function Locations({ kind }: { kind: "provinces" | "cities" }) {
       },
     ];
     if (kind === "provinces") {
-      columns.push({ header: "UF", accessorKey: "acronym", enableSorting: true });
+      columns.push({ header: t("locations.columns.uf", "UF"), accessorKey: "acronym", enableSorting: true });
     }
     columns.push({
       id: "actions",
@@ -144,8 +146,8 @@ export default function Locations({ kind }: { kind: "provinces" | "cities" }) {
         <div className="flex items-center justify-end text-end">
           <button
             type="button"
-            title="Edit"
-            aria-label="Edit"
+            title={t("common.edit", "Edit")}
+            aria-label={t("common.edit", "Edit")}
             onClick={() => setEditing(row.original)}
             className="h-7 w-7 rounded-md inline-flex items-center justify-center text-gray-500 hover:text-brand-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-brand-400 dark:hover:bg-white/5 transition-colors"
           >
@@ -155,7 +157,7 @@ export default function Locations({ kind }: { kind: "provinces" | "cities" }) {
       ),
     });
     return columns;
-  }, [kind]);
+  }, [kind, t]);
 
   const submit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -270,11 +272,11 @@ export default function Locations({ kind }: { kind: "provinces" | "cities" }) {
   return (
     <>
       <PageMeta
-        title={`${kind === "provinces" ? "Provinces" : "Cities"} | Veche`}
-        description="Manage Brazilian locations"
+        title={`${kind === "provinces" ? t("locations.provinces", "Provinces") : t("locations.cities", "Cities")} | Veche`}
+        description={t("locations.manageLocations", "Manage Brazilian locations")}
       />
       <PageBreadcrumb
-        pageTitle={kind === "provinces" ? "Provinces" : "Cities"}
+        pageTitle={kind === "provinces" ? t("locations.provinces", "Provinces") : t("locations.cities", "Cities")}
         showTitle={false}
       />
       <ComponentCard>
@@ -288,11 +290,13 @@ export default function Locations({ kind }: { kind: "provinces" | "cities" }) {
             <div className="mb-4 gap-3 flex flex-wrap items-start justify-between">
               <div>
                 <h3 className="font-semibold text-gray-800 dark:text-white/90">
-                  Review province import
+                  {t("locations.reviewImport", "Review province import")}
                 </h3>
                 <p className="text-sm text-gray-500">
-                  {importName} · {importRows.length} rows. Edit any value before
-                  saving.
+                  {t("locations.importDesc", "{name} · {count} rows. Edit any value before saving.", {
+                    name: importName,
+                    count: importRows.length,
+                  })}
                 </p>
               </div>
               <button
@@ -306,13 +310,12 @@ export default function Locations({ kind }: { kind: "provinces" | "cities" }) {
             </div>
             {invalidRows > 0 && (
               <div className="mb-4 rounded-lg border-warning-200 bg-warning-50 p-3 text-sm text-warning-700 border">
-                {invalidRows} row{invalidRows === 1 ? " has" : "s have"} missing
-                or invalid required values. Fix them before saving.
+                {t("locations.invalidRowsWarning", "{count} row(s) have missing or invalid required values. Fix them before saving.", { count: invalidRows })}
               </div>
             )}
             {importRows.length === 0 && (
               <div className="mb-4 rounded-lg border-warning-200 bg-warning-50 p-3 text-sm text-warning-700 border">
-                The selected CSV has no province rows.
+                {t("locations.emptyCsvWarning", "The selected CSV has no province rows.")}
               </div>
             )}
             <div className="max-h-[55vh] overflow-auto">
@@ -320,10 +323,10 @@ export default function Locations({ kind }: { kind: "provinces" | "cities" }) {
                 <thead>
                   <tr className="border-gray-100 dark:border-gray-800 border-b">
                     <th className="px-2 py-3">#</th>
-                    <th className="px-2 py-3">IBGE code</th>
-                    <th className="px-2 py-3">UF</th>
-                    <th className="px-2 py-3">Name</th>
-                    <th className="px-2 py-3">Country</th>
+                    <th className="px-2 py-3">{t("locations.columns.ibgeCode", "IBGE code")}</th>
+                    <th className="px-2 py-3">{t("locations.columns.uf", "UF")}</th>
+                    <th className="px-2 py-3">{t("locations.columns.name", "Name")}</th>
+                    <th className="px-2 py-3">{t("locations.columns.country", "Country")}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -356,7 +359,7 @@ export default function Locations({ kind }: { kind: "provinces" | "cities" }) {
             </div>
             <div className="mt-5 gap-3 flex justify-end">
               <Button type="button" variant="outline" onClick={closePreview}>
-                Cancel
+                {t("common.cancel", "Cancel")}
               </Button>
               <Button
                 type="button"
@@ -365,7 +368,7 @@ export default function Locations({ kind }: { kind: "provinces" | "cities" }) {
                 }
                 onClick={saveImport}
               >
-                {state.loading ? "Saving…" : "Save"}
+                {state.loading ? t("common.saving", "Saving…") : t("common.save", "Save")}
               </Button>
             </div>
           </div>
@@ -377,7 +380,7 @@ export default function Locations({ kind }: { kind: "provinces" | "cities" }) {
             className="mb-6 gap-4 rounded-lg border-gray-200 p-4 md:grid-cols-4 grid border"
           >
             <div>
-              <Label htmlFor="ibgeCode">IBGE code</Label>
+              <Label htmlFor="ibgeCode">{t("locations.columns.ibgeCode", "IBGE code")}</Label>
               <Input
                 id="ibgeCode"
                 name="ibgeCode"
@@ -387,7 +390,7 @@ export default function Locations({ kind }: { kind: "provinces" | "cities" }) {
             </div>
             {kind === "provinces" && (
               <div>
-                <Label htmlFor="acronym">Acronym</Label>
+                <Label htmlFor="acronym">{t("locations.columns.uf", "UF")}</Label>
                 <Input
                   id="acronym"
                   name="acronym"
@@ -398,7 +401,7 @@ export default function Locations({ kind }: { kind: "provinces" | "cities" }) {
             )}
             {kind === "cities" && (
               <div>
-                <Label htmlFor="provinceId">Province</Label>
+                <Label htmlFor="provinceId">{t("locations.columns.province", "Province")}</Label>
                 <select
                   id="provinceId"
                   name="provinceId"
@@ -414,7 +417,7 @@ export default function Locations({ kind }: { kind: "provinces" | "cities" }) {
               </div>
             )}
             <div>
-              <Label htmlFor="name">Name</Label>
+              <Label htmlFor="name">{t("locations.columns.name", "Name")}</Label>
               <Input
                 id="name"
                 name="name"
@@ -423,13 +426,13 @@ export default function Locations({ kind }: { kind: "provinces" | "cities" }) {
               />
             </div>
             <div className="gap-2 flex items-end">
-              <Button type="submit">Save</Button>
+              <Button type="submit">{t("common.save", "Save")}</Button>
               <Button
                 type="button"
                 variant="outline"
                 onClick={() => setEditing(null)}
               >
-                Cancel
+                {t("common.cancel", "Cancel")}
               </Button>
             </div>
           </form>
@@ -441,8 +444,11 @@ export default function Locations({ kind }: { kind: "provinces" | "cities" }) {
         )}
         {state.report && (
           <div className="mb-4 rounded-lg border-success-200 bg-success-50 p-3 text-sm border">
-            Imported: {state.report.inserted} inserted, {state.report.updated}{" "}
-            updated, {state.report.skipped} skipped.
+            {t("locations.importedReport", "Imported: {inserted} inserted, {updated} updated, {skipped} skipped.", {
+              inserted: state.report.inserted,
+              updated: state.report.updated,
+              skipped: state.report.skipped,
+            })}
           </div>
         )}
         <DataGrid
@@ -462,11 +468,11 @@ export default function Locations({ kind }: { kind: "provinces" | "cities" }) {
                   }
                 }}
               >
-                Refresh
+                {t("common.refresh", "Refresh")}
               </Button>
               <label className="rounded-lg bg-brand-500 px-3 py-1.5 text-xs font-medium text-white inline-flex cursor-pointer items-center shadow-theme-xs hover:bg-brand-600 transition-colors">
                 <Upload size={14} className="me-1.5" />
-                Import CSV
+                {t("locations.importCsv", "Import CSV")}
                 <input
                   type="file"
                   accept=".csv,text/csv"
@@ -489,14 +495,14 @@ export default function Locations({ kind }: { kind: "provinces" | "cities" }) {
                   )
                 }
               >
-                Add
+                {kind === "provinces" ? t("locations.addProvince", "Add Province") : t("locations.addCity", "Add City")}
               </Button>
             </div>
           }
           getRowId={(row, index) => String(row.id ?? row.ibgeCode ?? index)}
           loading={state.loading && rows.length === 0}
           error={state.error}
-          emptyMessage={`No ${kind} found.`}
+          emptyMessage={kind === "provinces" ? t("locations.emptyProvinces", "No provinces found.") : t("locations.emptyCities", "No cities found.")}
           manualPagination
           manualSorting
           manualFiltering

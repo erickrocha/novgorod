@@ -25,21 +25,21 @@ const Button: React.FC<ButtonProps> = ({
 }) => {
   // Size Classes
   const sizeClasses = {
-    sm: "px-3 py-1.5 text-xs font-medium",
-    md: "px-4 py-2 text-sm font-medium",
+    sm: "px-3.5 py-1.5 text-xs font-semibold uppercase tracking-wider",
+    md: "px-5 py-2.5 text-sm font-semibold uppercase tracking-wider",
   };
 
   // Variant Classes
   const variantClasses = {
     primary:
-      "bg-gradient-to-r from-brand-500 to-brand-600 text-white shadow-[0_2px_8px_rgba(29,111,209,0.35)] hover:shadow-[0_4px_14px_rgba(29,111,209,0.45)] hover:-translate-y-0.5 active:translate-y-0 disabled:opacity-50 disabled:pointer-events-none disabled:shadow-none",
+      "bg-gradient-to-r from-brand-500 to-brand-600 text-white shadow-[0_2px_8px_rgba(29,111,209,0.25)] hover:shadow-[0_4px_14px_rgba(29,111,209,0.38)] hover:-translate-y-0.5 active:translate-y-0 disabled:opacity-50 disabled:pointer-events-none disabled:shadow-none",
     outline:
-      "bg-white text-gray-900 border border-gray-200 hover:bg-brand-50 hover:text-brand-600 hover:border-brand-500 dark:bg-gray-800 dark:text-gray-200 dark:border-gray-700 dark:hover:bg-brand-950 dark:hover:text-brand-400",
+      "bg-white text-brand-600 border border-gray-200 hover:bg-brand-50 hover:text-brand-700 hover:border-brand-500 dark:bg-gray-800 dark:text-gray-200 dark:border-gray-700 dark:hover:bg-brand-950 dark:hover:text-brand-400",
   };
 
   return (
     <button
-      className={`inline-flex items-center justify-center gap-2 rounded-lg font-medium transition-all duration-300 ease-out ${className} ${
+      className={`inline-flex items-center justify-center gap-2 rounded-full font-medium transition-all duration-300 ease-out ${className} ${
         sizeClasses[size]
       } ${variantClasses[variant]} ${
         disabled ? "cursor-not-allowed opacity-50" : ""

@@ -26,7 +26,7 @@
   }
 
   body {
-    @apply relative z-1 bg-gray-50 font-outfit font-normal;
+    @apply relative z-1 bg-gray-50 font-jost font-normal;
     background-color: var(--bg-primary, #F7FAFF);
     color: var(--text-body, #5A6B80);
     line-height: 1.6;
@@ -36,6 +36,32 @@
     color: var(--text-heading, #0F2A47);
     font-family: var(--font-family-heading, 'Jost', sans-serif);
   }
+}
+
+@utility bg-header-gradient {
+  background-color: var(--bg-alt, #FFFFFF);
+}
+
+@utility bg-sidebar-gradient {
+  background-color: var(--bg-alt, #FFFFFF);
+}
+
+.bg-header-gradient {
+  background-color: var(--bg-alt, #FFFFFF);
+}
+
+.bg-sidebar-gradient {
+  background-color: var(--bg-alt, #FFFFFF);
+}
+
+.dark .bg-header-gradient,
+.dark.bg-header-gradient {
+  background-color: var(--color-gray-900, #0f172a);
+}
+
+.dark .bg-sidebar-gradient,
+.dark.bg-sidebar-gradient {
+  background-color: var(--color-gray-900, #0f172a);
 }
 
 @utility menu-item {
@@ -87,19 +113,19 @@
 }
 
 @utility menu-dropdown-badge {
-  @apply block rounded-full px-2.5 py-0.5 text-xs font-medium text-success-600 uppercase dark:text-success-500;
+  @apply block rounded-full px-2.5 py-0.5 text-xs font-semibold uppercase tracking-wider text-gray-900 bg-[#FFF4D1] border border-[#FFC629]/40;
 }
 
 @utility menu-dropdown-badge-active {
-  @apply bg-success-100 dark:bg-success-500/20;
+  @apply bg-[#FFEAA0] text-gray-900;
 }
 
 @utility menu-dropdown-badge-inactive {
-  @apply bg-success-50 group-hover:bg-success-100 dark:bg-success-500/15 dark:group-hover:bg-success-500/20;
+  @apply bg-[#FFF4D1] text-gray-900 group-hover:bg-[#FFEAA0];
 }
 
 @utility menu-dropdown-badge-pro {
-  @apply block rounded-full px-2.5 py-0.5 text-xs font-medium text-brand-600 uppercase dark:text-brand-500;
+  @apply block rounded-full px-2.5 py-0.5 text-xs font-semibold uppercase tracking-wider text-brand-600 bg-brand-50 border border-brand-200 dark:text-brand-400 dark:bg-brand-950/50;
 }
 
 @utility menu-dropdown-badge-pro-active {
@@ -108,6 +134,132 @@
 
 @utility menu-dropdown-badge-pro-inactive {
   @apply bg-brand-50 group-hover:bg-brand-100 dark:bg-brand-500/15 dark:group-hover:bg-brand-500/20;
+}
+
+/* Veche Design System Components (Design-veche.md) */
+.btn-action-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: 9999px;
+  background: linear-gradient(135deg, var(--accent-primary, #1D6FD1) 0%, var(--accent-hover, #155BAE) 100%);
+  color: #FFFFFF;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  font-size: 0.82rem;
+  font-weight: 600;
+  padding: 8px 18px;
+  box-shadow: 0 2px 8px rgba(29, 111, 209, 0.25);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  border: none;
+  cursor: pointer;
+
+  &:hover:not(:disabled) {
+    box-shadow: 0 4px 14px rgba(29, 111, 209, 0.38);
+    transform: translateY(-1px);
+  }
+
+  &:active:not(:disabled) {
+    transform: translateY(0);
+  }
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    box-shadow: none;
+  }
+}
+
+.btn-action-outline {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: 9999px;
+  background-color: var(--bg-alt, #FFFFFF);
+  color: var(--accent-primary, #1D6FD1);
+  border: 1px solid var(--border-color, #DCE6F2);
+  font-family: var(--font-family-primary, 'Jost', sans-serif);
+  font-size: 0.82rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  padding: 7px 16px;
+  cursor: pointer;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+
+  &:hover:not(:disabled) {
+    border-color: var(--accent-primary, #1D6FD1);
+    background-color: var(--badge-bg, #EDF3FC);
+    color: var(--accent-hover, #155BAE);
+  }
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+}
+
+.lp-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border-radius: 9999px;
+  background-color: var(--badge-accent-bg, #FFF4D1);
+  color: var(--text-heading, #0F2A47);
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.11em;
+  padding: 3px 10px;
+  border: 1px solid rgba(255, 198, 41, 0.4);
+}
+
+.customer-badge-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border-radius: 9999px;
+  background-color: var(--badge-bg, #EDF3FC);
+  color: var(--accent-primary, #1D6FD1);
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 3px 12px;
+}
+
+.section-title {
+  font-family: var(--font-family-heading, 'Jost', sans-serif);
+  font-size: 1.65rem;
+  font-weight: 500;
+  color: var(--text-heading, #0F2A47);
+  letter-spacing: -0.01em;
+  margin: 0;
+}
+
+.form-card {
+  background: var(--bg-alt, #FFFFFF);
+  border: 1px solid var(--border-color, #DCE6F2);
+  border-radius: 12px;
+  padding: 1.25rem 1.5rem;
+  box-shadow: 0 4px 14px rgba(15, 42, 71, 0.06);
+
+  h3 {
+    font-family: var(--font-family-heading, 'Jost', sans-serif);
+    font-size: 1rem;
+    color: var(--text-heading, #0F2A47);
+    font-weight: 600;
+    margin-bottom: 1rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+
+    svg {
+      color: var(--accent-primary, #1D6FD1);
+    }
+  }
 }
 
 @utility no-scrollbar {

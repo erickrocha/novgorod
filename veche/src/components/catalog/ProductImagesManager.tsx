@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import Button from "@/components/ui/button/Button";
 import Badge from "@/components/ui/badge/Badge";
+import { useTranslation } from "react-i18next";
 import {
   productImageService,
   type ProductImage,
@@ -34,6 +35,7 @@ export default function ProductImagesManager({
   productId,
   readOnly = false,
 }: ProductImagesManagerProps) {
+  const { t } = useTranslation();
   const [images, setImages] = useState<ProductImage[]>([]);
   const [loading, setLoading] = useState(false);
   const [uploadQueue, setUploadQueue] = useState<UploadProgressItem[]>([]);
@@ -187,7 +189,7 @@ export default function ProductImagesManager({
   };
 
   const handleDelete = async (imageId: number) => {
-    if (!window.confirm("Are you sure you want to delete this product photo?")) {
+    if (!window.confirm(t("catalog.photos.deleteConfirm", "Are you sure you want to delete this product photo?"))) {
       return;
     }
     try {
@@ -231,10 +233,13 @@ export default function ProductImagesManager({
       <div className="flex items-center justify-between">
         <div>
           <h3 className="text-base font-medium text-gray-800 dark:text-white/90">
-            Product Photos
+            {t("catalog.photos.title", "Product Photos")}
           </h3>
           <p className="text-xs text-gray-500 dark:text-gray-400">
-            Upload single or multiple images directly to S3 with CloudFront CDN distribution.
+            {t(
+              "catalog.photos.desc",
+              "Upload single or multiple images directly to S3 with CloudFront CDN distribution."
+            )}
           </p>
         </div>
         <Button
@@ -245,7 +250,7 @@ export default function ProductImagesManager({
           onClick={fetchImages}
           disabled={loading}
         >
-          Refresh
+          {t("catalog.refresh", t("common.refresh", "Refresh"))}
         </Button>
       </div>
 
@@ -287,10 +292,16 @@ export default function ProductImagesManager({
               <UploadCloud size={24} />
             </div>
             <p className="text-sm font-medium text-gray-700 dark:text-gray-300">
-              <span className="text-brand-500 hover:underline">Click to upload</span> or drag and drop
+              <span className="text-brand-500 hover:underline">
+                {t("catalog.photos.clickToUpload", "Click to upload")}
+              </span>{" "}
+              {t("catalog.photos.orDragAndDrop", "or drag and drop")}
             </p>
             <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-              PNG, JPG, WebP, GIF (Uploads 1 or N images directly to S3)
+              {t(
+                "catalog.photos.formatsHint",
+                "PNG, JPG, WebP, GIF (Uploads 1 or N images directly to S3)"
+              )}
             </p>
           </div>
         </div>
@@ -300,7 +311,7 @@ export default function ProductImagesManager({
       {uploadQueue.length > 0 && (
         <div className="space-y-2 rounded-xl border border-gray-200 bg-gray-50/50 p-4 dark:border-gray-800 dark:bg-gray-900/50">
           <h4 className="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
-            Upload Progress ({uploadQueue.length})
+            {t("catalog.photos.uploadProgress", "Upload Progress")} ({uploadQueue.length})
           </h4>
           <div className="space-y-2">
             {uploadQueue.map((item) => (
@@ -344,16 +355,18 @@ export default function ProductImagesManager({
                     )}
                     {item.status === "processing" && (
                       <span className="flex items-center justify-end gap-1 text-[11px] text-amber-600 dark:text-amber-400">
-                        <Clock size={12} className="animate-spin" /> SQS...
+                        <Clock size={12} className="animate-spin" /> {t("catalog.photos.processing", "Processing")}...
                       </span>
                     )}
                     {item.status === "success" && (
                       <span className="flex items-center justify-end gap-1 text-[11px] text-success-600 dark:text-success-400">
-                        <CheckCircle2 size={12} /> Ready
+                        <CheckCircle2 size={12} /> {t("catalog.photos.ready", "Ready")}
                       </span>
                     )}
                     {item.status === "error" && (
-                      <span className="text-[11px] text-error-600 dark:text-error-400">Failed</span>
+                      <span className="text-[11px] text-error-600 dark:text-error-400">
+                        {t("catalog.photos.failed", "Failed")}
+                      </span>
                     )}
                   </div>
                 </div>
@@ -369,7 +382,7 @@ export default function ProductImagesManager({
           <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-gray-200 py-10 text-center dark:border-gray-800">
             <ImageIcon size={36} className="text-gray-300 dark:text-gray-600" />
             <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
-              No photos added to this product yet.
+              {t("catalog.photos.noPhotos", "No photos added to this product yet.")}
             </p>
           </div>
         ) : (
@@ -406,7 +419,7 @@ export default function ProductImagesManager({
                     {img.isPrimary && (
                       <div className="absolute top-2 left-2">
                         <Badge variant="solid" color="primary" size="sm" startIcon={<Star size={10} />}>
-                          Primary
+                          {t("catalog.photos.primary", "Primary")}
                         </Badge>
                       </div>
                     )}
@@ -415,7 +428,7 @@ export default function ProductImagesManager({
                     {isPending && (
                       <div className="absolute top-2 right-2">
                         <Badge variant="light" color="warning" size="sm" startIcon={<Clock size={10} className="animate-spin" />}>
-                          Processing
+                          {t("catalog.photos.processing", "Processing")}
                         </Badge>
                       </div>
                     )}
@@ -445,11 +458,11 @@ export default function ProductImagesManager({
                             className="inline-flex items-center gap-1 text-[11px] font-medium text-gray-500 hover:text-brand-600 dark:text-gray-400 dark:hover:text-brand-400 disabled:opacity-50"
                           >
                             <Star size={12} />
-                            Set primary
+                            {t("catalog.photos.setPrimary", "Set primary")}
                           </button>
                         ) : (
                           <span className="text-[11px] font-medium text-brand-600 dark:text-brand-400">
-                            Main photo
+                            {t("catalog.photos.primary", "Primary")}
                           </span>
                         )}
 
@@ -458,7 +471,7 @@ export default function ProductImagesManager({
                           disabled={isActionLoading}
                           onClick={() => handleDelete(img.id)}
                           className="text-gray-400 hover:text-error-600 dark:hover:text-error-400 disabled:opacity-50"
-                          title="Delete photo"
+                          title={t("common.delete", "Delete photo")}
                         >
                           <Trash2 size={14} />
                         </button>

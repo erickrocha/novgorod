@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { Boxes, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
 import type { ColumnDef, PaginationState, SortingState } from "@tanstack/react-table";
 import PageBreadcrumb from "@/components/common/PageBreadCrumb";
@@ -18,6 +19,7 @@ import type { PageQueryParams, SkuStock, SkuStockInput } from "@/services/types"
 import { ROLES } from "@/utils/enums";
 
 export default function Inventory() {
+  const { t } = useTranslation();
   const [searchParams, setSearchParams] = useSearchParams();
   const dispatch = useAppDispatch();
   const tenants = useAppSelector((s) => s.tenant.tenantsList);
@@ -166,13 +168,13 @@ export default function Inventory() {
   const columns: ColumnDef<SkuStock>[] = [
     {
       accessorKey: "id",
-      header: "ID",
+      header: t("operations.inventory.idCol", "ID"),
       enableSorting: true,
       cell: ({ row }) => <span className="font-mono text-xs">{row.original.id}</span>,
     },
     {
       accessorKey: "skuId",
-      header: "SKU ID",
+      header: t("operations.inventory.skuIdCol", "SKU ID"),
       enableSorting: true,
       cell: ({ row }) => (
         <span className="font-medium text-gray-800 dark:text-white/90">
@@ -182,35 +184,41 @@ export default function Inventory() {
     },
     {
       accessorKey: "quantity",
-      header: "Total Stock",
+      header: t("operations.inventory.totalStockCol", "Total Stock"),
       enableSorting: true,
       cell: ({ row }) => (
         <span className="font-semibold text-gray-900 dark:text-white">
-          {row.original.quantity} units
+          {t("operations.inventory.units", "{count} units", { count: row.original.quantity })}
         </span>
       ),
     },
     {
       accessorKey: "reserved",
-      header: "Reserved",
+      header: t("operations.inventory.reservedCol", "Reserved"),
       enableSorting: true,
       cell: ({ row }) => (
         <span className="text-gray-500">
-          {row.original.reserved} units
+          {t("operations.inventory.units", "{count} units", { count: row.original.reserved })}
         </span>
       ),
     },
     {
       id: "available",
-      header: "Available Balance",
+      header: t("operations.inventory.availableBalanceCol", "Available Balance"),
       cell: ({ row }) => {
         const available = row.original.quantity - row.original.reserved;
         return available > 10 ? (
-          <Badge variant="solid" color="success">{available} Available</Badge>
+          <Badge variant="solid" color="success">
+            {t("operations.inventory.availableBadge", "{count} Available", { count: available })}
+          </Badge>
         ) : available > 0 ? (
-          <Badge variant="solid" color="warning">{available} Low Stock</Badge>
+          <Badge variant="solid" color="warning">
+            {t("operations.inventory.lowStockBadge", "{count} Low Stock", { count: available })}
+          </Badge>
         ) : (
-          <Badge variant="solid" color="error">Out of Stock</Badge>
+          <Badge variant="solid" color="error">
+            {t("operations.inventory.outOfStockBadge", "Out of Stock")}
+          </Badge>
         );
       },
     },
@@ -218,13 +226,13 @@ export default function Inventory() {
       ? [
           {
             accessorKey: "tenantId",
-            header: "Tenant",
+            header: t("common.tenant", "Tenant"),
             enableSorting: false,
             cell: ({ row }: { row: { original: SkuStock } }) => {
-              const t = tenants.find((item) => item.id === row.original.tenantId);
+              const tTenant = tenants.find((item) => item.id === row.original.tenantId);
               return (
                 <span className="text-xs text-gray-500">
-                  {t?.companyName || t?.businessName || row.original.tenantId || "N/A"}
+                  {tTenant?.companyName || tTenant?.businessName || row.original.tenantId || "N/A"}
                 </span>
               );
             },
@@ -233,7 +241,7 @@ export default function Inventory() {
       : []),
     {
       id: "actions",
-      header: "Actions",
+      header: t("common.actions", "Actions"),
       cell: ({ row }) => (
         <div className="flex items-center gap-2">
           <Button
@@ -241,7 +249,7 @@ export default function Inventory() {
             variant="outline"
             className="h-8 w-8 p-0"
             onClick={() => handleOpenEdit(row.original)}
-            aria-label="Edit"
+            aria-label={t("common.edit", "Edit")}
           >
             <Pencil size={14} />
           </Button>
@@ -253,7 +261,7 @@ export default function Inventory() {
               setItemToDelete(row.original);
               setDeleteConfirmOpen(true);
             }}
-            aria-label="Delete"
+            aria-label={t("common.delete", "Delete")}
           >
             <Trash2 size={14} />
           </Button>
@@ -265,14 +273,14 @@ export default function Inventory() {
   return (
     <>
       <PageMeta
-        title="Inventory Stock | Novgorod Admin"
-        description="Manage SKU inventory stock balances, reserves, and availability"
+        title={`${t("operations.inventory.title", "Inventory Stock")} | Veche`}
+        description={t("operations.inventory.desc", "Manage SKU inventory stock balances, reserves, and availability")}
       />
-      <PageBreadcrumb pageTitle="Inventory Stock" />
+      <PageBreadcrumb pageTitle={t("operations.inventory.title", "Inventory Stock")} />
 
       <ComponentCard
-        title="Warehouse & Inventory Stock"
-        desc="Monitor on-hand inventory balances, open order reserves, and stock thresholds"
+        title={t("operations.inventory.cardTitle", "Warehouse & Inventory Stock")}
+        desc={t("operations.inventory.desc", "Monitor on-hand inventory balances, open order reserves, and stock thresholds")}
       >
         <DataGrid
           data={items}
@@ -286,17 +294,17 @@ export default function Inventory() {
                 disabled={loading}
                 startIcon={<RefreshCw size={14} className={loading ? "animate-spin" : ""} />}
               >
-                Refresh
+                {t("common.refresh", "Refresh")}
               </Button>
               <Button size="sm" onClick={handleOpenAdd} startIcon={<Plus size={14} />}>
-                Set Stock
+                {t("operations.inventory.addRecord", "Set Stock")}
               </Button>
             </div>
           }
           getRowId={(row, index) => String(row.id ?? index)}
           loading={loading && items.length === 0}
           error={error}
-          emptyMessage="No inventory stock records found."
+          emptyMessage={t("operations.inventory.emptyMessage", "No inventory stock records found.")}
           manualPagination
           manualSorting
           manualFiltering
@@ -330,10 +338,10 @@ export default function Inventory() {
           </div>
           <div>
             <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
-              {editingItem ? "Update Stock Balance" : "Set Inventory Stock"}
+              {editingItem ? t("operations.inventory.editStock", "Update Stock Balance") : t("operations.inventory.newStock", "Set Inventory Stock")}
             </h3>
             <p className="text-xs text-gray-500">
-              Set available units and reservation balances for a SKU
+              {t("operations.inventory.modalDesc", "Set available units and reservation balances for a SKU")}
             </p>
           </div>
         </div>
@@ -346,7 +354,7 @@ export default function Inventory() {
 
         <form onSubmit={handleSave} className="mt-4 space-y-4">
           <div>
-            <Label htmlFor="skuId">SKU ID *</Label>
+            <Label htmlFor="skuId">{t("operations.inventory.skuIdLabel", "SKU ID *")}</Label>
             <Input
               id="skuId"
               type="number"
@@ -362,7 +370,7 @@ export default function Inventory() {
 
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <Label htmlFor="quantity">Total On-Hand Quantity *</Label>
+              <Label htmlFor="quantity">{t("operations.inventory.quantityLabel", "Total On-Hand Quantity *")}</Label>
               <Input
                 id="quantity"
                 type="number"
@@ -376,7 +384,7 @@ export default function Inventory() {
               />
             </div>
             <div>
-              <Label htmlFor="reserved">Reserved Quantity</Label>
+              <Label htmlFor="reserved">{t("operations.inventory.reservedLabel", "Reserved Quantity")}</Label>
               <Input
                 id="reserved"
                 type="number"
@@ -391,15 +399,15 @@ export default function Inventory() {
           </div>
 
           <div className="rounded-lg bg-gray-50 p-3 text-xs text-gray-600 dark:bg-gray-800/50 dark:text-gray-300">
-            Available to Sell:{" "}
+            {t("operations.inventory.availableToSell", "Available to Sell:")}{" "}
             <span className="font-bold text-brand-600 dark:text-brand-400">
-              {Math.max(0, formData.quantity - formData.reserved)} units
+              {t("operations.inventory.units", "{count} units", { count: Math.max(0, formData.quantity - formData.reserved) })}
             </span>
           </div>
 
           {isSysAdmin && (
             <div>
-              <Label htmlFor="tenantId">Tenant (SysAdmin only)</Label>
+              <Label htmlFor="tenantId">{t("operations.inventory.tenantLabel", "Tenant (SysAdmin only)")}</Label>
               <select
                 id="tenantId"
                 className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 dark:border-gray-700 dark:bg-gray-900 dark:text-white/90"
@@ -411,10 +419,10 @@ export default function Inventory() {
                   }))
                 }
               >
-                <option value="">Default Tenant</option>
-                {tenants.map((t) => (
-                  <option key={t.id} value={t.id ?? undefined}>
-                    {t.companyName || t.businessName || `Tenant #${t.id}`}
+                <option value="">{t("operations.inventory.defaultTenant", "Default Tenant")}</option>
+                {tenants.map((tTenant) => (
+                  <option key={tTenant.id} value={tTenant.id ?? undefined}>
+                    {tTenant.companyName || tTenant.businessName || `Tenant #${tTenant.id}`}
                   </option>
                 ))}
               </select>
@@ -428,10 +436,10 @@ export default function Inventory() {
               onClick={() => setModalOpen(false)}
               disabled={saving}
             >
-              Cancel
+              {t("common.cancel", "Cancel")}
             </Button>
             <Button type="submit" disabled={saving}>
-              {saving ? "Saving..." : editingItem ? "Update Stock" : "Save Stock"}
+              {saving ? t("common.saving", "Saving...") : editingItem ? t("operations.inventory.updateStock", "Update Stock") : t("operations.inventory.saveStock", "Save Stock")}
             </Button>
           </div>
         </form>
@@ -443,16 +451,16 @@ export default function Inventory() {
         onClose={() => setDeleteConfirmOpen(false)}
         className="max-w-md p-6"
       >
-        <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Confirm Deletion</h3>
+        <h3 className="text-lg font-semibold text-gray-900 dark:text-white">{t("operations.inventory.deleteConfirmTitle", "Confirm Deletion")}</h3>
         <p className="mt-2 text-sm text-gray-500">
-          Are you sure you want to remove the inventory balance for SKU #{itemToDelete?.skuId}? This action cannot be undone.
+          {t("operations.inventory.deleteConfirmMsg", "Are you sure you want to remove the inventory balance for SKU #{skuId}? This action cannot be undone.", { skuId: itemToDelete?.skuId })}
         </p>
         <div className="mt-6 flex justify-end gap-3">
           <Button variant="outline" onClick={() => setDeleteConfirmOpen(false)}>
-            Cancel
+            {t("common.cancel", "Cancel")}
           </Button>
           <Button variant="primary" className="bg-red-600 hover:bg-red-700" onClick={handleDelete}>
-            Delete
+            {t("common.delete", "Delete")}
           </Button>
         </div>
       </Modal>

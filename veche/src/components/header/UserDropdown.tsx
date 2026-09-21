@@ -67,19 +67,21 @@ export default function UserDropdown() {
     <div className="relative">
       <button
         onClick={toggleDropdown}
-        className="dropdown-toggle text-gray-700 dark:text-gray-400 flex items-center"
+        className="dropdown-toggle group flex items-center gap-2 rounded-full border border-gray-200 bg-white py-1 ps-1 pe-3 text-gray-700 shadow-[0_1px_3px_rgba(15,42,71,0.04)] transition-all hover:border-brand-300 hover:bg-brand-25/50 dark:border-gray-800 dark:bg-gray-800 dark:text-gray-300"
       >
-        <span className="me-3 h-11 w-11 overflow-hidden rounded-full">
+        <span className="h-8 w-8 overflow-hidden rounded-full ring-2 ring-brand-500/20">
           <img src={avatarUrl} alt="User" className="h-full w-full object-cover" />
         </span>
 
-        <span className="me-1 text-theme-sm font-medium block">{displayName}</span>
+        <span className="text-theme-sm font-medium text-gray-800 group-hover:text-brand-600 block dark:text-gray-200">
+          {displayName}
+        </span>
         <svg
-          className={`stroke-gray-500 dark:stroke-gray-400 transition-transform duration-200 ${
+          className={`stroke-gray-500 group-hover:stroke-brand-500 dark:stroke-gray-400 transition-transform duration-200 ${
             isOpen ? "rotate-180" : ""
           }`}
-          width="18"
-          height="20"
+          width="16"
+          height="16"
           viewBox="0 0 18 20"
           fill="none"
           xmlns="http://www.w3.org/2000/svg"

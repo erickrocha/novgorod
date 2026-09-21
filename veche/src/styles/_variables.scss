@@ -11,18 +11,19 @@ $weight-bold: 600;
 // Default Theme Tokens (Socialfit — azul, amarelo e branco)
 // Regra do amarelo: acento, fundo de badge ou detalhe gráfico. Nunca como cor de
 // texto sobre branco — reprova no contraste AA. Texto e CTA são azuis.
-$color-bg-primary: #F7FAFF;        // Branco azulado
-$color-bg-alt: #FFFFFF;            // Branco puro
-$color-bg-dark: #12467F;           // Azul profundo (seções de destaque)
-$color-text-heading: #0F2A47;      // Azul quase preto
-$color-text-body: #5A6B80;         // Cinza azulado
-$color-accent-primary: #1D6FD1;    // Azul — CTA, links, ícones
+$color-bg-primary: #F7FAFF; // Branco azulado
+$color-bg-alt: #FFFFFF; // Branco puro
+$color-bg-dark: #12467F; // Azul profundo (seções de destaque)
+$color-text-heading: #0F2A47; // Azul quase preto
+$color-text-body: #5A6B80; // Cinza azulado
+$color-accent-primary: #1D6FD1; // Azul — CTA, links, ícones
 $color-accent-hover: #155BAE;
-$color-accent-secondary: #FFC629;  // Amarelo — destaques e badges
+$color-accent-secondary: #FFC629; // Amarelo — destaques e badges
 $color-accent-secondary-hover: #F2B300;
-$color-border: #DCE6F2;            // Azul claro
-$color-badge-bg: #EDF3FC;          // Superfície sutil (azul claro)
-$color-badge-accent-bg: #FFF4D1;   // Amarelo claro — destaque pontual
+$color-border: #DCE6F2; // Azul claro
+
+$color-badge-bg: #EDF3FC; // Superfície sutil (azul claro)
+$color-badge-accent-bg: #FFF4D1; // Amarelo claro — destaque pontual
 
 // Layout
 $header-height: 80px;

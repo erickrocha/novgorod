@@ -9,7 +9,7 @@ const LayoutContent: React.FC = () => {
   const { isExpanded, isHovered, isMobileOpen } = useSidebar();
 
   return (
-    <div className="min-h-screen xl:flex">
+    <div className="min-h-screen bg-gray-50 font-jost text-gray-500 xl:flex dark:bg-gray-950 dark:text-gray-400">
       <AppSidebar />
       <Backdrop />
 
@@ -21,7 +21,7 @@ const LayoutContent: React.FC = () => {
         )}
       >
         <AppHeader />
-        <main className="mx-auto max-w-(--breakpoint-2xl) p-4 md:p-6">
+        <main className="mx-auto max-w-(--breakpoint-2xl) p-4 md:p-6 lg:p-8">
           <Outlet />
         </main>
       </div>

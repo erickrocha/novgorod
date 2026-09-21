@@ -4,6 +4,7 @@ import { ThemeToggleButton } from "@/components/common/ThemeToggleButton";
 import NotificationDropdown from "@/components/header/NotificationDropdown";
 import UserDropdown from "@/components/header/UserDropdown";
 import { useSidebar } from "@/context/SidebarContext";
+import { useAppSelector } from "@/store/hooks";
 import { cn } from "@/utils";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -13,6 +14,7 @@ const AppHeader: React.FC = () => {
   const { t } = useTranslation("header");
   const inputRef = useRef<HTMLInputElement>(null);
   const [isApplicationMenuOpen, setApplicationMenuOpen] = useState(false);
+  const activeTenant = useAppSelector((state) => state.tenant.activeTenant);
 
   const { isMobileOpen, toggleSidebar, toggleMobileSidebar } = useSidebar();
 
@@ -44,7 +46,7 @@ const AppHeader: React.FC = () => {
   }, []);
 
   return (
-    <header className="sticky top-0 z-99999 flex w-full border-b border-gray-200 bg-white shadow-[0_1px_3px_rgba(15,42,71,0.04)] dark:border-gray-800 dark:bg-gray-900">
+    <header className="sticky top-0 z-99999 flex w-full border-b border-gray-200 bg-white shadow-[0_2px_10px_rgba(15,42,71,0.02)] dark:border-gray-800 dark:bg-gray-900">
       <div className="flex grow flex-col items-center justify-between xl:flex-row xl:px-6">
         <div className="flex w-full items-center justify-between gap-2 border-b border-gray-200 px-3 py-3 sm:gap-4 xl:justify-normal xl:border-b-0 xl:px-0 xl:py-4 dark:border-gray-800">
           <button
@@ -89,12 +91,24 @@ const AppHeader: React.FC = () => {
             {/* Cross Icon */}
           </button>
 
-          <Link to="/" className="xl:hidden flex items-center">
-            <img
-              src="/images/logo.png"
-              alt="Novgorod Kremlin"
-              className="h-9 w-auto max-w-[150px] object-contain"
-            />
+          <Link to="/" className="xl:hidden flex items-center gap-2.5">
+            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-brand-50 text-brand-500 border border-brand-100 dark:bg-brand-950/50">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polygon points="12 2 2 7 12 12 22 7 12 2" />
+                <polyline points="2 17 12 22 22 17" />
+                <polyline points="2 12 12 17 22 12" />
+              </svg>
+            </div>
+            <div className="flex flex-col">
+              <span className="text-xl font-bold lowercase tracking-tight text-gray-900 font-heading leading-none dark:text-white">
+                veche
+              </span>
+              {activeTenant && (
+                <span className="mt-0.5 text-[0.62rem] font-semibold uppercase tracking-[0.2em] text-gray-500 dark:text-gray-400 truncate max-w-[120px]">
+                  {activeTenant.businessName || activeTenant.companyName}
+                </span>
+              )}
+            </div>
           </Link>
 
           <button
@@ -158,6 +172,12 @@ const AppHeader: React.FC = () => {
           )}
         >
           <div className="flex items-center gap-2 2xsm:gap-3">
+            {activeTenant && (
+              <div className="hidden 2xl:flex items-center gap-2 rounded-full border border-amber-200/60 bg-[#FFF4D1] px-3 py-1 text-xs font-semibold uppercase tracking-[0.11em] text-gray-900 shadow-theme-xs">
+                <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+                <span>{activeTenant.businessName || activeTenant.companyName}</span>
+              </div>
+            )}
             {/* <!-- Dark Mode Toggler --> */}
             <ThemeToggleButton />
             {/* <!-- Dark Mode Toggler --> */}

@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Papa from "papaparse";
 import * as XLSX from "xlsx";
 import { Upload, X, Building2, CheckCircle2, AlertCircle } from "lucide-react";
@@ -10,7 +10,8 @@ import FilterableCombobox, {
   type ComboboxOption,
 } from "@/components/form/FilterableCombobox";
 import { catalogService } from "@/services/catalogService";
-import { useAppSelector } from "@/store/hooks";
+import { useAppDispatch, useAppSelector } from "@/store/hooks";
+import { fetchTenantById, fetchTenants } from "@/store/tenantSlice";
 import { ROLES } from "@/utils/enums";
 
 type ImportRow = {
@@ -128,20 +129,30 @@ export default function CatalogImportModal({
     unchanged: number;
   } | null>(null);
 
+  const dispatch = useAppDispatch();
   const { user } = useAppSelector((s) => s.auth);
   const tenants = useAppSelector((s) => s.tenant.tenantsList);
   const activeTenant = useAppSelector((s) => s.tenant.activeTenant);
 
   const isSysAdmin = user?.role === ROLES.SYS_ADMIN;
-  const isTenantOwner = user?.role === ROLES.TENANT_OWNER;
 
   const ownTenantId = user?.tenantId ?? user?.tenant_id ?? activeTenant?.id;
   const ownTenant =
-    tenants.find((t) => t.id === ownTenantId) || activeTenant;
+    (activeTenant?.id === ownTenantId ? activeTenant : null) ||
+    tenants.find((t) => t.id === ownTenantId) ||
+    activeTenant;
   const ownTenantName =
     ownTenant?.businessName ||
     ownTenant?.companyName ||
     (ownTenantId ? `#${ownTenantId}` : "");
+
+  useEffect(() => {
+    if (isSysAdmin && tenants.length === 0) {
+      dispatch(fetchTenants());
+    } else if (!isSysAdmin && ownTenantId && !activeTenant) {
+      dispatch(fetchTenantById(Number(ownTenantId)));
+    }
+  }, [dispatch, isSysAdmin, tenants.length, ownTenantId, activeTenant]);
 
   const effectiveTenant = isSysAdmin
     ? tenantId
@@ -334,14 +345,14 @@ export default function CatalogImportModal({
                 </div>
               )}
 
-              {/* TenantOwner: informative banner showing tenant name */}
-              {isTenantOwner && (
+              {/* Informative banner showing tenant name for non-sysadmin users */}
+              {!isSysAdmin && (
                 <div className="flex items-center gap-2 rounded-lg border border-brand-200 bg-brand-50 px-4 py-2.5 text-sm font-medium text-brand-800 dark:border-brand-800 dark:bg-brand-950/30 dark:text-brand-300">
                   <Building2 size={18} className="shrink-0 text-brand-600 dark:text-brand-400" />
                   <span>
                     {t("catalog.tenantOwnerNotice", {
-                      tenantName: ownTenantName || `#${ownTenantId}`,
-                      defaultValue: `Tudo será importado para a sua empresa: ${ownTenantName || `#${ownTenantId}`}`,
+                      tenantName: ownTenantName || (ownTenantId ? `#${ownTenantId}` : ""),
+                      defaultValue: `Tudo será importado para a sua empresa: ${ownTenantName || (ownTenantId ? `#${ownTenantId}` : "")}`,
                     })}
                   </span>
                 </div>
@@ -386,12 +397,12 @@ export default function CatalogImportModal({
                 <thead className="bg-gray-50 dark:bg-gray-800/60 sticky top-0 z-10">
                   <tr className="border-b border-gray-200 dark:border-gray-800 text-gray-600 dark:text-gray-300">
                     <th className="p-2 text-start">#</th>
-                    <th className="p-2 text-start">Product</th>
-                    <th className="p-2 text-start">Slug</th>
-                    <th className="p-2 text-start">SKU code</th>
-                    <th className="p-2 text-start">Variant</th>
-                    <th className="p-2 text-start">Price cents</th>
-                    <th className="p-2 text-start">Category</th>
+                    <th className="p-2 text-start">{t("catalog.import.productCol", "Product")}</th>
+                    <th className="p-2 text-start">{t("catalog.import.slugCol", "Slug")}</th>
+                    <th className="p-2 text-start">{t("catalog.import.skuCol", "SKU code")}</th>
+                    <th className="p-2 text-start">{t("catalog.import.variantCol", "Variant")}</th>
+                    <th className="p-2 text-start">{t("catalog.import.priceCol", "Price cents")}</th>
+                    <th className="p-2 text-start">{t("catalog.import.categoryCol", "Category")}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 dark:divide-gray-800">

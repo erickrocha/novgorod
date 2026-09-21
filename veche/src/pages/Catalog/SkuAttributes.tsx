@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { Layers, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
 import type { ColumnDef, PaginationState, SortingState } from "@tanstack/react-table";
 import PageBreadcrumb from "@/components/common/PageBreadCrumb";
@@ -17,6 +18,7 @@ import type { PageQueryParams, SkuAttributeValue, SkuAttributeValueInput } from 
 import { ROLES } from "@/utils/enums";
 
 export default function SkuAttributes() {
+  const { t } = useTranslation();
   const [searchParams, setSearchParams] = useSearchParams();
   const dispatch = useAppDispatch();
   const tenants = useAppSelector((s) => s.tenant.tenantsList);
@@ -186,13 +188,13 @@ export default function SkuAttributes() {
   const columns: ColumnDef<SkuAttributeValue>[] = [
     {
       accessorKey: "id",
-      header: "ID",
+      header: t("common.id", "ID"),
       enableSorting: true,
       cell: ({ row }) => <span className="font-mono text-xs">{row.original.id}</span>,
     },
     {
       accessorKey: "skuId",
-      header: "SKU ID",
+      header: t("catalog.columns.skuId", "SKU ID"),
       enableSorting: true,
       cell: ({ row }) => (
         <span className="font-medium text-gray-800 dark:text-white/90">
@@ -202,7 +204,7 @@ export default function SkuAttributes() {
     },
     {
       accessorKey: "productId",
-      header: "Product ID",
+      header: t("catalog.columns.productId", "Product ID"),
       enableSorting: true,
       cell: ({ row }) => (
         <span className="text-gray-700 dark:text-gray-300">
@@ -212,7 +214,7 @@ export default function SkuAttributes() {
     },
     {
       accessorKey: "productAttributeId",
-      header: "Product Spec ID",
+      header: t("catalog.columns.productSpecId", "Product Spec ID"),
       enableSorting: false,
       cell: ({ row }) => (
         <span className="text-xs text-gray-500">
@@ -222,7 +224,7 @@ export default function SkuAttributes() {
     },
     {
       accessorKey: "attributeId",
-      header: "Attribute ID",
+      header: t("catalog.columns.attributeId", "Attribute ID"),
       enableSorting: true,
       cell: ({ row }) => (
         <span className="text-gray-700 dark:text-gray-300">
@@ -232,7 +234,7 @@ export default function SkuAttributes() {
     },
     {
       accessorKey: "attributeValueId",
-      header: "Value ID",
+      header: t("catalog.columns.valueId", "Value ID"),
       enableSorting: false,
       cell: ({ row }) => (
         <span className="font-semibold text-brand-600 dark:text-brand-400">
@@ -244,13 +246,13 @@ export default function SkuAttributes() {
       ? [
           {
             accessorKey: "tenantId",
-            header: "Tenant",
+            header: t("catalog.columns.tenant", "Tenant"),
             enableSorting: false,
             cell: ({ row }: { row: { original: SkuAttributeValue } }) => {
-              const t = tenants.find((item) => item.id === row.original.tenantId);
+              const tr = tenants.find((item) => item.id === row.original.tenantId);
               return (
                 <span className="text-xs text-gray-500">
-                  {t?.companyName || t?.businessName || row.original.tenantId || "N/A"}
+                  {tr?.companyName || tr?.businessName || row.original.tenantId || "N/A"}
                 </span>
               );
             },
@@ -259,7 +261,7 @@ export default function SkuAttributes() {
       : []),
     {
       id: "actions",
-      header: "Actions",
+      header: t("common.actions", "Actions"),
       cell: ({ row }) => (
         <div className="flex items-center gap-2">
           <Button
@@ -267,7 +269,7 @@ export default function SkuAttributes() {
             variant="outline"
             className="h-8 w-8 p-0"
             onClick={() => handleOpenEdit(row.original)}
-            aria-label="Edit"
+            aria-label={t("common.edit", "Edit")}
           >
             <Pencil size={14} />
           </Button>
@@ -279,7 +281,7 @@ export default function SkuAttributes() {
               setItemToDelete(row.original);
               setDeleteConfirmOpen(true);
             }}
-            aria-label="Delete"
+            aria-label={t("common.delete", "Delete")}
           >
             <Trash2 size={14} />
           </Button>
@@ -291,14 +293,22 @@ export default function SkuAttributes() {
   return (
     <>
       <PageMeta
-        title="SKU Attributes | Novgorod Admin"
-        description="Manage SKU variant attributes and option values"
+        title={`${t("catalog.skuAttributes.pageTitle", "SKU Attributes")} | Veche`}
+        description={t(
+          "catalog.skuAttributes.desc",
+          "Map SKU variants to specific attribute values (e.g. Size, Color, Capacity)"
+        )}
       />
-      <PageBreadcrumb pageTitle="SKU Attributes" />
+      <PageBreadcrumb
+        pageTitle={t("catalog.skuAttributes.pageTitle", "SKU Attributes")}
+      />
 
       <ComponentCard
-        title="SKU Variant Attributes"
-        desc="Map SKU variants to specific attribute values (e.g. Size, Color, Capacity)"
+        title={t("catalog.skuAttributes.title", "SKU Variant Attributes")}
+        desc={t(
+          "catalog.skuAttributes.desc",
+          "Map SKU variants to specific attribute values (e.g. Size, Color, Capacity)"
+        )}
       >
         <DataGrid
           data={items}
@@ -312,17 +322,17 @@ export default function SkuAttributes() {
                 disabled={loading}
                 startIcon={<RefreshCw size={14} className={loading ? "animate-spin" : ""} />}
               >
-                Refresh
+                {t("catalog.refresh", t("common.refresh", "Refresh"))}
               </Button>
               <Button size="sm" onClick={handleOpenAdd} startIcon={<Plus size={14} />}>
-                Assign Attribute
+                {t("catalog.skuAttributes.assignAttribute", "Assign Attribute")}
               </Button>
             </div>
           }
           getRowId={(row, index) => String(row.id ?? index)}
           loading={loading && items.length === 0}
           error={error}
-          emptyMessage="No SKU attributes found."
+          emptyMessage={t("catalog.skuAttributes.emptyMessage", "No SKU attributes found.")}
           manualPagination
           manualSorting
           manualFiltering
@@ -356,10 +366,12 @@ export default function SkuAttributes() {
           </div>
           <div>
             <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
-              {editingItem ? "Edit Variant Attribute" : "Assign Variant Attribute"}
+              {editingItem
+                ? t("catalog.skuAttributes.modalTitleEdit", "Edit Variant Attribute")
+                : t("catalog.skuAttributes.modalTitleAdd", "Assign Variant Attribute")}
             </h3>
             <p className="text-xs text-gray-500">
-              Associate SKU with catalog attribute values
+              {t("catalog.skuAttributes.modalDesc", "Associate SKU with catalog attribute values")}
             </p>
           </div>
         </div>
@@ -373,7 +385,9 @@ export default function SkuAttributes() {
         <form onSubmit={handleSave} className="mt-4 space-y-4">
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <Label htmlFor="productId">Product ID *</Label>
+              <Label htmlFor="productId">
+                {t("catalog.skuAttributes.productIdLabel", "Product ID *")}
+              </Label>
               <Input
                 id="productId"
                 type="number"
@@ -387,7 +401,9 @@ export default function SkuAttributes() {
               />
             </div>
             <div>
-              <Label htmlFor="skuId">SKU ID *</Label>
+              <Label htmlFor="skuId">
+                {t("catalog.skuAttributes.skuIdLabel", "SKU ID *")}
+              </Label>
               <Input
                 id="skuId"
                 type="number"
@@ -403,7 +419,9 @@ export default function SkuAttributes() {
           </div>
 
           <div>
-            <Label htmlFor="productAttributeId">Product Attribute Spec ID *</Label>
+            <Label htmlFor="productAttributeId">
+              {t("catalog.skuAttributes.specIdLabel", "Product Attribute Spec ID *")}
+            </Label>
             <Input
               id="productAttributeId"
               type="number"
@@ -419,7 +437,9 @@ export default function SkuAttributes() {
 
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <Label htmlFor="attributeId">Attribute ID *</Label>
+              <Label htmlFor="attributeId">
+                {t("catalog.skuAttributes.attributeIdLabel", "Attribute ID *")}
+              </Label>
               <Input
                 id="attributeId"
                 type="number"
@@ -433,7 +453,9 @@ export default function SkuAttributes() {
               />
             </div>
             <div>
-              <Label htmlFor="attributeValueId">Attribute Value ID *</Label>
+              <Label htmlFor="attributeValueId">
+                {t("catalog.skuAttributes.valueIdLabel", "Attribute Value ID *")}
+              </Label>
               <Input
                 id="attributeValueId"
                 type="number"
@@ -450,7 +472,9 @@ export default function SkuAttributes() {
 
           {isSysAdmin && (
             <div>
-              <Label htmlFor="tenantId">Tenant (SysAdmin only)</Label>
+              <Label htmlFor="tenantId">
+                {t("catalog.skuAttributes.tenantLabel", "Tenant (SysAdmin only)")}
+              </Label>
               <select
                 id="tenantId"
                 className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 dark:border-gray-700 dark:bg-gray-900 dark:text-white/90"
@@ -462,10 +486,12 @@ export default function SkuAttributes() {
                   }))
                 }
               >
-                <option value="">Default Tenant</option>
-                {tenants.map((t) => (
-                  <option key={t.id} value={t.id ?? undefined}>
-                    {t.companyName || t.businessName || `Tenant #${t.id}`}
+                <option value="">
+                  {t("catalog.skuAttributes.defaultTenant", "Default Tenant")}
+                </option>
+                {tenants.map((tr) => (
+                  <option key={tr.id} value={tr.id ?? undefined}>
+                    {tr.companyName || tr.businessName || `Tenant #${tr.id}`}
                   </option>
                 ))}
               </select>
@@ -479,10 +505,14 @@ export default function SkuAttributes() {
               onClick={() => setModalOpen(false)}
               disabled={saving}
             >
-              Cancel
+              {t("common.cancel", "Cancel")}
             </Button>
             <Button type="submit" disabled={saving}>
-              {saving ? "Saving..." : editingItem ? "Update Assignment" : "Assign Attribute"}
+              {saving
+                ? t("common.saving", "Saving...")
+                : editingItem
+                  ? t("catalog.skuAttributes.updateAssignment", "Update Assignment")
+                  : t("catalog.skuAttributes.assignAttribute", "Assign Attribute")}
             </Button>
           </div>
         </form>
@@ -494,16 +524,22 @@ export default function SkuAttributes() {
         onClose={() => setDeleteConfirmOpen(false)}
         className="max-w-md p-6"
       >
-        <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Confirm Deletion</h3>
+        <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
+          {t("catalog.skuAttributes.deleteConfirmTitle", "Confirm Deletion")}
+        </h3>
         <p className="mt-2 text-sm text-gray-500">
-          Are you sure you want to remove this SKU attribute assignment (SKU #{itemToDelete?.skuId} &rarr; Value #{itemToDelete?.attributeValueId})? This action cannot be undone.
+          {t("catalog.skuAttributes.deleteConfirmMsg", {
+            skuId: itemToDelete?.skuId,
+            valueId: itemToDelete?.attributeValueId,
+            defaultValue: `Are you sure you want to remove this SKU attribute assignment (SKU #${itemToDelete?.skuId} → Value #${itemToDelete?.attributeValueId})? This action cannot be undone.`,
+          })}
         </p>
         <div className="mt-6 flex justify-end gap-3">
           <Button variant="outline" onClick={() => setDeleteConfirmOpen(false)}>
-            Cancel
+            {t("common.cancel", "Cancel")}
           </Button>
           <Button variant="primary" className="bg-red-600 hover:bg-red-700" onClick={handleDelete}>
-            Delete
+            {t("common.delete", "Delete")}
           </Button>
         </div>
       </Modal>

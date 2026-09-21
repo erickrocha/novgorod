@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { Image as ImageIcon, Pencil, Plus, RefreshCw } from "lucide-react";
 import type { ColumnDef, PaginationState, SortingState } from "@tanstack/react-table";
 import PageBreadcrumb from "@/components/common/PageBreadCrumb";
@@ -16,7 +17,6 @@ import {
 } from "@/store/catalogSlice";
 import { fetchTenants } from "@/store/tenantSlice";
 import CatalogImportModal from "@/components/catalog/CatalogImportModal";
-import ProductImagesModal from "@/components/catalog/ProductImagesModal";
 import { ROLES } from "@/utils/enums";
 import type { PageQueryParams } from "@/services/types";
 
@@ -33,16 +33,18 @@ type CatalogRow = {
 };
 
 export default function CatalogList() {
+  const { t } = useTranslation();
   const { kind = "products" } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
   const [importOpen, setImportOpen] = useState(false);
-  const [photosProduct, setPhotosProduct] = useState<{ id: number; name?: string } | null>(null);
   const dispatch = useAppDispatch();
   const state = useAppSelector((s) => s.catalog);
   const tenants = useAppSelector((s) => s.tenant.tenantsList);
   const { user } = useAppSelector((s) => s.auth);
   const canImport = user?.role === ROLES.SYS_ADMIN || user?.role === ROLES.TENANT_OWNER;
-  const title = kind[0].toUpperCase() + kind.slice(1);
+  const defaultTitle = kind[0].toUpperCase() + kind.slice(1);
+  const catalogTitle = t(`catalog.${kind}.title`, defaultTitle);
+  const catalogDesc = t(`catalog.${kind}.desc`, `Manage ${defaultTitle.toLowerCase()}`);
 
   const page = Number(searchParams.get("page") || "1");
   const pageSize = Number(searchParams.get("pageSize") || "10");
@@ -118,7 +120,7 @@ export default function CatalogList() {
 
   const columns: ColumnDef<CatalogRow, unknown>[] = [
     {
-      header: "Name / code",
+      header: t("catalog.columns.nameOrCode", "Name / code"),
       id: "name",
       accessorFn: (row) => row.name || row.code || "—",
       enableSorting: true,
@@ -127,7 +129,7 @@ export default function CatalogList() {
       ),
     },
     {
-      header: "Details",
+      header: t("catalog.columns.details", "Details"),
       id: "details",
       accessorFn: (row) =>
         kind === "skus"
@@ -135,16 +137,18 @@ export default function CatalogList() {
           : row.slug || row.brand || "—",
     },
     {
-      header: "Tenant",
+      header: t("catalog.columns.tenant", "Tenant"),
       id: "tenant",
       cell: ({ row }) => tenantName(row.original.tenantId),
     },
     {
-      header: "Status",
+      header: t("catalog.columns.status", "Status"),
       accessorKey: "active",
       cell: ({ row }) => (
         <Badge size="sm" color={row.original.active ? "success" : "light"}>
-          {row.original.active ? "Active" : "Inactive"}
+          {row.original.active
+            ? t("common.active", "Active")
+            : t("common.inactive", "Inactive")}
         </Badge>
       ),
     },
@@ -156,19 +160,18 @@ export default function CatalogList() {
       cell: ({ row }) => (
         <div className="flex items-center justify-end gap-1 text-end">
           {kind === "products" && (
-            <button
-              type="button"
-              title="Photos"
-              aria-label="Photos"
+            <Link
+              title={t("catalog.photos.managePhotos", "Photos")}
+              aria-label={t("catalog.photos.managePhotos", "Photos")}
               className="h-7 w-7 rounded-md inline-flex items-center justify-center text-gray-500 hover:text-brand-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-brand-400 dark:hover:bg-white/5 transition-colors"
-              onClick={() => setPhotosProduct({ id: row.original.id, name: row.original.name })}
+              to={`/catalog/products/${row.original.id}/photos`}
             >
               <ImageIcon size={15} />
-            </button>
+            </Link>
           )}
           <Link
-            title="Edit"
-            aria-label="Edit"
+            title={t("common.edit", "Edit")}
+            aria-label={t("common.edit", "Edit")}
             className="h-7 w-7 rounded-md inline-flex items-center justify-center text-gray-500 hover:text-brand-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-brand-400 dark:hover:bg-white/5 transition-colors"
             to={`/catalog/${kind}/${row.original.id}/edit`}
           >
@@ -182,11 +185,14 @@ export default function CatalogList() {
   return (
     <>
       <PageMeta
-        title={`${title} | Veche`}
-        description={`Manage ${title.toLowerCase()}`}
+        title={`${catalogTitle} | Veche`}
+        description={catalogDesc}
       />
-      <PageBreadcrumb pageTitle={title} />
-      <ComponentCard>
+      <PageBreadcrumb pageTitle={catalogTitle} />
+      <ComponentCard
+        title={catalogTitle}
+        desc={catalogDesc}
+      >
         <DataGrid
           data={rows}
           columns={columns}
@@ -198,16 +204,16 @@ export default function CatalogList() {
                 startIcon={<RefreshCw size={14} />}
                 onClick={load}
               >
-                Refresh
+                {t("catalog.refresh", t("common.refresh", "Refresh"))}
               </Button>
               {kind === "products" && canImport && (
                 <Button size="sm" variant="outline" onClick={() => setImportOpen(true)}>
-                  Import CSV/XLSX
+                  {t("catalog.importCsvXlsx", "Import CSV/XLSX")}
                 </Button>
               )}
               <Link to={`/catalog/${kind}/new`}>
                 <Button size="sm" startIcon={<Plus size={14} />}>
-                  Add {kind === "skus" ? "SKU" : kind.slice(0, -1)}
+                  {t(`catalog.${kind}.addTitle`, `Add ${kind === "skus" ? "SKU" : kind.slice(0, -1)}`)}
                 </Button>
               </Link>
             </div>
@@ -215,7 +221,7 @@ export default function CatalogList() {
           getRowId={(row, index) => String(row.id ?? index)}
           loading={state.loading && rows.length === 0}
           error={state.error}
-          emptyMessage={`No ${title.toLowerCase()} found.`}
+          emptyMessage={t(`catalog.${kind}.emptyMessage`, `No ${defaultTitle.toLowerCase()} found.`)}
           manualPagination
           manualSorting
           manualFiltering
@@ -235,13 +241,6 @@ export default function CatalogList() {
             setImportOpen(false);
             load();
           }}
-        />
-      )}
-      {photosProduct && (
-        <ProductImagesModal
-          productId={photosProduct.id}
-          productName={photosProduct.name}
-          onClose={() => setPhotosProduct(null)}
         />
       )}
     </>

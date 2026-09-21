@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { History, Pencil, Plus, RefreshCw, Ticket } from "lucide-react";
 import type { ColumnDef, PaginationState, SortingState } from "@tanstack/react-table";
 import PageBreadcrumb from "@/components/common/PageBreadCrumb";
@@ -24,6 +25,7 @@ import type {
 import { ROLES } from "@/utils/enums";
 
 export default function CouponsPage() {
+  const { t } = useTranslation();
   const [searchParams, setSearchParams] = useSearchParams();
   const dispatch = useAppDispatch();
   const tenants = useAppSelector((s) => s.tenant.tenantsList);
@@ -243,7 +245,7 @@ export default function CouponsPage() {
 
   const columns: ColumnDef<Coupon, unknown>[] = [
     {
-      header: "Code",
+      header: t("marketing.coupons.codeCol", "Coupon Code"),
       accessorKey: "code",
       enableSorting: true,
       cell: ({ getValue }) => (
@@ -253,7 +255,7 @@ export default function CouponsPage() {
       ),
     },
     {
-      header: "Discount",
+      header: t("marketing.coupons.discountCol", "Discount"),
       id: "discount",
       accessorFn: (row) =>
         row.couponType === "PERCENTAGE"
@@ -266,31 +268,31 @@ export default function CouponsPage() {
       ),
     },
     {
-      header: "Min. Order",
+      header: t("marketing.coupons.minOrderCol", "Min. Order"),
       accessorKey: "minOrderCents",
       cell: ({ getValue }) => {
         const c = getValue<number>();
-        return c != null ? `R$ ${(c / 100).toFixed(2)}` : "None";
+        return c != null ? `R$ ${(c / 100).toFixed(2)}` : t("marketing.coupons.none", "None");
       },
     },
     {
-      header: "Max Uses",
+      header: t("marketing.coupons.maxUsesCol", "Max Uses"),
       accessorKey: "maxUses",
-      cell: ({ getValue }) => getValue<number>() ?? "Unlimited",
+      cell: ({ getValue }) => getValue<number>() ?? t("marketing.coupons.unlimited", "Unlimited"),
     },
     {
-      header: "Status",
+      header: t("common.status", "Status"),
       accessorKey: "active",
       cell: ({ getValue }) => (
         <Badge size="sm" color={getValue<boolean>() ? "success" : "light"}>
-          {getValue<boolean>() ? "Active" : "Inactive"}
+          {getValue<boolean>() ? t("common.active", "Active") : t("common.inactive", "Inactive")}
         </Badge>
       ),
     },
     ...(isSysAdmin
       ? [
           {
-            header: "Tenant",
+            header: t("common.tenant", "Tenant"),
             id: "tenant",
             cell: ({ row }: { row: { original: Coupon } }) =>
               tenantName(row.original.tenantId),
@@ -305,8 +307,8 @@ export default function CouponsPage() {
         <div className="flex items-center justify-end gap-1">
           <button
             type="button"
-            title="Redemptions History"
-            aria-label="Redemptions"
+            title={t("marketing.coupons.redemptionsTitle", "Redemptions History")}
+            aria-label={t("marketing.coupons.redemptions", "Redemptions")}
             className="h-8 w-8 rounded-md inline-flex items-center justify-center text-gray-500 hover:text-brand-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-brand-400 dark:hover:bg-white/5 transition-colors"
             onClick={() => openRedemptionsModal(row.original)}
           >
@@ -314,8 +316,8 @@ export default function CouponsPage() {
           </button>
           <button
             type="button"
-            title="Edit"
-            aria-label="Edit"
+            title={t("common.edit", "Edit")}
+            aria-label={t("common.edit", "Edit")}
             className="h-8 w-8 rounded-md inline-flex items-center justify-center text-gray-500 hover:text-brand-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-brand-400 dark:hover:bg-white/5 transition-colors"
             onClick={() => openEditModal(row.original)}
           >
@@ -329,10 +331,10 @@ export default function CouponsPage() {
   return (
     <>
       <PageMeta
-        title="Coupons | Veche"
-        description="Create discount vouchers and track coupon usage"
+        title={`${t("marketing.coupons.title", "Coupons")} | Veche`}
+        description={t("marketing.coupons.desc", "Create discount vouchers and track coupon usage")}
       />
-      <PageBreadcrumb pageTitle="Coupons" />
+      <PageBreadcrumb pageTitle={t("marketing.coupons.title", "Coupons")} />
       <ComponentCard>
         <DataGrid
           data={coupons}
@@ -345,21 +347,21 @@ export default function CouponsPage() {
                 startIcon={<RefreshCw size={14} />}
                 onClick={loadCoupons}
               >
-                Refresh
+                {t("common.refresh", "Refresh")}
               </Button>
               <Button
                 size="sm"
                 startIcon={<Plus size={14} />}
                 onClick={openCreateModal}
               >
-                Add Coupon
+                {t("marketing.coupons.addCoupon", "Add Coupon")}
               </Button>
             </div>
           }
           getRowId={(row, index) => String(row.id ?? index)}
           loading={loading && coupons.length === 0}
           error={error}
-          emptyMessage="No coupons found."
+          emptyMessage={t("marketing.coupons.emptyMessage", "No coupons found.")}
           manualPagination
           manualSorting
           manualFiltering
@@ -385,10 +387,10 @@ export default function CouponsPage() {
           </div>
           <div>
             <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
-              {editingCoupon ? "Edit Coupon" : "Add Coupon"}
+              {editingCoupon ? t("marketing.coupons.editCoupon", "Edit Coupon") : t("marketing.coupons.newCoupon", "Add Coupon")}
             </h3>
             <p className="text-xs text-gray-500 dark:text-gray-400">
-              Set discount code, percentage or fixed value, and redemption limits.
+              {t("marketing.coupons.modalDesc", "Set discount code, percentage or fixed value, and redemption limits.")}
             </p>
           </div>
         </div>
@@ -402,7 +404,7 @@ export default function CouponsPage() {
         <form onSubmit={handleSave} className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <Label htmlFor="code">Coupon Code</Label>
+              <Label htmlFor="code">{t("marketing.coupons.couponCode", "Coupon Code")}</Label>
               <Input
                 id="code"
                 placeholder="SUMMER20"
@@ -415,7 +417,7 @@ export default function CouponsPage() {
               />
             </div>
             <div>
-              <Label htmlFor="couponType">Discount Type</Label>
+              <Label htmlFor="couponType">{t("marketing.coupons.discountType", "Discount Type")}</Label>
               <select
                 id="couponType"
                 value={formData.couponType}
@@ -424,8 +426,8 @@ export default function CouponsPage() {
                 }
                 className="h-11 rounded-lg border-gray-300 px-3 text-sm w-full border bg-white dark:bg-gray-800 dark:border-gray-700 dark:text-white"
               >
-                <option value="PERCENTAGE">Percentage (%)</option>
-                <option value="FIXED">Fixed Amount (Cents)</option>
+                <option value="PERCENTAGE">{t("marketing.coupons.types.percentage", "Percentage (%)")}</option>
+                <option value="FIXED">{t("marketing.coupons.types.fixed", "Fixed Amount (Cents)")}</option>
               </select>
             </div>
           </div>
@@ -433,7 +435,7 @@ export default function CouponsPage() {
           <div className="grid grid-cols-2 gap-4">
             <div>
               <Label htmlFor="val">
-                {formData.couponType === "PERCENTAGE" ? "Value (%)" : "Value (Cents)"}
+                {formData.couponType === "PERCENTAGE" ? t("marketing.coupons.valuePercent", "Value (%)") : t("marketing.coupons.valueCents", "Value (Cents)")}
               </Label>
               <Input
                 id="val"
@@ -446,7 +448,7 @@ export default function CouponsPage() {
               />
             </div>
             <div>
-              <Label htmlFor="minOrder">Min. Order Amount (R$)</Label>
+              <Label htmlFor="minOrder">{t("marketing.coupons.minOrderAmount", "Min. Order Amount (R$)")}</Label>
               <Input
                 id="minOrder"
                 type="number"
@@ -463,7 +465,7 @@ export default function CouponsPage() {
 
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <Label htmlFor="maxUses">Total Usage Limit</Label>
+              <Label htmlFor="maxUses">{t("marketing.coupons.maxUses", "Total Usage Limit")}</Label>
               <Input
                 id="maxUses"
                 type="number"
@@ -476,7 +478,7 @@ export default function CouponsPage() {
               />
             </div>
             <div>
-              <Label htmlFor="maxPerCustomer">Limit Per Customer</Label>
+              <Label htmlFor="maxPerCustomer">{t("marketing.coupons.maxUsesPerCustomer", "Limit Per Customer")}</Label>
               <Input
                 id="maxPerCustomer"
                 type="number"
@@ -492,7 +494,7 @@ export default function CouponsPage() {
 
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <Label htmlFor="startsAt">Valid From</Label>
+              <Label htmlFor="startsAt">{t("marketing.coupons.startsAt", "Valid From")}</Label>
               <Input
                 id="startsAt"
                 type="datetime-local"
@@ -503,7 +505,7 @@ export default function CouponsPage() {
               />
             </div>
             <div>
-              <Label htmlFor="expiresAt">Expires At</Label>
+              <Label htmlFor="expiresAt">{t("marketing.coupons.expiresAt", "Expires At")}</Label>
               <Input
                 id="expiresAt"
                 type="datetime-local"
@@ -517,7 +519,7 @@ export default function CouponsPage() {
 
           <div className="pt-2">
             <Switch
-              label="Active Coupon"
+              label={t("marketing.coupons.activeCoupon", "Active Coupon")}
               checked={formData.active}
               onChange={(checked) => setFormData({ ...formData, active: checked })}
             />
@@ -525,7 +527,7 @@ export default function CouponsPage() {
 
           {isSysAdmin && (
             <div>
-              <Label htmlFor="tenantId">Tenant</Label>
+              <Label htmlFor="tenantId">{t("common.tenant", "Tenant")}</Label>
               <select
                 id="tenantId"
                 value={formData.tenantId || ""}
@@ -537,10 +539,10 @@ export default function CouponsPage() {
                 }
                 className="h-11 rounded-lg border-gray-300 px-3 text-sm w-full border bg-white dark:bg-gray-800 dark:border-gray-700 dark:text-white"
               >
-                <option value="">Default / None</option>
-                {tenants.map((t) => (
-                  <option key={t.id} value={t.id ?? ""}>
-                    {t.businessName || t.companyName}
+                <option value="">{t("customers.defaultNone", "Default / None")}</option>
+                {tenants.map((tTenant) => (
+                  <option key={tTenant.id} value={tTenant.id ?? ""}>
+                    {tTenant.businessName || tTenant.companyName}
                   </option>
                 ))}
               </select>
@@ -553,10 +555,10 @@ export default function CouponsPage() {
               variant="outline"
               onClick={() => setModalOpen(false)}
             >
-              Cancel
+              {t("common.cancel", "Cancel")}
             </Button>
             <Button type="submit" disabled={saving}>
-              {saving ? "Saving…" : "Save Coupon"}
+              {saving ? t("common.saving", "Saving…") : t("marketing.coupons.saveCoupon", "Save Coupon")}
             </Button>
           </div>
         </form>
@@ -574,10 +576,10 @@ export default function CouponsPage() {
           </div>
           <div>
             <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
-              Redemptions History
+              {t("marketing.coupons.redemptionsTitle", "Redemptions History")}
             </h3>
             <p className="text-xs text-gray-500 dark:text-gray-400">
-              Coupon {selectedCoupon?.code} usage by customers.
+              {t("marketing.coupons.redemptionsDesc", "Coupon {code} usage by customers.", { code: selectedCoupon?.code })}
             </p>
           </div>
         </div>
@@ -585,11 +587,11 @@ export default function CouponsPage() {
         <div className="space-y-2 max-h-64 overflow-y-auto">
           {loadingRedemptions ? (
             <p className="text-sm text-center text-gray-500 py-6">
-              Loading redemptions…
+              {t("marketing.coupons.loadingRedemptions", "Loading redemptions…")}
             </p>
           ) : redemptions.length === 0 ? (
             <p className="text-sm text-center text-gray-500 py-6">
-              No redemptions recorded for this coupon yet.
+              {t("marketing.coupons.noRedemptions", "No redemptions recorded for this coupon yet.")}
             </p>
           ) : (
             redemptions.map((r) => (
@@ -599,10 +601,10 @@ export default function CouponsPage() {
               >
                 <div>
                   <span className="font-semibold text-gray-900 dark:text-white block">
-                    Order #{r.orderId}
+                    {t("marketing.coupons.orderNum", "Order #{id}", { id: r.orderId })}
                   </span>
                   <span className="text-gray-500">
-                    Customer #{r.customerId}
+                    {t("marketing.coupons.customerNum", "Customer #{id}", { id: r.customerId })}
                   </span>
                 </div>
                 <span className="text-gray-400 text-2xs">

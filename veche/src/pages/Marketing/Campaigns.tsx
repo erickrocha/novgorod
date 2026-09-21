@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { Megaphone, Pencil, Plus, RefreshCw, Target } from "lucide-react";
 import type { ColumnDef, PaginationState, SortingState } from "@tanstack/react-table";
 import PageBreadcrumb from "@/components/common/PageBreadCrumb";
@@ -25,6 +26,7 @@ import type {
 import { ROLES } from "@/utils/enums";
 
 export default function CampaignsPage() {
+  const { t } = useTranslation();
   const [searchParams, setSearchParams] = useSearchParams();
   const dispatch = useAppDispatch();
   const tenants = useAppSelector((s) => s.tenant.tenantsList);
@@ -257,7 +259,7 @@ export default function CampaignsPage() {
 
   const columns: ColumnDef<Campaign, unknown>[] = [
     {
-      header: "Campaign Name",
+      header: t("marketing.campaigns.nameCol", "Campaign Name"),
       accessorKey: "name",
       enableSorting: true,
       cell: ({ row }) => (
@@ -274,7 +276,7 @@ export default function CampaignsPage() {
       ),
     },
     {
-      header: "Type",
+      header: t("marketing.campaigns.typeCol", "Type"),
       accessorKey: "campaignType",
       cell: ({ getValue }) => (
         <span className="text-xs font-mono px-2 py-0.5 rounded bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300">
@@ -283,7 +285,7 @@ export default function CampaignsPage() {
       ),
     },
     {
-      header: "Budget Limit",
+      header: t("marketing.campaigns.budgetCol", "Budget Limit"),
       accessorKey: "budgetLimitCents",
       cell: ({ getValue }) => {
         const c = getValue<number>();
@@ -291,18 +293,18 @@ export default function CampaignsPage() {
       },
     },
     {
-      header: "Active",
+      header: t("marketing.campaigns.statusCol", "Active"),
       accessorKey: "active",
       cell: ({ getValue }) => (
         <Badge size="sm" color={getValue<boolean>() ? "success" : "light"}>
-          {getValue<boolean>() ? "Active" : "Inactive"}
+          {getValue<boolean>() ? t("common.active", "Active") : t("common.inactive", "Inactive")}
         </Badge>
       ),
     },
     ...(isSysAdmin
       ? [
           {
-            header: "Tenant",
+            header: t("marketing.campaigns.tenantCol", "Tenant"),
             id: "tenant",
             cell: ({ row }: { row: { original: Campaign } }) =>
               tenantName(row.original.tenantId),
@@ -317,8 +319,8 @@ export default function CampaignsPage() {
         <div className="flex items-center justify-end gap-1">
           <button
             type="button"
-            title="Targets"
-            aria-label="Targets"
+            title={t("marketing.campaigns.targets", "Targets")}
+            aria-label={t("marketing.campaigns.targets", "Targets")}
             className="h-8 w-8 rounded-md inline-flex items-center justify-center text-gray-500 hover:text-brand-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-brand-400 dark:hover:bg-white/5 transition-colors"
             onClick={() => openTargetsModal(row.original)}
           >
@@ -326,8 +328,8 @@ export default function CampaignsPage() {
           </button>
           <button
             type="button"
-            title="Edit"
-            aria-label="Edit"
+            title={t("common.edit", "Edit")}
+            aria-label={t("common.edit", "Edit")}
             className="h-8 w-8 rounded-md inline-flex items-center justify-center text-gray-500 hover:text-brand-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-brand-400 dark:hover:bg-white/5 transition-colors"
             onClick={() => openEditModal(row.original)}
           >
@@ -341,11 +343,14 @@ export default function CampaignsPage() {
   return (
     <>
       <PageMeta
-        title="Marketing Campaigns | Veche"
-        description="Create and manage seasonal sales and promotional campaigns"
+        title={`${t("marketing.campaigns.title", "Marketing Campaigns")} | Veche`}
+        description={t("marketing.campaigns.desc", "Create and manage seasonal sales and promotional campaigns")}
       />
-      <PageBreadcrumb pageTitle="Campaigns" />
-      <ComponentCard>
+      <PageBreadcrumb pageTitle={t("marketing.campaigns.title", "Marketing Campaigns")} />
+      <ComponentCard
+        title={t("marketing.campaigns.title", "Marketing Campaigns")}
+        desc={t("marketing.campaigns.desc", "Create and manage seasonal sales and promotional campaigns")}
+      >
         <DataGrid
           data={campaigns}
           columns={columns}
@@ -357,21 +362,21 @@ export default function CampaignsPage() {
                 startIcon={<RefreshCw size={14} />}
                 onClick={loadCampaigns}
               >
-                Refresh
+                {t("marketing.campaigns.refresh", t("common.refresh", "Refresh"))}
               </Button>
               <Button
                 size="sm"
                 startIcon={<Plus size={14} />}
                 onClick={openCreateModal}
               >
-                Add Campaign
+                {t("marketing.campaigns.addCampaign", "Add Campaign")}
               </Button>
             </div>
           }
           getRowId={(row, index) => String(row.id ?? index)}
           loading={loading && campaigns.length === 0}
           error={error}
-          emptyMessage="No marketing campaigns found."
+          emptyMessage={t("marketing.campaigns.emptyMessage", "No marketing campaigns found.")}
           manualPagination
           manualSorting
           manualFiltering
@@ -397,10 +402,12 @@ export default function CampaignsPage() {
           </div>
           <div>
             <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
-              {editingCampaign ? "Edit Campaign" : "Add Campaign"}
+              {editingCampaign
+                ? t("marketing.campaigns.editCampaign", "Edit Campaign")
+                : t("marketing.campaigns.newCampaign", "Add Campaign")}
             </h3>
             <p className="text-xs text-gray-500 dark:text-gray-400">
-              Configure promotional campaign limits and timeline.
+              {t("marketing.campaigns.desc", "Configure promotional campaign limits and timeline.")}
             </p>
           </div>
         </div>
@@ -413,10 +420,10 @@ export default function CampaignsPage() {
 
         <form onSubmit={handleSave} className="space-y-4">
           <div>
-            <Label htmlFor="campName">Campaign Name</Label>
+            <Label htmlFor="campName">{t("marketing.campaigns.nameCol", "Campaign Name")}</Label>
             <Input
               id="campName"
-              placeholder="e.g. Black Friday 2026"
+              placeholder={t("marketing.campaigns.namePlaceholder", "e.g. Black Friday 2026")}
               value={formData.name}
               onChange={(e) => setFormData({ ...formData, name: e.target.value })}
               required
@@ -424,10 +431,10 @@ export default function CampaignsPage() {
           </div>
 
           <div>
-            <Label htmlFor="campDesc">Description</Label>
+            <Label htmlFor="campDesc">{t("common.description", "Description")}</Label>
             <Input
               id="campDesc"
-              placeholder="Seasonal discount on selected catalog categories"
+              placeholder={t("marketing.campaigns.descPlaceholder", "Seasonal discount on selected catalog categories")}
               value={formData.description}
               onChange={(e) =>
                 setFormData({ ...formData, description: e.target.value })
@@ -437,7 +444,7 @@ export default function CampaignsPage() {
 
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <Label htmlFor="campType">Campaign Type</Label>
+              <Label htmlFor="campType">{t("marketing.campaigns.campaignType", "Campaign Type")}</Label>
               <select
                 id="campType"
                 value={formData.campaignType}
@@ -446,14 +453,14 @@ export default function CampaignsPage() {
                 }
                 className="h-11 rounded-lg border-gray-300 px-3 text-sm w-full border bg-white dark:bg-gray-800 dark:border-gray-700 dark:text-white"
               >
-                <option value="DISCOUNT">Direct Discount</option>
-                <option value="FLASH_SALE">Flash Sale</option>
-                <option value="COUPON_PROGRAM">Coupon Program</option>
-                <option value="BUNDLE">Bundle</option>
+                <option value="DISCOUNT">{t("marketing.campaigns.types.discount", "Direct Discount")}</option>
+                <option value="FLASH_SALE">{t("marketing.campaigns.types.flashSale", "Flash Sale")}</option>
+                <option value="COUPON_PROGRAM">{t("marketing.campaigns.types.couponProgram", "Coupon Program")}</option>
+                <option value="BUNDLE">{t("marketing.campaigns.types.bundle", "Bundle")}</option>
               </select>
             </div>
             <div>
-              <Label htmlFor="campBudget">Budget Limit (R$)</Label>
+              <Label htmlFor="campBudget">{t("marketing.campaigns.budgetLimit", "Budget Limit (R$)")}</Label>
               <Input
                 id="campBudget"
                 type="number"
@@ -470,7 +477,7 @@ export default function CampaignsPage() {
 
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <Label htmlFor="startsAt">Start Date & Time</Label>
+              <Label htmlFor="startsAt">{t("marketing.campaigns.startsAt", "Start Date & Time")}</Label>
               <Input
                 id="startsAt"
                 type="datetime-local"
@@ -481,7 +488,7 @@ export default function CampaignsPage() {
               />
             </div>
             <div>
-              <Label htmlFor="endsAt">End Date & Time</Label>
+              <Label htmlFor="endsAt">{t("marketing.campaigns.endsAt", "End Date & Time")}</Label>
               <Input
                 id="endsAt"
                 type="datetime-local"
@@ -495,7 +502,7 @@ export default function CampaignsPage() {
 
           <div className="pt-2">
             <Switch
-              label="Campaign Active"
+              label={t("marketing.campaigns.campaignActive", "Campaign Active")}
               checked={formData.active}
               onChange={(checked) => setFormData({ ...formData, active: checked })}
             />
@@ -503,7 +510,7 @@ export default function CampaignsPage() {
 
           {isSysAdmin && (
             <div>
-              <Label htmlFor="tenantId">Tenant</Label>
+              <Label htmlFor="tenantId">{t("common.tenant", "Tenant")}</Label>
               <select
                 id="tenantId"
                 value={formData.tenantId || ""}
@@ -515,7 +522,7 @@ export default function CampaignsPage() {
                 }
                 className="h-11 rounded-lg border-gray-300 px-3 text-sm w-full border bg-white dark:bg-gray-800 dark:border-gray-700 dark:text-white"
               >
-                <option value="">Default / None</option>
+                <option value="">{t("customers.defaultNone", "Default / None")}</option>
                 {tenants.map((t) => (
                   <option key={t.id} value={t.id ?? ""}>
                     {t.businessName || t.companyName}
@@ -531,10 +538,10 @@ export default function CampaignsPage() {
               variant="outline"
               onClick={() => setModalOpen(false)}
             >
-              Cancel
+              {t("common.cancel", "Cancel")}
             </Button>
             <Button type="submit" disabled={saving}>
-              {saving ? "Saving…" : "Save Campaign"}
+              {saving ? t("common.saving", "Saving…") : t("marketing.campaigns.saveChanges", "Save Campaign")}
             </Button>
           </div>
         </form>
@@ -553,10 +560,10 @@ export default function CampaignsPage() {
             </div>
             <div>
               <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
-                Campaign Targets
+                {t("marketing.campaigns.targetsTitle", "Campaign Targets")}
               </h3>
               <p className="text-xs text-gray-500 dark:text-gray-400">
-                Entities targeted by {selectedCampaign?.name}.
+                {t("marketing.campaigns.targetsDesc", "Entities targeted by {name}.", { name: selectedCampaign?.name })}
               </p>
             </div>
           </div>
@@ -566,7 +573,7 @@ export default function CampaignsPage() {
               startIcon={<Plus size={14} />}
               onClick={() => setShowAddTarget(true)}
             >
-              Add Target
+              {t("marketing.campaigns.addTarget", "Add Target")}
             </Button>
           )}
         </div>
@@ -574,7 +581,7 @@ export default function CampaignsPage() {
         {showAddTarget ? (
           <form onSubmit={handleAddTarget} className="space-y-3 pt-2 border-t border-gray-100 dark:border-gray-800">
             <div>
-              <Label htmlFor="targetType">Target Entity Type</Label>
+              <Label htmlFor="targetType">{t("marketing.campaigns.targetEntityType", "Target Entity Type")}</Label>
               <select
                 id="targetType"
                 value={newTarget.targetType}
@@ -583,13 +590,13 @@ export default function CampaignsPage() {
                 }
                 className="h-11 rounded-lg border-gray-300 px-3 text-sm w-full border bg-white dark:bg-gray-800 dark:border-gray-700 dark:text-white"
               >
-                <option value="CATEGORY">Category</option>
-                <option value="PRODUCT">Product</option>
-                <option value="CUSTOMER_TIER">Customer Tier</option>
+                <option value="CATEGORY">{t("marketing.campaigns.targetTypes.category", "Category")}</option>
+                <option value="PRODUCT">{t("marketing.campaigns.targetTypes.product", "Product")}</option>
+                <option value="CUSTOMER_TIER">{t("marketing.campaigns.targetTypes.customerTier", "Customer Tier")}</option>
               </select>
             </div>
             <div>
-              <Label htmlFor="targetId">Entity ID</Label>
+              <Label htmlFor="targetId">{t("marketing.campaigns.entityId", "Entity ID")}</Label>
               <Input
                 id="targetId"
                 type="number"
@@ -607,30 +614,32 @@ export default function CampaignsPage() {
                 variant="outline"
                 onClick={() => setShowAddTarget(false)}
               >
-                Cancel
+                {t("common.cancel", "Cancel")}
               </Button>
-              <Button type="submit">Save Target</Button>
+              <Button type="submit">{t("marketing.campaigns.saveTarget", "Save Target")}</Button>
             </div>
           </form>
         ) : (
           <div className="space-y-2 max-h-60 overflow-y-auto">
             {loadingTargets ? (
-              <p className="text-sm text-center text-gray-500 py-6">Loading targets…</p>
+              <p className="text-sm text-center text-gray-500 py-6">{t("marketing.campaigns.loadingTargets", "Loading targets…")}</p>
             ) : targets.length === 0 ? (
               <p className="text-sm text-center text-gray-500 py-6">
-                No targets specified (applies globally).
+                {t("marketing.campaigns.noTargets", "No targets specified (applies globally).")}
               </p>
             ) : (
-              targets.map((t) => (
+              targets.map((tTarget) => (
                 <div
-                  key={t.id}
+                  key={tTarget.id}
                   className="flex items-center justify-between p-3 rounded-lg border border-gray-200 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-800/30"
                 >
                   <span className="text-sm font-semibold text-gray-900 dark:text-white">
-                    {t.targetType} #{t.targetId}
+                    {tTarget.targetType} #{tTarget.targetId}
                   </span>
                   <span className="text-2xs text-gray-400">
-                    Added {t.createdAt ? new Date(t.createdAt).toLocaleDateString("pt-BR") : "—"}
+                    {t("marketing.campaigns.addedDate", "Added {date}", {
+                      date: tTarget.createdAt ? new Date(tTarget.createdAt).toLocaleDateString("pt-BR") : "—"
+                    })}
                   </span>
                 </div>
               ))

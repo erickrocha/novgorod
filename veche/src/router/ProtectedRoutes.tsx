@@ -23,6 +23,7 @@ import Tenants from "@/pages/Management/Tenants";
 import TenantForm from "@/pages/Management/TenantForm";
 import CatalogList from "@/pages/Catalog/CatalogList";
 import CatalogForm from "@/pages/Catalog/CatalogForm";
+import ProductImagesPage from "@/pages/Catalog/ProductImagesPage";
 import Locations from "@/pages/Management/Locations";
 import Orders from "@/pages/Sales/Orders";
 import Carts from "@/pages/Sales/Carts";
@@ -68,6 +69,8 @@ export const ProtectedRoutes = () => (
                 <Route path="/tenants/:id/edit" element={<TenantForm />} />
                 <Route path="/catalog/product-categories" element={<ProductCategories />} />
                 <Route path="/catalog/sku-attributes" element={<SkuAttributes />} />
+                <Route path="/catalog/products/:id/photos" element={<ProductImagesPage />} />
+                <Route path="/catalog/products/:id/images" element={<ProductImagesPage />} />
                 <Route path="/catalog/:kind" element={<CatalogList />} />
                 <Route path="/catalog/:kind/new" element={<CatalogForm />} />
                 <Route path="/catalog/:kind/:id/edit" element={<CatalogForm />} />

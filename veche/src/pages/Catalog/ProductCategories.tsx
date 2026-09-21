@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { FolderTree, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
 import type { ColumnDef, PaginationState, SortingState } from "@tanstack/react-table";
 import PageBreadcrumb from "@/components/common/PageBreadCrumb";
@@ -18,6 +19,7 @@ import type { PageQueryParams, ProductCategory, ProductCategoryInput } from "@/s
 import { ROLES } from "@/utils/enums";
 
 export default function ProductCategories() {
+  const { t } = useTranslation();
   const [searchParams, setSearchParams] = useSearchParams();
   const dispatch = useAppDispatch();
   const tenants = useAppSelector((s) => s.tenant.tenantsList);
@@ -166,13 +168,13 @@ export default function ProductCategories() {
   const columns: ColumnDef<ProductCategory>[] = [
     {
       accessorKey: "id",
-      header: "ID",
+      header: t("common.id", "ID"),
       enableSorting: true,
       cell: ({ row }) => <span className="font-mono text-xs">{row.original.id}</span>,
     },
     {
       accessorKey: "productId",
-      header: "Product ID",
+      header: t("catalog.columns.productId", "Product ID"),
       enableSorting: true,
       cell: ({ row }) => (
         <span className="font-medium text-gray-800 dark:text-white/90">
@@ -182,7 +184,7 @@ export default function ProductCategories() {
     },
     {
       accessorKey: "categoryId",
-      header: "Category ID",
+      header: t("catalog.columns.categoryId", "Category ID"),
       enableSorting: true,
       cell: ({ row }) => (
         <span className="font-medium text-gray-800 dark:text-white/90">
@@ -192,26 +194,30 @@ export default function ProductCategories() {
     },
     {
       accessorKey: "isPrimary",
-      header: "Primary Category",
+      header: t("catalog.columns.primaryCategory", "Primary Category"),
       enableSorting: true,
       cell: ({ row }) =>
         row.original.isPrimary ? (
-          <Badge variant="solid" color="success">Primary</Badge>
+          <Badge variant="solid" color="success">
+            {t("catalog.productCategories.primaryBadge", "Primary")}
+          </Badge>
         ) : (
-          <Badge variant="light" color="light">Secondary</Badge>
+          <Badge variant="light" color="light">
+            {t("catalog.productCategories.secondaryBadge", "Secondary")}
+          </Badge>
         ),
     },
     ...(isSysAdmin
       ? [
           {
             accessorKey: "tenantId",
-            header: "Tenant",
+            header: t("catalog.columns.tenant", "Tenant"),
             enableSorting: false,
             cell: ({ row }: { row: { original: ProductCategory } }) => {
-              const t = tenants.find((item) => item.id === row.original.tenantId);
+              const tr = tenants.find((item) => item.id === row.original.tenantId);
               return (
                 <span className="text-xs text-gray-500">
-                  {t?.companyName || t?.businessName || row.original.tenantId || "N/A"}
+                  {tr?.companyName || tr?.businessName || row.original.tenantId || "N/A"}
                 </span>
               );
             },
@@ -220,7 +226,7 @@ export default function ProductCategories() {
       : []),
     {
       id: "actions",
-      header: "Actions",
+      header: t("common.actions", "Actions"),
       cell: ({ row }) => (
         <div className="flex items-center gap-2">
           <Button
@@ -228,7 +234,7 @@ export default function ProductCategories() {
             variant="outline"
             className="h-8 w-8 p-0"
             onClick={() => handleOpenEdit(row.original)}
-            aria-label="Edit"
+            aria-label={t("common.edit", "Edit")}
           >
             <Pencil size={14} />
           </Button>
@@ -240,7 +246,7 @@ export default function ProductCategories() {
               setItemToDelete(row.original);
               setDeleteConfirmOpen(true);
             }}
-            aria-label="Delete"
+            aria-label={t("common.delete", "Delete")}
           >
             <Trash2 size={14} />
           </Button>
@@ -252,14 +258,22 @@ export default function ProductCategories() {
   return (
     <>
       <PageMeta
-        title="Product Categories | Novgorod Admin"
-        description="Manage product category assignments and classification"
+        title={`${t("catalog.productCategories.title", "Product Categories")} | Veche`}
+        description={t(
+          "catalog.productCategories.desc",
+          "Associate products with primary and secondary catalog categories"
+        )}
       />
-      <PageBreadcrumb pageTitle="Product Categories" />
+      <PageBreadcrumb
+        pageTitle={t("catalog.productCategories.title", "Product Categories")}
+      />
 
       <ComponentCard
-        title="Product Categories"
-        desc="Associate products with primary and secondary catalog categories"
+        title={t("catalog.productCategories.title", "Product Categories")}
+        desc={t(
+          "catalog.productCategories.desc",
+          "Associate products with primary and secondary catalog categories"
+        )}
       >
         <DataGrid
           data={items}
@@ -273,17 +287,17 @@ export default function ProductCategories() {
                 disabled={loading}
                 startIcon={<RefreshCw size={14} className={loading ? "animate-spin" : ""} />}
               >
-                Refresh
+                {t("catalog.refresh", t("common.refresh", "Refresh"))}
               </Button>
               <Button size="sm" onClick={handleOpenAdd} startIcon={<Plus size={14} />}>
-                Add Category Link
+                {t("catalog.productCategories.addLink", "Add Category Link")}
               </Button>
             </div>
           }
           getRowId={(row, index) => String(row.id ?? index)}
           loading={loading && items.length === 0}
           error={error}
-          emptyMessage="No product category links found."
+          emptyMessage={t("catalog.productCategories.emptyMessage", "No product category links found.")}
           manualPagination
           manualSorting
           manualFiltering
@@ -317,10 +331,12 @@ export default function ProductCategories() {
           </div>
           <div>
             <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
-              {editingItem ? "Edit Category Assignment" : "Add Category Assignment"}
+              {editingItem
+                ? t("catalog.productCategories.modalTitleEdit", "Edit Category Assignment")
+                : t("catalog.productCategories.modalTitleAdd", "Add Category Assignment")}
             </h3>
             <p className="text-xs text-gray-500">
-              Link a product to a catalog classification category
+              {t("catalog.productCategories.modalDesc", "Link a product to a catalog classification category")}
             </p>
           </div>
         </div>
@@ -333,7 +349,9 @@ export default function ProductCategories() {
 
         <form onSubmit={handleSave} className="mt-4 space-y-4">
           <div>
-            <Label htmlFor="productId">Product ID *</Label>
+            <Label htmlFor="productId">
+              {t("catalog.productCategories.productIdLabel", "Product ID *")}
+            </Label>
             <Input
               id="productId"
               type="number"
@@ -348,7 +366,9 @@ export default function ProductCategories() {
           </div>
 
           <div>
-            <Label htmlFor="categoryId">Category ID *</Label>
+            <Label htmlFor="categoryId">
+              {t("catalog.productCategories.categoryIdLabel", "Category ID *")}
+            </Label>
             <Input
               id="categoryId"
               type="number"
@@ -373,13 +393,15 @@ export default function ProductCategories() {
               className="h-4 w-4 rounded border-gray-300 text-brand-600 focus:ring-brand-500 dark:border-gray-700"
             />
             <Label htmlFor="isPrimary" className="cursor-pointer mb-0">
-              Set as primary category for product
+              {t("catalog.productCategories.setPrimaryLabel", "Set as primary category for product")}
             </Label>
           </div>
 
           {isSysAdmin && (
             <div>
-              <Label htmlFor="tenantId">Tenant (SysAdmin only)</Label>
+              <Label htmlFor="tenantId">
+                {t("catalog.productCategories.tenantLabel", "Tenant (SysAdmin only)")}
+              </Label>
               <select
                 id="tenantId"
                 className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 dark:border-gray-700 dark:bg-gray-900 dark:text-white/90"
@@ -391,10 +413,12 @@ export default function ProductCategories() {
                   }))
                 }
               >
-                <option value="">Default Tenant</option>
-                {tenants.map((t) => (
-                  <option key={t.id} value={t.id ?? undefined}>
-                    {t.companyName || t.businessName || `Tenant #${t.id}`}
+                <option value="">
+                  {t("catalog.productCategories.defaultTenant", "Default Tenant")}
+                </option>
+                {tenants.map((tr) => (
+                  <option key={tr.id} value={tr.id ?? undefined}>
+                    {tr.companyName || tr.businessName || `Tenant #${tr.id}`}
                   </option>
                 ))}
               </select>
@@ -408,10 +432,14 @@ export default function ProductCategories() {
               onClick={() => setModalOpen(false)}
               disabled={saving}
             >
-              Cancel
+              {t("common.cancel", "Cancel")}
             </Button>
             <Button type="submit" disabled={saving}>
-              {saving ? "Saving..." : editingItem ? "Update Link" : "Create Link"}
+              {saving
+                ? t("common.saving", "Saving...")
+                : editingItem
+                  ? t("catalog.productCategories.updateLink", "Update Link")
+                  : t("catalog.productCategories.createLink", "Create Link")}
             </Button>
           </div>
         </form>
@@ -423,16 +451,22 @@ export default function ProductCategories() {
         onClose={() => setDeleteConfirmOpen(false)}
         className="max-w-md p-6"
       >
-        <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Confirm Deletion</h3>
+        <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
+          {t("catalog.productCategories.deleteConfirmTitle", "Confirm Deletion")}
+        </h3>
         <p className="mt-2 text-sm text-gray-500">
-          Are you sure you want to remove this category link (Product #{itemToDelete?.productId} &rarr; Category #{itemToDelete?.categoryId})? This action cannot be undone.
+          {t("catalog.productCategories.deleteConfirmMsg", {
+            productId: itemToDelete?.productId,
+            categoryId: itemToDelete?.categoryId,
+            defaultValue: `Are you sure you want to remove this category link (Product #${itemToDelete?.productId} → Category #${itemToDelete?.categoryId})? This action cannot be undone.`,
+          })}
         </p>
         <div className="mt-6 flex justify-end gap-3">
           <Button variant="outline" onClick={() => setDeleteConfirmOpen(false)}>
-            Cancel
+            {t("common.cancel", "Cancel")}
           </Button>
           <Button variant="primary" className="bg-red-600 hover:bg-red-700" onClick={handleDelete}>
-            Delete
+            {t("common.delete", "Delete")}
           </Button>
         </div>
       </Modal>

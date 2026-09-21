@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { Eye, Package, RefreshCw, ShoppingBag, Truck } from "lucide-react";
 import type { ColumnDef, PaginationState, SortingState } from "@tanstack/react-table";
 import PageBreadcrumb from "@/components/common/PageBreadCrumb";
@@ -34,6 +35,7 @@ const ORDER_STATUS_COLORS: Record<string, "warning" | "success" | "info" | "erro
 };
 
 export default function OrdersPage() {
+  const { t } = useTranslation();
   const [searchParams, setSearchParams] = useSearchParams();
   const dispatch = useAppDispatch();
   const tenants = useAppSelector((s) => s.tenant.tenantsList);
@@ -203,7 +205,7 @@ export default function OrdersPage() {
 
   const columns: ColumnDef<Orders, unknown>[] = [
     {
-      header: "Order #",
+      header: t("sales.orders.orderNumber", "Order #"),
       accessorKey: "orderNumber",
       enableSorting: true,
       cell: ({ getValue }) => (
@@ -213,12 +215,12 @@ export default function OrdersPage() {
       ),
     },
     {
-      header: "Customer ID",
+      header: t("sales.orders.customerId", "Customer ID"),
       accessorKey: "customerId",
       cell: ({ getValue }) => `Customer #${getValue<number>()}`,
     },
     {
-      header: "Status",
+      header: t("sales.orders.status", "Status"),
       accessorKey: "status",
       enableSorting: true,
       cell: ({ getValue }) => {
@@ -226,13 +228,13 @@ export default function OrdersPage() {
         const color = ORDER_STATUS_COLORS[status.toUpperCase()] || "light";
         return (
           <Badge size="sm" color={color}>
-            {status.toUpperCase()}
+            {t(`sales.orders.statuses.${status.toUpperCase()}`, status.toUpperCase())}
           </Badge>
         );
       },
     },
     {
-      header: "Total",
+      header: t("sales.orders.total", "Total"),
       accessorKey: "totalCents",
       enableSorting: true,
       cell: ({ getValue }) => (
@@ -244,7 +246,7 @@ export default function OrdersPage() {
     ...(isSysAdmin
       ? [
           {
-            header: "Tenant",
+            header: t("sales.orders.tenant", "Tenant"),
             id: "tenant",
             cell: ({ row }: { row: { original: Orders } }) =>
               tenantName(row.original.tenantId),
@@ -252,7 +254,7 @@ export default function OrdersPage() {
         ]
       : []),
     {
-      header: "Date",
+      header: t("sales.orders.date", "Date"),
       accessorKey: "createdAt",
       enableSorting: true,
       cell: ({ getValue }) => {
@@ -268,8 +270,8 @@ export default function OrdersPage() {
         <div className="flex items-center justify-end">
           <button
             type="button"
-            title="View Details"
-            aria-label="View Details"
+            title={t("sales.orders.viewDetails", "View Details")}
+            aria-label={t("sales.orders.viewDetails", "View Details")}
             className="h-8 w-8 rounded-md inline-flex items-center justify-center text-gray-500 hover:text-brand-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-brand-400 dark:hover:bg-white/5 transition-colors"
             onClick={() => openOrderDetails(row.original)}
           >
@@ -283,11 +285,20 @@ export default function OrdersPage() {
   return (
     <>
       <PageMeta
-        title="Orders | Veche"
-        description="Monitor order fulfillments, line items, and delivery statuses"
+        title={`${t("sales.orders.title", "Orders")} | Veche`}
+        description={t(
+          "sales.orders.desc",
+          "Monitor order fulfillments, line items, and delivery statuses"
+        )}
       />
-      <PageBreadcrumb pageTitle="Orders" />
-      <ComponentCard>
+      <PageBreadcrumb pageTitle={t("sales.orders.title", "Orders")} />
+      <ComponentCard
+        title={t("sales.orders.title", "Orders")}
+        desc={t(
+          "sales.orders.desc",
+          "Monitor order fulfillments, line items, and delivery statuses"
+        )}
+      >
         <DataGrid
           data={orders}
           columns={columns}
@@ -299,14 +310,14 @@ export default function OrdersPage() {
                 startIcon={<RefreshCw size={14} />}
                 onClick={loadOrders}
               >
-                Refresh
+                {t("sales.orders.refresh", t("common.refresh", "Refresh"))}
               </Button>
             </div>
           }
           getRowId={(row, index) => String(row.id ?? index)}
           loading={loading && orders.length === 0}
           error={error}
-          emptyMessage="No orders found."
+          emptyMessage={t("sales.orders.emptyMessage", "No orders found.")}
           manualPagination
           manualSorting
           manualFiltering
@@ -336,7 +347,10 @@ export default function OrdersPage() {
                 </div>
                 <div>
                   <h3 className="text-lg font-bold text-gray-900 dark:text-white flex items-center gap-2">
-                    Order #{selectedOrder.orderNumber}
+                    {t("sales.orders.detailTitle", {
+                      orderNumber: selectedOrder.orderNumber,
+                      defaultValue: `Order #${selectedOrder.orderNumber}`,
+                    })}
                     <Badge
                       size="sm"
                       color={
@@ -344,11 +358,11 @@ export default function OrdersPage() {
                         "light"
                       }
                     >
-                      {selectedOrder.status.toUpperCase()}
+                      {t(`sales.orders.statuses.${selectedOrder.status.toUpperCase()}`, selectedOrder.status.toUpperCase())}
                     </Badge>
                   </h3>
                   <p className="text-xs text-gray-500 dark:text-gray-400">
-                    Placed on {selectedOrder.createdAt ? new Date(selectedOrder.createdAt).toLocaleString("pt-BR") : "—"}
+                    {t("sales.orders.date", "Date")}: {selectedOrder.createdAt ? new Date(selectedOrder.createdAt).toLocaleString("pt-BR") : "—"}
                   </p>
                 </div>
               </div>
@@ -356,7 +370,7 @@ export default function OrdersPage() {
 
             {loadingDetails ? (
               <div className="py-12 text-center text-sm text-gray-500">
-                Loading order details…
+                {t("common.loading", "Loading order details…")}
               </div>
             ) : (
               <>
@@ -364,10 +378,10 @@ export default function OrdersPage() {
                 <div className="grid grid-cols-2 gap-4">
                   <div className="p-4 rounded-xl border border-gray-200 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-800/30">
                     <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
-                      Customer Info
+                      {t("sales.orders.infoTitle", "Customer Info")}
                     </h4>
                     <p className="text-sm font-semibold text-gray-900 dark:text-white">
-                      {orderCustomer?.name || `Customer #${selectedOrder.customerId}`}
+                      {orderCustomer?.name || `${t("sales.orders.customer", "Customer")} #${selectedOrder.customerId}`}
                     </p>
                     {orderCustomer?.email && (
                       <p className="text-xs text-gray-500">{orderCustomer.email}</p>
@@ -379,23 +393,23 @@ export default function OrdersPage() {
 
                   <div className="p-4 rounded-xl border border-gray-200 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-800/30">
                     <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
-                      Financial Summary
+                      {t("sales.orders.total", "Financial Summary")}
                     </h4>
                     <div className="space-y-1 text-xs text-gray-600 dark:text-gray-300">
                       <div className="flex justify-between">
-                        <span>Subtotal:</span>
+                        <span>{t("sales.orders.subtotal", "Subtotal")}:</span>
                         <span>{formatCurrency(selectedOrder.subtotalCents)}</span>
                       </div>
                       <div className="flex justify-between">
-                        <span>Shipping:</span>
+                        <span>{t("sales.orders.shipping", "Shipping")}:</span>
                         <span>{formatCurrency(selectedOrder.shippingCents)}</span>
                       </div>
                       <div className="flex justify-between text-error-600 dark:text-error-400">
-                        <span>Discount:</span>
+                        <span>{t("sales.orders.discount", "Discount")}:</span>
                         <span>- {formatCurrency(selectedOrder.discountCents)}</span>
                       </div>
                       <div className="flex justify-between font-bold text-sm text-gray-900 dark:text-white pt-1 border-t border-gray-200 dark:border-gray-700">
-                        <span>Total:</span>
+                        <span>{t("sales.orders.total", "Total")}:</span>
                         <span>{formatCurrency(selectedOrder.totalCents)}</span>
                       </div>
                     </div>
@@ -405,16 +419,16 @@ export default function OrdersPage() {
                 {/* Items Table */}
                 <div>
                   <h4 className="text-sm font-semibold text-gray-900 dark:text-white mb-2.5 flex items-center gap-2">
-                    <Package size={16} /> Line Items ({items.length})
+                    <Package size={16} /> {t("sales.orders.itemsTitle", { count: items.length, defaultValue: `Line Items (${items.length})` })}
                   </h4>
                   <div className="rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden">
                     <table className="w-full text-left text-xs">
                       <thead className="bg-gray-50 dark:bg-gray-800/60 text-gray-500 border-b border-gray-200 dark:border-gray-800">
                         <tr>
-                          <th className="p-2.5">SKU / Product</th>
+                          <th className="p-2.5">{t("catalog.columns.productId", "SKU / Product")}</th>
                           <th className="p-2.5 text-center">Qty</th>
-                          <th className="p-2.5 text-right">Unit Price</th>
-                          <th className="p-2.5 text-right">Total</th>
+                          <th className="p-2.5 text-right">{t("catalog.form.priceCents", "Unit Price")}</th>
+                          <th className="p-2.5 text-right">{t("sales.orders.total", "Total")}</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
@@ -445,7 +459,7 @@ export default function OrdersPage() {
                 {/* Status Timeline */}
                 <div>
                   <h4 className="text-sm font-semibold text-gray-900 dark:text-white mb-2.5 flex items-center gap-2">
-                    <Truck size={16} /> Status Timeline
+                    <Truck size={16} /> {t("sales.orders.historyTitle", "Status Timeline")}
                   </h4>
                   <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
                     {histories.length === 0 ? (
@@ -458,8 +472,8 @@ export default function OrdersPage() {
                         >
                           <div className="flex items-center gap-2">
                             <span className="font-semibold text-gray-800 dark:text-gray-200">
-                              {h.fromStatus ? `${h.fromStatus} → ` : ""}
-                              {h.toStatus}
+                              {h.fromStatus ? `${t(`sales.orders.statuses.${h.fromStatus}`, h.fromStatus)} → ` : ""}
+                              {t(`sales.orders.statuses.${h.toStatus}`, h.toStatus)}
                             </span>
                             {h.note && (
                               <span className="text-gray-500 italic">“{h.note}”</span>
@@ -480,34 +494,34 @@ export default function OrdersPage() {
                   className="p-4 rounded-xl border border-gray-200 dark:border-gray-800 bg-gray-50/70 dark:bg-gray-800/50 space-y-3"
                 >
                   <h4 className="text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">
-                    Update Order Status
+                    {t("sales.orders.updateStatusTitle", "Update Order Status")}
                   </h4>
                   {statusError && (
                     <p className="text-xs text-error-600">{statusError}</p>
                   )}
                   <div className="grid grid-cols-3 gap-3">
                     <div>
-                      <Label htmlFor="targetStatus">New Status</Label>
+                      <Label htmlFor="targetStatus">{t("sales.orders.newStatus", "New Status")}</Label>
                       <select
                         id="targetStatus"
                         value={newStatus}
                         onChange={(e) => setNewStatus(e.target.value)}
                         className="h-10 rounded-lg border-gray-300 px-3 text-xs w-full border bg-white dark:bg-gray-800 dark:border-gray-700 dark:text-white"
                       >
-                        <option value="PENDING">PENDING</option>
-                        <option value="PAID">PAID</option>
-                        <option value="PROCESSING">PROCESSING</option>
-                        <option value="SHIPPED">SHIPPED</option>
-                        <option value="DELIVERED">DELIVERED</option>
-                        <option value="CANCELLED">CANCELLED</option>
+                        <option value="PENDING">{t("sales.orders.statuses.PENDING", "PENDING")}</option>
+                        <option value="PAID">{t("sales.orders.statuses.PAID", "PAID")}</option>
+                        <option value="PROCESSING">{t("sales.orders.statuses.PROCESSING", "PROCESSING")}</option>
+                        <option value="SHIPPED">{t("sales.orders.statuses.SHIPPED", "SHIPPED")}</option>
+                        <option value="DELIVERED">{t("sales.orders.statuses.DELIVERED", "DELIVERED")}</option>
+                        <option value="CANCELLED">{t("sales.orders.statuses.CANCELLED", "CANCELLED")}</option>
                       </select>
                     </div>
                     <div className="col-span-2">
-                      <Label htmlFor="statusNote">Status Note</Label>
+                      <Label htmlFor="statusNote">{t("sales.orders.notePlaceholder", "Status Note")}</Label>
                       <div className="flex gap-2">
                         <Input
                           id="statusNote"
-                          placeholder="e.g. Tracking code BR123456789 or payment confirmed"
+                          placeholder={t("sales.orders.notePlaceholder", "Internal note or tracking update (optional)")}
                           value={statusNote}
                           onChange={(e) => setStatusNote(e.target.value)}
                         />
@@ -516,7 +530,9 @@ export default function OrdersPage() {
                           size="sm"
                           disabled={updatingStatus || newStatus === selectedOrder.status}
                         >
-                          {updatingStatus ? "Updating…" : "Update"}
+                          {updatingStatus
+                            ? t("common.saving", "Updating…")
+                            : t("sales.orders.updateButton", "Update Status")}
                         </Button>
                       </div>
                     </div>

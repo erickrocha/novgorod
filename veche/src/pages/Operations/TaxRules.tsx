@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { FileSpreadsheet, Pencil, Plus, RefreshCw } from "lucide-react";
 import type { ColumnDef, PaginationState, SortingState } from "@tanstack/react-table";
 import PageBreadcrumb from "@/components/common/PageBreadCrumb";
@@ -23,6 +24,7 @@ const BRAZIL_UFS = [
 ];
 
 export default function TaxRules() {
+  const { t } = useTranslation();
   const [searchParams, setSearchParams] = useSearchParams();
   const dispatch = useAppDispatch();
   const tenants = useAppSelector((s) => s.tenant.tenantsList);
@@ -215,7 +217,7 @@ export default function TaxRules() {
 
   const columns: ColumnDef<TaxRule, unknown>[] = [
     {
-      header: "Rule Name",
+      header: t("operations.taxRules.nameCol", "Rule Name"),
       accessorKey: "name",
       enableSorting: true,
       cell: ({ getValue }) => (
@@ -225,7 +227,7 @@ export default function TaxRules() {
       ),
     },
     {
-      header: "Origin / Destination",
+      header: t("operations.taxRules.routeCol", "Origin / Destination"),
       id: "route",
       accessorFn: (row) => `${row.ufOrigem || "ANY"} → ${row.ufDestino || "ANY"}`,
       cell: ({ getValue }) => (
@@ -235,12 +237,12 @@ export default function TaxRules() {
       ),
     },
     {
-      header: "NCM",
+      header: t("operations.taxRules.ncmCol", "NCM"),
       accessorKey: "ncm",
       cell: ({ getValue }) => getValue<string>() || "—",
     },
     {
-      header: "ICMS",
+      header: t("operations.taxRules.icmsCol", "ICMS"),
       accessorKey: "aliquotaIcms",
       cell: ({ getValue }) => {
         const val = getValue<number>();
@@ -248,7 +250,7 @@ export default function TaxRules() {
       },
     },
     {
-      header: "IPI",
+      header: t("operations.taxRules.ipiCol", "IPI"),
       accessorKey: "aliquotaIpi",
       cell: ({ getValue }) => {
         const val = getValue<number>();
@@ -256,7 +258,7 @@ export default function TaxRules() {
       },
     },
     {
-      header: "PIS / COFINS",
+      header: t("operations.taxRules.pisCofinsCol", "PIS / COFINS"),
       id: "pis_cofins",
       accessorFn: (row) =>
         `${row.aliquotaPis ?? 0}% / ${row.aliquotaCofins ?? 0}%`,
@@ -269,7 +271,7 @@ export default function TaxRules() {
     ...(isSysAdmin
       ? [
           {
-            header: "Tenant",
+            header: t("common.tenant", "Tenant"),
             id: "tenant",
             cell: ({ row }: { row: { original: TaxRule } }) =>
               tenantName(row.original.tenantId),
@@ -284,8 +286,8 @@ export default function TaxRules() {
         <div className="flex items-center justify-end">
           <button
             type="button"
-            title="Edit"
-            aria-label="Edit"
+            title={t("common.edit", "Edit")}
+            aria-label={t("common.edit", "Edit")}
             className="h-8 w-8 rounded-md inline-flex items-center justify-center text-gray-500 hover:text-brand-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-brand-400 dark:hover:bg-white/5 transition-colors"
             onClick={() => openEditModal(row.original)}
           >
@@ -299,10 +301,10 @@ export default function TaxRules() {
   return (
     <>
       <PageMeta
-        title="Tax Rules | Veche"
-        description="Configure tax rates, ICMS, IPI, PIS, and COFINS"
+        title={`${t("operations.taxRules.title", "Tax Rules")} | Veche`}
+        description={t("operations.taxRules.desc", "Configure tax rates, ICMS, IPI, PIS, and COFINS")}
       />
-      <PageBreadcrumb pageTitle="Tax Rules" />
+      <PageBreadcrumb pageTitle={t("operations.taxRules.title", "Tax Rules")} />
       <ComponentCard>
         <DataGrid
           data={rules}
@@ -315,21 +317,21 @@ export default function TaxRules() {
                 startIcon={<RefreshCw size={14} />}
                 onClick={loadData}
               >
-                Refresh
+                {t("common.refresh", "Refresh")}
               </Button>
               <Button
                 size="sm"
                 startIcon={<Plus size={14} />}
                 onClick={openCreateModal}
               >
-                Add Rule
+                {t("operations.taxRules.addRule", "Add Rule")}
               </Button>
             </div>
           }
           getRowId={(row, index) => String(row.id ?? index)}
           loading={loading && rules.length === 0}
           error={error}
-          emptyMessage="No tax rules found."
+          emptyMessage={t("operations.taxRules.emptyMessage", "No tax rules found.")}
           manualPagination
           manualSorting
           manualFiltering
@@ -354,10 +356,10 @@ export default function TaxRules() {
           </div>
           <div>
             <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
-              {editingRule ? "Edit Tax Rule" : "Add Tax Rule"}
+              {editingRule ? t("operations.taxRules.editRule", "Edit Tax Rule") : t("operations.taxRules.newRule", "Add Tax Rule")}
             </h3>
             <p className="text-xs text-gray-500 dark:text-gray-400">
-              Set fiscal parameters, origin/destination states, and tax rates.
+              {t("operations.taxRules.modalDesc", "Set fiscal parameters, origin/destination states, and tax rates.")}
             </p>
           </div>
         </div>
@@ -370,7 +372,7 @@ export default function TaxRules() {
 
         <form onSubmit={handleSave} className="space-y-4">
           <div>
-            <Label htmlFor="ruleName">Rule Name</Label>
+            <Label htmlFor="ruleName">{t("operations.taxRules.ruleNameLabel", "Rule Name")}</Label>
             <Input
               id="ruleName"
               placeholder="e.g. Standard Interstate SP to RJ"
@@ -382,7 +384,7 @@ export default function TaxRules() {
 
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <Label htmlFor="ufOrigem">Origin State</Label>
+              <Label htmlFor="ufOrigem">{t("operations.taxRules.originState", "Origin State")}</Label>
               <select
                 id="ufOrigem"
                 value={formData.ufOrigem}
@@ -391,13 +393,13 @@ export default function TaxRules() {
               >
                 {BRAZIL_UFS.map((uf) => (
                   <option key={uf} value={uf}>
-                    {uf === "ALL" ? "All States (Default)" : uf}
+                    {uf === "ALL" ? t("operations.taxRules.allStates", "All States (Default)") : uf}
                   </option>
                 ))}
               </select>
             </div>
             <div>
-              <Label htmlFor="ufDestino">Destination State</Label>
+              <Label htmlFor="ufDestino">{t("operations.taxRules.destinationState", "Destination State")}</Label>
               <select
                 id="ufDestino"
                 value={formData.ufDestino}
@@ -406,7 +408,7 @@ export default function TaxRules() {
               >
                 {BRAZIL_UFS.map((uf) => (
                   <option key={uf} value={uf}>
-                    {uf === "ALL" ? "All States (Default)" : uf}
+                    {uf === "ALL" ? t("operations.taxRules.allStates", "All States (Default)") : uf}
                   </option>
                 ))}
               </select>
@@ -415,7 +417,7 @@ export default function TaxRules() {
 
           <div className="grid grid-cols-3 gap-3">
             <div>
-              <Label htmlFor="ncm">NCM</Label>
+              <Label htmlFor="ncm">{t("operations.taxRules.ncmLabel", "NCM")}</Label>
               <Input
                 id="ncm"
                 placeholder="6109.10.00"
@@ -424,7 +426,7 @@ export default function TaxRules() {
               />
             </div>
             <div>
-              <Label htmlFor="origemMercadoria">Origem (0-8)</Label>
+              <Label htmlFor="origemMercadoria">{t("operations.taxRules.originGoods", "Goods Origin (0-8)")}</Label>
               <select
                 id="origemMercadoria"
                 value={formData.origemMercadoria}
@@ -433,13 +435,13 @@ export default function TaxRules() {
                 }
                 className="h-11 rounded-lg border-gray-300 px-3 text-sm w-full border bg-white dark:bg-gray-800 dark:border-gray-700 dark:text-white"
               >
-                <option value={0}>0 - Nacional</option>
-                <option value={1}>1 - Estrangeira (Importação direta)</option>
-                <option value={2}>2 - Estrangeira (Mercado interno)</option>
+                <option value={0}>{t("operations.taxRules.origins.national", "0 - National")}</option>
+                <option value={1}>{t("operations.taxRules.origins.foreignDirect", "1 - Foreign (Direct Import)")}</option>
+                <option value={2}>{t("operations.taxRules.origins.foreignInternal", "2 - Foreign (Internal Market)")}</option>
               </select>
             </div>
             <div>
-              <Label htmlFor="cst">CST</Label>
+              <Label htmlFor="cst">{t("operations.taxRules.cstLabel", "CST")}</Label>
               <Input
                 id="cst"
                 placeholder="00"
@@ -451,7 +453,7 @@ export default function TaxRules() {
 
           <div className="grid grid-cols-4 gap-3">
             <div>
-              <Label htmlFor="icms">ICMS (%)</Label>
+              <Label htmlFor="icms">{t("operations.taxRules.icmsLabel", "ICMS (%)")}</Label>
               <Input
                 id="icms"
                 type="number"
@@ -464,7 +466,7 @@ export default function TaxRules() {
               />
             </div>
             <div>
-              <Label htmlFor="ipi">IPI (%)</Label>
+              <Label htmlFor="ipi">{t("operations.taxRules.ipiLabel", "IPI (%)")}</Label>
               <Input
                 id="ipi"
                 type="number"
@@ -477,7 +479,7 @@ export default function TaxRules() {
               />
             </div>
             <div>
-              <Label htmlFor="pis">PIS (%)</Label>
+              <Label htmlFor="pis">{t("operations.taxRules.pisLabel", "PIS (%)")}</Label>
               <Input
                 id="pis"
                 type="number"
@@ -490,7 +492,7 @@ export default function TaxRules() {
               />
             </div>
             <div>
-              <Label htmlFor="cofins">COFINS (%)</Label>
+              <Label htmlFor="cofins">{t("operations.taxRules.cofinsLabel", "COFINS (%)")}</Label>
               <Input
                 id="cofins"
                 type="number"
@@ -506,7 +508,7 @@ export default function TaxRules() {
 
           {isSysAdmin && (
             <div>
-              <Label htmlFor="tenantId">Tenant</Label>
+              <Label htmlFor="tenantId">{t("common.tenant", "Tenant")}</Label>
               <select
                 id="tenantId"
                 value={formData.tenantId || ""}
@@ -518,10 +520,10 @@ export default function TaxRules() {
                 }
                 className="h-11 rounded-lg border-gray-300 px-3 text-sm w-full border bg-white dark:bg-gray-800 dark:border-gray-700 dark:text-white"
               >
-                <option value="">Default / None</option>
-                {tenants.map((t) => (
-                  <option key={t.id} value={t.id ?? ""}>
-                    {t.businessName || t.companyName}
+                <option value="">{t("customers.defaultNone", "Default / None")}</option>
+                {tenants.map((tTenant) => (
+                  <option key={tTenant.id} value={tTenant.id ?? ""}>
+                    {tTenant.businessName || tTenant.companyName}
                   </option>
                 ))}
               </select>
@@ -534,10 +536,10 @@ export default function TaxRules() {
               variant="outline"
               onClick={() => setModalOpen(false)}
             >
-              Cancel
+              {t("common.cancel", "Cancel")}
             </Button>
             <Button type="submit" disabled={saving}>
-              {saving ? "Saving…" : "Save Rule"}
+              {saving ? t("common.saving", "Saving…") : editingRule ? t("operations.taxRules.saveRule", "Update Rule") : t("operations.taxRules.createRule", "Create Rule")}
             </Button>
           </div>
         </form>
