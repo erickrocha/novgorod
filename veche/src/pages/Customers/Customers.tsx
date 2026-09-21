@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { MapPin, Pencil, Plus, RefreshCw } from "lucide-react";
@@ -10,17 +10,26 @@ import Button from "@/components/ui/button/Button";
 import Badge from "@/components/ui/badge/Badge";
 import Input from "@/components/form/input/InputField";
 import Label from "@/components/form/Label";
+import Radio from "@/components/form/input/Radio";
 import Switch from "@/components/form/switch/Switch";
+import FilterableCombobox, {
+  type ComboboxOption,
+} from "@/components/form/FilterableCombobox";
+import { BrFlagIcon } from "@/icons";
 import { Modal } from "@/components/ui/modal";
 import DataGrid from "@/components/data-grid/DataGrid";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { fetchTenants } from "@/store/tenantSlice";
 import { customerService } from "@/services/customerService";
+import { locationService } from "@/services/locationService";
+import { formatPostalCode, stripNonDigits } from "@/utils/taxId";
 import type {
   Customer,
   CustomerAddress,
   CustomerAddressInput,
   PageQueryParams,
+  Province,
+  City,
 } from "@/services/types";
 import { ROLES } from "@/utils/enums";
 
@@ -56,9 +65,120 @@ export default function Customers() {
     complement: "",
     neighborhood: "",
     city: "",
-    uf: "SP",
+    uf: "",
     isDefault: false,
   });
+
+  const [provinces, setProvinces] = useState<Province[]>([]);
+  const [loadingProvinces, setLoadingProvinces] = useState(false);
+  const [cities, setCities] = useState<City[]>([]);
+  const [loadingCities, setLoadingCities] = useState(false);
+  const activeProvinceIdRef = useRef<number | null>(null);
+
+  // Load provinces list
+  useEffect(() => {
+    let active = true;
+    queueMicrotask(() => {
+      if (!active) return;
+      setLoadingProvinces(true);
+      locationService
+        .provinces("BR")
+        .then((data) => {
+          if (active) setProvinces(data);
+        })
+        .catch((err) => {
+          console.error("Failed to load provinces", err);
+        })
+        .finally(() => {
+          if (active) setLoadingProvinces(false);
+        });
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const loadCities = useCallback(async (provinceId: number) => {
+    activeProvinceIdRef.current = provinceId;
+    setLoadingCities(true);
+    try {
+      const list = await locationService.citiesByProvince(provinceId);
+      if (activeProvinceIdRef.current === provinceId) {
+        setCities(Array.isArray(list) ? list : []);
+      }
+    } catch (err) {
+      if (activeProvinceIdRef.current === provinceId) {
+        console.error("Failed to load cities for province", provinceId, err);
+        setCities([]);
+      }
+    } finally {
+      if (activeProvinceIdRef.current === provinceId) {
+        setLoadingCities(false);
+      }
+    }
+  }, []);
+
+  // Automatically load cities when UF changes
+  useEffect(() => {
+    if (!newAddress.uf) {
+      activeProvinceIdRef.current = null;
+      queueMicrotask(() => {
+        setCities([]);
+      });
+      return;
+    }
+    if (provinces.length === 0) return;
+
+    const target = newAddress.uf.trim().toLowerCase();
+    const prov = provinces.find(
+      (p) =>
+        p.acronym.toLowerCase() === target || p.name.toLowerCase() === target,
+    );
+    if (prov && prov.id != null) {
+      queueMicrotask(() => {
+        loadCities(Number(prov.id));
+      });
+    } else {
+      activeProvinceIdRef.current = null;
+      queueMicrotask(() => {
+        setCities([]);
+      });
+    }
+  }, [newAddress.uf, provinces, loadCities]);
+
+  const handleProvinceChange = (val: string, option?: ComboboxOption) => {
+    const searchVal = val.trim().toLowerCase();
+    const prov =
+      (option?.data as Province) ||
+      provinces.find(
+        (p) =>
+          p.acronym.toLowerCase() === searchVal ||
+          p.name.toLowerCase() === searchVal,
+      );
+    const chosenAcronym = prov ? prov.acronym : val;
+    setNewAddress((prev) => ({
+      ...prev,
+      uf: chosenAcronym,
+      city: "",
+    }));
+  };
+
+  const provinceOptions: ComboboxOption[] = useMemo(() => {
+    return provinces.map((p) => ({
+      value: p.acronym,
+      label: `${p.name} (${p.acronym})`,
+      sublabel: `UF: ${p.acronym}`,
+      data: p,
+    }));
+  }, [provinces]);
+
+  const cityOptions: ComboboxOption[] = useMemo(() => {
+    return cities.map((c) => ({
+      value: c.name,
+      label: c.name,
+      data: c,
+    }));
+  }, [cities]);
 
   const page = Number(searchParams.get("page") || "1");
   const pageSize = Number(searchParams.get("pageSize") || "10");
@@ -135,6 +255,20 @@ export default function Customers() {
     setSelectedCustomer(c);
     setShowAddAddress(false);
     setAddressError(null);
+    setNewAddress({
+      tenantId: c.tenantId,
+      customerId: c.id,
+      recipientName: "",
+      phone: "",
+      cep: "",
+      street: "",
+      number: "",
+      complement: "",
+      neighborhood: "",
+      city: "",
+      uf: "",
+      isDefault: false,
+    });
     setAddressModalOpen(true);
     setLoadingAddresses(true);
     try {
@@ -156,6 +290,7 @@ export default function Customers() {
     try {
       await customerService.createAddress({
         ...newAddress,
+        cep: stripNonDigits(newAddress.cep),
         customerId: selectedCustomer.id,
         tenantId: selectedCustomer.tenantId,
       });
@@ -176,7 +311,7 @@ export default function Customers() {
         complement: "",
         neighborhood: "",
         city: "",
-        uf: "SP",
+        uf: "",
         isDefault: false,
       });
     } catch (err: unknown) {
@@ -365,7 +500,7 @@ export default function Customers() {
             <h4 className="text-sm font-semibold text-gray-800 dark:text-gray-200">
               New Address
             </h4>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div>
                 <Label htmlFor="recipientName">Recipient Name</Label>
                 <Input
@@ -382,18 +517,19 @@ export default function Customers() {
                 <Label htmlFor="cep">CEP</Label>
                 <Input
                   id="cep"
-                  placeholder="01001-000"
+                  placeholder="00000-000"
+                  maxLength={9}
                   value={newAddress.cep}
                   onChange={(e) =>
-                    setNewAddress({ ...newAddress, cep: e.target.value })
+                    setNewAddress({ ...newAddress, cep: formatPostalCode(e.target.value) })
                   }
                   required
                 />
               </div>
             </div>
 
-            <div className="grid grid-cols-3 gap-3">
-              <div className="col-span-2">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div className="md:col-span-2">
                 <Label htmlFor="street">Street Address</Label>
                 <Input
                   id="street"
@@ -419,7 +555,7 @@ export default function Customers() {
               </div>
             </div>
 
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div>
                 <Label htmlFor="complement">Complement</Label>
                 <Input
@@ -442,30 +578,68 @@ export default function Customers() {
                   }
                 />
               </div>
-              <div>
-                <Label htmlFor="city">City / UF</Label>
-                <div className="flex gap-2">
-                  <Input
-                    id="city"
-                    placeholder="São Paulo"
-                    value={newAddress.city}
-                    onChange={(e) =>
-                      setNewAddress({ ...newAddress, city: e.target.value })
+            </div>
+
+            {/* Country (20%), State/UF (30%), City (50%) matching Tenant & Person Address standard */}
+            <div className="grid grid-cols-1 md:grid-cols-10 gap-3 items-end">
+              <div className="md:col-span-2">
+                <Label>Country</Label>
+                <div className="flex h-11 items-center px-1">
+                  <Radio
+                    id="customer-country-br"
+                    name="customer-country"
+                    value="BR"
+                    checked={true}
+                    onChange={() => {}}
+                    label={
+                      <span className="flex items-center gap-2">
+                        <BrFlagIcon className="size-5 rounded-full overflow-hidden shrink-0 shadow-xs" />
+                        <span className="text-sm font-medium text-gray-800 dark:text-gray-200">
+                          Brasil
+                        </span>
+                      </span>
                     }
-                    required
-                  />
-                  <Input
-                    id="uf"
-                    className="w-16 uppercase"
-                    maxLength={2}
-                    placeholder="SP"
-                    value={newAddress.uf}
-                    onChange={(e) =>
-                      setNewAddress({ ...newAddress, uf: e.target.value.toUpperCase() })
-                    }
-                    required
                   />
                 </div>
+              </div>
+              <div className="md:col-span-3">
+                <Label htmlFor="customerStateProvince">State / UF</Label>
+                <FilterableCombobox
+                  id="customerStateProvince"
+                  value={newAddress.uf}
+                  options={provinceOptions}
+                  onChange={handleProvinceChange}
+                  placeholder="Select state..."
+                  loading={loadingProvinces}
+                  emptyText="No state found"
+                  required
+                />
+              </div>
+              <div className="md:col-span-5">
+                <Label htmlFor="customerCity">City</Label>
+                <FilterableCombobox
+                  id="customerCity"
+                  value={newAddress.city}
+                  options={cityOptions}
+                  onChange={(val) =>
+                    setNewAddress((prev) => ({ ...prev, city: val }))
+                  }
+                  placeholder={
+                    !newAddress.uf
+                      ? "Select state first..."
+                      : loadingCities
+                      ? "Loading cities..."
+                      : "Select or search city..."
+                  }
+                  disabled={!newAddress.uf}
+                  loading={loadingCities}
+                  emptyText={
+                    loadingCities
+                      ? "Loading cities..."
+                      : "No city found"
+                  }
+                  required
+                />
               </div>
             </div>
 

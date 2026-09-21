@@ -21,12 +21,39 @@ interface FilterableComboboxProps {
   className?: string;
 }
 
+const MAX_RENDERED_OPTIONS = 100;
+
 function normalizeText(text?: string | null): string {
   if (!text) return "";
   return text
     .toLowerCase()
     .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "");
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim();
+}
+
+function isOptionMatch(opt: ComboboxOption, value?: string | null): boolean {
+  if (!value) return false;
+  const target = normalizeText(value);
+  if (!target) return false;
+
+  if (normalizeText(opt.value) === target) return true;
+  if (normalizeText(opt.label) === target) return true;
+  if (opt.sublabel && normalizeText(opt.sublabel) === target) return true;
+
+  // Check label without parenthetical UF, e.g. "Santa Catarina (SC)" -> "Santa Catarina"
+  const labelWithoutParen = normalizeText(opt.label.replace(/\s*\([^)]*\)$/, ""));
+  if (labelWithoutParen === target) return true;
+
+  // Check opt.data if it contains name or acronym
+  if (opt.data && typeof opt.data === "object") {
+    const d = opt.data as { name?: string; acronym?: string; uf?: string };
+    if (d.name && normalizeText(d.name) === target) return true;
+    if (d.acronym && normalizeText(d.acronym) === target) return true;
+    if (d.uf && normalizeText(d.uf) === target) return true;
+  }
+
+  return false;
 }
 
 export default function FilterableCombobox({
@@ -50,12 +77,7 @@ export default function FilterableCombobox({
   // Find currently selected option
   const selectedOption = useMemo(() => {
     if (!value) return undefined;
-    const target = normalizeText(value);
-    return options.find(
-      (opt) =>
-        normalizeText(opt.value) === target ||
-        normalizeText(opt.label) === target,
-    );
+    return options.find((opt) => isOptionMatch(opt, value));
   }, [options, value]);
 
   const handleSelect = useCallback(
@@ -85,11 +107,7 @@ export default function FilterableCombobox({
         !containerRef.current.contains(event.target as Node)
       ) {
         if (isOpen && query.trim()) {
-          const q = normalizeText(query.trim());
-          const match = options.find(
-            (opt) =>
-              normalizeText(opt.value) === q || normalizeText(opt.label) === q,
-          );
+          const match = options.find((opt) => isOptionMatch(opt, query.trim()));
           if (match) {
             handleSelect(match);
           }
@@ -108,13 +126,23 @@ export default function FilterableCombobox({
   const filteredOptions = useMemo(() => {
     const q = normalizeText(query.trim());
     if (!q) return options;
-    return options.filter(
-      (opt) =>
-        normalizeText(opt.label).includes(q) ||
-        normalizeText(opt.value).includes(q) ||
-        (opt.sublabel && normalizeText(opt.sublabel).includes(q)),
-    );
+    return options.filter((opt) => {
+      if (normalizeText(opt.label).includes(q)) return true;
+      if (normalizeText(opt.value).includes(q)) return true;
+      if (opt.sublabel && normalizeText(opt.sublabel).includes(q)) return true;
+      if (opt.data && typeof opt.data === "object") {
+        const d = opt.data as { name?: string; acronym?: string; uf?: string };
+        if (d.name && normalizeText(d.name).includes(q)) return true;
+        if (d.acronym && normalizeText(d.acronym).includes(q)) return true;
+        if (d.uf && normalizeText(d.uf).includes(q)) return true;
+      }
+      return false;
+    });
   }, [options, query]);
+
+  const visibleOptions = useMemo(() => {
+    return filteredOptions.slice(0, MAX_RENDERED_OPTIONS);
+  }, [filteredOptions]);
 
   const handleClear = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -133,25 +161,25 @@ export default function FilterableCombobox({
         setHighlightedIndex(0);
       } else {
         setHighlightedIndex((prev) =>
-          prev < filteredOptions.length - 1 ? prev + 1 : 0,
+          prev < visibleOptions.length - 1 ? prev + 1 : 0,
         );
       }
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
       if (!isOpen) {
         setIsOpen(true);
-        setHighlightedIndex(filteredOptions.length - 1);
+        setHighlightedIndex(visibleOptions.length - 1);
       } else {
         setHighlightedIndex((prev) =>
-          prev > 0 ? prev - 1 : filteredOptions.length - 1,
+          prev > 0 ? prev - 1 : visibleOptions.length - 1,
         );
       }
     } else if (e.key === "Enter") {
       e.preventDefault();
-      if (isOpen && highlightedIndex >= 0 && highlightedIndex < filteredOptions.length) {
-        handleSelect(filteredOptions[highlightedIndex]);
-      } else if (isOpen && filteredOptions.length === 1) {
-        handleSelect(filteredOptions[0]);
+      if (isOpen && highlightedIndex >= 0 && highlightedIndex < visibleOptions.length) {
+        handleSelect(visibleOptions[highlightedIndex]);
+      } else if (isOpen && visibleOptions.length > 0) {
+        handleSelect(visibleOptions[0]);
       } else if (!isOpen) {
         setIsOpen(true);
       }
@@ -159,10 +187,10 @@ export default function FilterableCombobox({
       e.preventDefault();
       setIsOpen(false);
     } else if (e.key === "Tab") {
-      if (isOpen && highlightedIndex >= 0 && highlightedIndex < filteredOptions.length) {
-        handleSelect(filteredOptions[highlightedIndex]);
-      } else if (isOpen && filteredOptions.length === 1) {
-        handleSelect(filteredOptions[0]);
+      if (isOpen && highlightedIndex >= 0 && highlightedIndex < visibleOptions.length) {
+        handleSelect(visibleOptions[highlightedIndex]);
+      } else if (isOpen && visibleOptions.length === 1) {
+        handleSelect(visibleOptions[0]);
       }
       setIsOpen(false);
     }
@@ -175,7 +203,7 @@ export default function FilterableCombobox({
     : value;
 
   return (
-    <div ref={containerRef} className={`relative w-full ${className}`}>
+    <div ref={containerRef} className={`relative w-full ${isOpen ? "z-50" : "z-10"} ${className}`}>
       {/* Hidden input to support form required validation */}
       {required && (
         <input
@@ -194,8 +222,8 @@ export default function FilterableCombobox({
           disabled
             ? "bg-gray-50 dark:bg-gray-800/50 border-gray-200 dark:border-gray-700 cursor-not-allowed opacity-60"
             : isOpen
-            ? "border-brand-500 ring-3 ring-brand-500/15 dark:border-brand-500 bg-white"
-            : "border-gray-200 dark:border-gray-700 bg-white hover:border-gray-300 dark:hover:border-gray-600"
+            ? "border-brand-500 ring-3 ring-brand-500/15 dark:border-brand-500 bg-white dark:bg-gray-900"
+            : "border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 hover:border-gray-300 dark:hover:border-gray-600"
         }`}
         onClick={() => {
           if (!disabled) {
@@ -266,40 +294,43 @@ export default function FilterableCombobox({
               )}
             </div>
           ) : (
-            filteredOptions.map((opt, idx) => {
-              const isSelected =
-                Boolean(value) && (
-                  normalizeText(opt.value) === normalizeText(value) ||
-                  normalizeText(opt.label) === normalizeText(value)
-                );
-              const isHighlighted = idx === highlightedIndex;
+            <>
+              {visibleOptions.map((opt, idx) => {
+                const isSelected = isOptionMatch(opt, value);
+                const isHighlighted = idx === highlightedIndex;
 
-              return (
-                <button
-                  key={`${opt.value}-${idx}`}
-                  type="button"
-                  onMouseEnter={() => setHighlightedIndex(idx)}
-                  onClick={() => handleSelect(opt)}
-                  className={`flex w-full items-center justify-between px-4 py-2 text-start text-sm transition-colors ${
-                    isSelected
-                      ? "bg-brand-50 font-medium text-brand-600 dark:bg-brand-950/40 dark:text-brand-400"
-                      : isHighlighted
-                      ? "bg-gray-100 text-gray-900 dark:bg-gray-800 dark:text-white"
-                      : "text-gray-700 dark:text-gray-300"
-                  }`}
-                >
-                  <div className="flex flex-col">
-                    <span>{opt.label}</span>
-                    {opt.sublabel && (
-                      <span className="text-xs text-gray-400 dark:text-gray-500">
-                        {opt.sublabel}
-                      </span>
-                    )}
-                  </div>
-                  {isSelected && <Check size={16} className="shrink-0 text-brand-500" />}
-                </button>
-              );
-            })
+                return (
+                  <button
+                    key={`${opt.value}-${idx}`}
+                    type="button"
+                    onMouseEnter={() => setHighlightedIndex(idx)}
+                    onClick={() => handleSelect(opt)}
+                    className={`flex w-full items-center justify-between px-4 py-2 text-start text-sm transition-colors ${
+                      isSelected
+                        ? "bg-brand-50 font-medium text-brand-600 dark:bg-brand-950/40 dark:text-brand-400"
+                        : isHighlighted
+                        ? "bg-gray-100 text-gray-900 dark:bg-gray-800 dark:text-white"
+                        : "text-gray-700 dark:text-gray-300"
+                    }`}
+                  >
+                    <div className="flex flex-col">
+                      <span>{opt.label}</span>
+                      {opt.sublabel && (
+                        <span className="text-xs text-gray-400 dark:text-gray-500">
+                          {opt.sublabel}
+                        </span>
+                      )}
+                    </div>
+                    {isSelected && <Check size={16} className="shrink-0 text-brand-500" />}
+                  </button>
+                );
+              })}
+              {filteredOptions.length > MAX_RENDERED_OPTIONS && (
+                <div className="px-4 py-2 text-center text-xs text-gray-500 dark:text-gray-400 border-t border-gray-100 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-800/30">
+                  {visibleOptions.length} de {filteredOptions.length} opções exibidas. Digite para filtrar.
+                </div>
+              )}
+            </>
           )}
         </div>
       )}

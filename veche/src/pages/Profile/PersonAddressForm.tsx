@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
@@ -61,6 +61,8 @@ export default function PersonAddressForm() {
     }
   }, [dispatch, person, addresses.length]);
 
+  const activeProvinceIdRef = useRef<number | null>(null);
+
   // Load provinces
   useEffect(() => {
     let active = true;
@@ -85,15 +87,22 @@ export default function PersonAddressForm() {
   }, []);
 
   const loadCities = useCallback(async (provinceId: number) => {
+    activeProvinceIdRef.current = provinceId;
     setLoadingCities(true);
     try {
       const list = await locationService.citiesByProvince(provinceId);
-      setCities(Array.isArray(list) ? list : []);
+      if (activeProvinceIdRef.current === provinceId) {
+        setCities(Array.isArray(list) ? list : []);
+      }
     } catch (err) {
-      console.error("Failed to load cities for province", provinceId, err);
-      setCities([]);
+      if (activeProvinceIdRef.current === provinceId) {
+        console.error("Failed to load cities for province", provinceId, err);
+        setCities([]);
+      }
     } finally {
-      setLoadingCities(false);
+      if (activeProvinceIdRef.current === provinceId) {
+        setLoadingCities(false);
+      }
     }
   }, []);
 
@@ -118,7 +127,14 @@ export default function PersonAddressForm() {
 
   // Automatically load cities when administrativeArea is present and provinces are loaded
   useEffect(() => {
-    if (!form.administrativeArea || provinces.length === 0) {
+    if (!form.administrativeArea) {
+      activeProvinceIdRef.current = null;
+      queueMicrotask(() => {
+        setCities([]);
+      });
+      return;
+    }
+    if (provinces.length === 0) {
       return;
     }
     const target = form.administrativeArea.trim().toLowerCase();
@@ -129,6 +145,11 @@ export default function PersonAddressForm() {
     if (prov && prov.id != null) {
       queueMicrotask(() => {
         loadCities(Number(prov.id));
+      });
+    } else {
+      activeProvinceIdRef.current = null;
+      queueMicrotask(() => {
+        setCities([]);
       });
     }
   }, [form.administrativeArea, provinces, loadCities]);
@@ -151,12 +172,6 @@ export default function PersonAddressForm() {
       administrativeArea: chosenAcronym,
       locality: "",
     }));
-
-    if (prov && prov.id != null) {
-      loadCities(Number(prov.id));
-    } else {
-      setCities([]);
-    }
   };
 
   const provinceOptions: ComboboxOption[] = useMemo(() => {
@@ -332,7 +347,7 @@ export default function PersonAddressForm() {
                     ? t("tenants.loadingCities", "Carregando cidades...")
                     : t("tenants.selectOrSearchCity", "Selecione ou busque a cidade...")
                 }
-                disabled={!form.administrativeArea || loadingCities}
+                disabled={!form.administrativeArea}
                 loading={loadingCities}
                 emptyText={
                   loadingCities

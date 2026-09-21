@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, useCallback } from "react";
+import { useEffect, useState, useMemo, useCallback, useRef } from "react";
 import type { FormEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
@@ -73,30 +73,50 @@ export default function TenantForm() {
   const [cities, setCities] = useState<City[]>([]);
   const [loadingCities, setLoadingCities] = useState(false);
 
+  const activeProvinceIdRef = useRef<number | null>(null);
+
   useEffect(() => {
     dispatch(fetchTenants());
   }, [dispatch]);
 
   // Load provinces list
   useEffect(() => {
-    setLoadingProvinces(true);
-    locationService
-      .provinces("BR")
-      .then((data) => setProvinces(data))
-      .catch(() => {})
-      .finally(() => setLoadingProvinces(false));
+    let active = true;
+    queueMicrotask(() => {
+      if (!active) return;
+      setLoadingProvinces(true);
+      locationService
+        .provinces("BR")
+        .then((data) => {
+          if (active) setProvinces(data);
+        })
+        .catch(() => {})
+        .finally(() => {
+          if (active) setLoadingProvinces(false);
+        });
+    });
+    return () => {
+      active = false;
+    };
   }, []);
 
   const loadCities = useCallback(async (provinceId: number) => {
+    activeProvinceIdRef.current = provinceId;
     setLoadingCities(true);
     try {
       const list = await locationService.citiesByProvince(provinceId);
-      setCities(Array.isArray(list) ? list : []);
+      if (activeProvinceIdRef.current === provinceId) {
+        setCities(Array.isArray(list) ? list : []);
+      }
     } catch (err) {
-      console.error("Failed to load cities for province", provinceId, err);
-      setCities([]);
+      if (activeProvinceIdRef.current === provinceId) {
+        console.error("Failed to load cities for province", provinceId, err);
+        setCities([]);
+      }
     } finally {
-      setLoadingCities(false);
+      if (activeProvinceIdRef.current === provinceId) {
+        setLoadingCities(false);
+      }
     }
   }, []);
 
@@ -104,38 +124,29 @@ export default function TenantForm() {
   useEffect(() => {
     if (existing) {
       const provVal = existing.administrativeArea || existing.province || "";
-      setForm({
-        businessName: existing.businessName || "",
-        companyName: existing.companyName || "",
-        taxId: existing.taxId ? formatCnpj(existing.taxId) : "",
-        email: existing.email || "",
-        phone: existing.phone ? formatPhone(existing.phone) : "",
-        website: existing.website || "",
-        addressLine1: existing.addressLine1 || "",
-        addressLine2: existing.addressLine2 || "",
-        locality: existing.locality || existing.city || "",
-        administrativeArea: provVal,
-        postalCode: (existing.postalCode || existing.zipcode)
-          ? formatPostalCode(existing.postalCode || existing.zipcode)
-          : "",
-        countryCode: existing.countryCode || defaultCountryCode,
+      queueMicrotask(() => {
+        setForm({
+          businessName: existing.businessName || "",
+          companyName: existing.companyName || "",
+          taxId: existing.taxId ? formatCnpj(existing.taxId) : "",
+          email: existing.email || "",
+          phone: existing.phone ? formatPhone(existing.phone) : "",
+          website: existing.website || "",
+          addressLine1: existing.addressLine1 || "",
+          addressLine2: existing.addressLine2 || "",
+          locality: existing.locality || existing.city || "",
+          administrativeArea: provVal,
+          postalCode: (existing.postalCode || existing.zipcode)
+            ? formatPostalCode(existing.postalCode || existing.zipcode)
+            : "",
+          countryCode: existing.countryCode || defaultCountryCode,
+        });
+
+        setTaxIdError(null);
+        setTaxIdTouched(false);
       });
-
-      if (provVal && provinces.length > 0) {
-        const match = provinces.find(
-          (p) =>
-            p.acronym.toLowerCase() === provVal.toLowerCase() ||
-            p.name.toLowerCase() === provVal.toLowerCase(),
-        );
-        if (match && match.id) {
-          loadCities(match.id);
-        }
-      }
-
-      setTaxIdError(null);
-      setTaxIdTouched(false);
     }
-  }, [existing, provinces, defaultCountryCode, loadCities]);
+  }, [existing, defaultCountryCode]);
 
   const set = (key: keyof typeof form, value: string) =>
     setForm((current) => ({ ...current, [key]: value }));
@@ -155,17 +166,18 @@ export default function TenantForm() {
       administrativeArea: chosenAcronym,
       locality: "",
     }));
-
-    if (prov && prov.id != null) {
-      loadCities(Number(prov.id));
-    } else {
-      setCities([]);
-    }
   };
 
   // Ensure cities are loaded whenever administrativeArea is set and provinces are loaded
   useEffect(() => {
-    if (!form.administrativeArea || provinces.length === 0) {
+    if (!form.administrativeArea) {
+      activeProvinceIdRef.current = null;
+      queueMicrotask(() => {
+        setCities([]);
+      });
+      return;
+    }
+    if (provinces.length === 0) {
       return;
     }
     const target = form.administrativeArea.trim().toLowerCase();
@@ -174,7 +186,14 @@ export default function TenantForm() {
         p.acronym.toLowerCase() === target || p.name.toLowerCase() === target,
     );
     if (prov && prov.id != null) {
-      loadCities(Number(prov.id));
+      queueMicrotask(() => {
+        loadCities(Number(prov.id));
+      });
+    } else {
+      activeProvinceIdRef.current = null;
+      queueMicrotask(() => {
+        setCities([]);
+      });
     }
   }, [form.administrativeArea, provinces, loadCities]);
 
@@ -453,7 +472,7 @@ export default function TenantForm() {
                       ? t("tenants.loadingCities", "Carregando cidades...")
                       : t("tenants.selectOrSearchCity", "Selecione ou busque a cidade...")
                   }
-                  disabled={!form.administrativeArea || loadingCities}
+                  disabled={!form.administrativeArea}
                   loading={loadingCities}
                   emptyText={
                     loadingCities
