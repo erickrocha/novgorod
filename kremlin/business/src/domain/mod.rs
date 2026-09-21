@@ -18,10 +18,18 @@ pub mod order_status_history;
 pub mod orders;
 pub mod product;
 pub mod product_attribute;
+pub mod product_category;
 pub mod product_image;
 pub mod province;
 pub mod shipping_rate;
 pub mod sku;
+pub mod sku_attribute_value;
+pub mod sku_stock;
 pub mod tax_rule;
 pub mod tenant;
 pub mod user;
+
+pub use sku_attribute_value::{SkuAttribute, SkuAttributeEntityMapper};
+pub mod sku_attribute {
+    pub use super::sku_attribute_value::*;
+}

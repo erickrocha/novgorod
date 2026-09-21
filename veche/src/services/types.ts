@@ -325,3 +325,49 @@ export interface CouponRedemption {
 }
 export type CouponRedemptionInput = Omit<CouponRedemption, "id" | "uuid" | "createdAt">;
 
+// ==================== Catalog & Inventory Extensions ====================
+export interface ProductCategory {
+  id: number;
+  uuid?: string;
+  tenantId?: number | null;
+  productId: number;
+  categoryId: number;
+  isPrimary: boolean;
+  createdAt?: string | null;
+  createdBy?: string | null;
+}
+export type ProductCategoryInput = Omit<ProductCategory, "id" | "uuid" | "createdAt" | "createdBy">;
+
+export interface SkuAttributeValue {
+  id: number;
+  uuid?: string;
+  tenantId?: number | null;
+  productId: number;
+  skuId: number;
+  productAttributeId: number;
+  attributeId: number;
+  attributeValueId: number;
+  createdAt?: string | null;
+  createdBy?: string | null;
+  updatedAt?: string | null;
+  updatedBy?: string | null;
+}
+export type SkuAttribute = SkuAttributeValue;
+export type SkuAttributeValueInput = Omit<SkuAttributeValue, "id" | "uuid" | "createdAt" | "createdBy" | "updatedAt" | "updatedBy">;
+export type SkuAttributeInput = SkuAttributeValueInput;
+
+export interface SkuStock {
+  id: number;
+  uuid?: string;
+  tenantId?: number | null;
+  skuId: number;
+  quantity: number;
+  reserved: number;
+  createdAt?: string | null;
+  createdBy?: string | null;
+  updatedAt?: string | null;
+  updatedBy?: string | null;
+}
+export type SkuStockInput = Omit<SkuStock, "id" | "uuid" | "createdAt" | "createdBy" | "updatedAt" | "updatedBy">;
+
+

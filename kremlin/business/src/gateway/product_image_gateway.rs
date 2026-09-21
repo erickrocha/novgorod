@@ -90,13 +90,12 @@ impl ProductImageGateway {
     pub async fn set_primary(&self, id: i64, product_id: i64) -> Result<(), DbErr> {
         self.clear_primary_for_product(product_id).await?;
 
-        if let Some(img) = ProductImageQuery::find_by_id(id).one(&self.db).await? {
-            if img.product_id == product_id {
+        if let Some(img) = ProductImageQuery::find_by_id(id).one(&self.db).await?
+            && img.product_id == product_id {
                 let mut active: product_image_entity::ActiveModel = img.into();
                 active.is_primary = Set(true);
                 active.update(&self.db).await?;
             }
-        }
 
         Ok(())
     }

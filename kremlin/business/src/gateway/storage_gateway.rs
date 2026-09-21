@@ -27,11 +27,10 @@ impl StorageGateway {
         let mut config_loader = aws_config::defaults(aws_config::BehaviorVersion::latest())
             .region(aws_config::Region::new(region));
 
-        if let Ok(endpoint_url) = env::var("AWS_ENDPOINT_URL") {
-            if !endpoint_url.is_empty() {
+        if let Ok(endpoint_url) = env::var("AWS_ENDPOINT_URL")
+            && !endpoint_url.is_empty() {
                 config_loader = config_loader.endpoint_url(endpoint_url);
             }
-        }
 
         let sdk_config = config_loader.load().await;
         let mut s3_config_builder = aws_sdk_s3::config::Builder::from(&sdk_config);

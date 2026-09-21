@@ -31,6 +31,9 @@ import Campaigns from "@/pages/Marketing/Campaigns";
 import Coupons from "@/pages/Marketing/Coupons";
 import ShippingRates from "@/pages/Operations/ShippingRates";
 import TaxRules from "@/pages/Operations/TaxRules";
+import Inventory from "@/pages/Operations/Inventory";
+import ProductCategories from "@/pages/Catalog/ProductCategories";
+import SkuAttributes from "@/pages/Catalog/SkuAttributes";
 import { useAppSelector } from "@/store/hooks";
 import { ROLES } from "@/utils/enums";
 
@@ -55,6 +58,8 @@ export const ProtectedRoutes = () => (
                 <Route path="/tenants" element={<Tenants />} />
                 <Route path="/tenants/new" element={<TenantForm />} />
                 <Route path="/tenants/:id/edit" element={<TenantForm />} />
+                <Route path="/catalog/product-categories" element={<ProductCategories />} />
+                <Route path="/catalog/sku-attributes" element={<SkuAttributes />} />
                 <Route path="/catalog/:kind" element={<CatalogList />} />
                 <Route path="/catalog/:kind/new" element={<CatalogForm />} />
                 <Route path="/catalog/:kind/:id/edit" element={<CatalogForm />} />
@@ -71,6 +76,7 @@ export const ProtectedRoutes = () => (
                 <Route path="/marketing/coupons" element={<Coupons />} />
 
                 {/* Operations & Settings */}
+                <Route path="/operations/inventory" element={<Inventory />} />
                 <Route path="/operations/shipping-rates" element={<ShippingRates />} />
                 <Route path="/operations/tax-rules" element={<TaxRules />} />
 

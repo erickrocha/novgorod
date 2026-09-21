@@ -13,9 +13,12 @@ use crate::endpoints::json::city_json::CityJson;
 use crate::endpoints::json::coupon_json::{CouponJson, CouponRedemptionJson};
 use crate::endpoints::json::customer_json::{CustomerAddressJson, CustomerJson};
 use crate::endpoints::json::orders_json::{OrderItemJson, OrderStatusHistoryJson, OrdersJson};
+use crate::endpoints::json::product_category_json::ProductCategoryJson;
 use crate::endpoints::json::product_image_json::ProductImageJson;
 use crate::endpoints::json::province_json::ProvinceJson;
 use crate::endpoints::json::shipping_rate_json::ShippingRateJson;
+use crate::endpoints::json::sku_attribute_json::SkuAttributeValueJson;
+use crate::endpoints::json::sku_stock_json::SkuStockJson;
 use crate::endpoints::json::tax_rule_json::TaxRuleJson;
 use crate::endpoints::json::tenant_json::TenantJson;
 use crate::endpoints::json::user_json::UserJson;
@@ -38,10 +41,13 @@ use business::domain::order_status_history::OrderStatusHistory;
 use business::domain::orders::Orders;
 use business::domain::product::Product;
 use business::domain::product_attribute::ProductAttribute;
+use business::domain::product_category::ProductCategory;
 use business::domain::product_image::ProductImage;
 use business::domain::province::Province;
 use business::domain::shipping_rate::ShippingRate;
 use business::domain::sku::Sku;
+use business::domain::sku_attribute_value::SkuAttributeValue;
+use business::domain::sku_stock::SkuStock;
 use business::domain::tax_rule::TaxRule;
 use business::domain::tenant::Tenant;
 use business::domain::user::User;
@@ -1010,6 +1016,107 @@ impl Mapper<OrderStatusHistory, OrderStatusHistoryJson> for OrderStatusHistoryMa
     }
 }
 
+pub struct ProductCategoryMapper;
+impl Mapper<ProductCategory, ProductCategoryJson> for ProductCategoryMapper {
+    fn json(t: ProductCategory) -> ProductCategoryJson {
+        ProductCategoryJson {
+            id: t.id.unwrap_or_default(),
+            uuid: t.uuid.unwrap_or_default(),
+            tenant_id: t.tenant_id,
+            product_id: t.product_id,
+            category_id: t.category_id,
+            is_primary: t.is_primary,
+            created_at: t.created_at,
+            created_by: t.created_by,
+        }
+    }
+
+    fn domain(u: ProductCategoryJson) -> ProductCategory {
+        ProductCategory {
+            id: if u.id > 0 { Some(u.id) } else { None },
+            uuid: if u.uuid.is_empty() { None } else { Some(u.uuid) },
+            tenant_id: u.tenant_id,
+            product_id: u.product_id,
+            category_id: u.category_id,
+            is_primary: u.is_primary,
+            created_at: u.created_at,
+            created_by: u.created_by,
+        }
+    }
+}
+
+pub struct SkuAttributeValueMapper;
+pub type SkuAttributeMapper = SkuAttributeValueMapper;
+
+impl Mapper<SkuAttributeValue, SkuAttributeValueJson> for SkuAttributeValueMapper {
+    fn json(t: SkuAttributeValue) -> SkuAttributeValueJson {
+        SkuAttributeValueJson {
+            id: t.id.unwrap_or_default(),
+            uuid: t.uuid.unwrap_or_default(),
+            tenant_id: t.tenant_id,
+            product_id: t.product_id,
+            sku_id: t.sku_id,
+            product_attribute_id: t.product_attribute_id,
+            attribute_id: t.attribute_id,
+            attribute_value_id: t.attribute_value_id,
+            created_at: t.created_at,
+            created_by: t.created_by,
+            updated_at: t.updated_at,
+            updated_by: t.updated_by,
+        }
+    }
+
+    fn domain(u: SkuAttributeValueJson) -> SkuAttributeValue {
+        SkuAttributeValue {
+            id: if u.id > 0 { Some(u.id) } else { None },
+            uuid: if u.uuid.is_empty() { None } else { Some(u.uuid) },
+            tenant_id: u.tenant_id,
+            product_id: u.product_id,
+            sku_id: u.sku_id,
+            product_attribute_id: u.product_attribute_id,
+            attribute_id: u.attribute_id,
+            attribute_value_id: u.attribute_value_id,
+            created_at: u.created_at,
+            created_by: u.created_by,
+            updated_at: u.updated_at,
+            updated_by: u.updated_by,
+        }
+    }
+}
+
+pub struct SkuStockMapper;
+impl Mapper<SkuStock, SkuStockJson> for SkuStockMapper {
+    fn json(t: SkuStock) -> SkuStockJson {
+        SkuStockJson {
+            id: t.id.unwrap_or_default(),
+            uuid: t.uuid.unwrap_or_default(),
+            tenant_id: t.tenant_id,
+            sku_id: t.sku_id,
+            quantity: t.quantity,
+            reserved: t.reserved,
+            created_at: t.created_at,
+            created_by: t.created_by,
+            updated_at: t.updated_at,
+            updated_by: t.updated_by,
+        }
+    }
+
+    fn domain(u: SkuStockJson) -> SkuStock {
+        SkuStock {
+            id: if u.id > 0 { Some(u.id) } else { None },
+            uuid: if u.uuid.is_empty() { None } else { Some(u.uuid) },
+            tenant_id: u.tenant_id,
+            sku_id: u.sku_id,
+            quantity: u.quantity,
+            reserved: u.reserved,
+            created_at: u.created_at,
+            created_by: u.created_by,
+            updated_at: u.updated_at,
+            updated_by: u.updated_by,
+        }
+    }
+}
+
 #[cfg(test)]
 mod address_mapping_tests {
     use super::{canonical_address, country_code, optional_text};
@@ -1126,5 +1233,77 @@ mod new_domain_mapper_tests {
         assert_eq!(back.code, domain.code);
         assert_eq!(back.coupon_type, domain.coupon_type);
     }
+
+    #[test]
+    fn test_product_category_mapper() {
+        let domain = ProductCategory {
+            id: Some(15),
+            uuid: Some("d1a2a3a4-b1b2-c1c2-d1d2-d3d4d5d6d7d8".to_string()),
+            tenant_id: Some(1),
+            product_id: 100,
+            category_id: 200,
+            is_primary: true,
+            created_at: None,
+            created_by: None,
+        };
+        let json = ProductCategoryMapper::json(domain.clone());
+        assert_eq!(json.id, 15);
+        assert_eq!(json.product_id, 100);
+        assert_eq!(json.category_id, 200);
+        assert!(json.is_primary);
+
+        let back = ProductCategoryMapper::domain(json);
+        assert_eq!(back.id, domain.id);
+        assert_eq!(back.product_id, domain.product_id);
+    }
+
+    #[test]
+    fn test_sku_attribute_value_mapper() {
+        let domain = SkuAttributeValue {
+            id: Some(25),
+            uuid: Some("e1a2a3a4-b1b2-c1c2-d1d2-d3d4d5d6d7d8".to_string()),
+            tenant_id: Some(1),
+            product_id: 10,
+            sku_id: 20,
+            product_attribute_id: 30,
+            attribute_id: 40,
+            attribute_value_id: 50,
+            created_at: None,
+            created_by: None,
+            updated_at: None,
+            updated_by: None,
+        };
+        let json = SkuAttributeValueMapper::json(domain.clone());
+        assert_eq!(json.sku_id, 20);
+        assert_eq!(json.attribute_value_id, 50);
+
+        let back = SkuAttributeValueMapper::domain(json);
+        assert_eq!(back.sku_id, domain.sku_id);
+        assert_eq!(back.attribute_value_id, domain.attribute_value_id);
+    }
+
+    #[test]
+    fn test_sku_stock_mapper() {
+        let domain = SkuStock {
+            id: Some(35),
+            uuid: Some("f1a2a3a4-b1b2-c1c2-d1d2-d3d4d5d6d7d8".to_string()),
+            tenant_id: Some(1),
+            sku_id: 20,
+            quantity: 150,
+            reserved: 10,
+            created_at: None,
+            created_by: None,
+            updated_at: None,
+            updated_by: None,
+        };
+        let json = SkuStockMapper::json(domain.clone());
+        assert_eq!(json.quantity, 150);
+        assert_eq!(json.reserved, 10);
+
+        let back = SkuStockMapper::domain(json);
+        assert_eq!(back.quantity, domain.quantity);
+        assert_eq!(back.reserved, domain.reserved);
+    }
 }
+
 

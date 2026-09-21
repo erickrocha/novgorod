@@ -143,11 +143,10 @@ pub async fn products_paged(
         query = query.filter(product_entity::Column::Active.eq(active));
     }
 
-    if let Some(ref brand) = params.brand {
-        if !brand.trim().is_empty() {
+    if let Some(ref brand) = params.brand
+        && !brand.trim().is_empty() {
             query = query.filter(product_entity::Column::Brand.eq(brand.trim()));
         }
-    }
 
     if let Some(ref q) = norm.q {
         let pattern = format!("%{}%", q);

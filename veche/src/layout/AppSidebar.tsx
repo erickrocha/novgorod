@@ -57,6 +57,8 @@ const navItems: NavItem[] = [
       { name: "Categories", key: "categories", path: "/catalog/categories" },
       { name: "Products", key: "products", path: "/catalog/products" },
       { name: "SKUs", key: "skus", path: "/catalog/skus" },
+      { name: "Product Categories", key: "productCategories", path: "/catalog/product-categories" },
+      { name: "SKU Attributes", key: "skuAttributes", path: "/catalog/sku-attributes" },
     ],
   },
   {
@@ -79,6 +81,7 @@ const navItems: NavItem[] = [
     name: "Operations",
     key: "operations",
     subItems: [
+      { name: "Inventory", key: "inventory", path: "/operations/inventory" },
       { name: "Shipping Rates", key: "shippingRates", path: "/operations/shipping-rates" },
       { name: "Tax Rules", key: "taxRules", path: "/operations/tax-rules" },
     ],

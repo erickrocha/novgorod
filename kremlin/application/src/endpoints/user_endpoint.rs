@@ -216,11 +216,10 @@ pub async fn paged(
         }
     }
 
-    if let Some(ref role) = params.role {
-        if !role.trim().is_empty() {
+    if let Some(ref role) = params.role
+        && !role.trim().is_empty() {
             query = query.filter(user_entity::Column::Role.eq(role.trim()));
         }
-    }
 
     if let Some(enabled) = params.enabled {
         query = query.filter(user_entity::Column::Enabled.eq(enabled));

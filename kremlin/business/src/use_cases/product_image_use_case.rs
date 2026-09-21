@@ -139,7 +139,7 @@ impl ProductImageUseCase {
                 .storage
                 .generate_presigned_upload_url(&object_key, &req.mime_type, 900)
                 .await
-                .map_err(|e| BusinessError::new(e))?;
+                .map_err(BusinessError::new)?;
 
             results.push(ImageUploadResult {
                 image: persisted_domain,
