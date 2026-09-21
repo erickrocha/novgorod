@@ -385,7 +385,7 @@ const AppSidebar: React.FC = () => {
           <div className="flex flex-col gap-4">
             <div>
               <h2
-                className={`mb-4 flex text-xs leading-5 text-gray-400 uppercase ${
+                className={`mb-4 flex text-xs font-semibold tracking-wider text-gray-500 uppercase ${
                   !isExpanded && !isHovered
                     ? "xl:justify-center"
                     : "justify-start"
@@ -403,7 +403,7 @@ const AppSidebar: React.FC = () => {
             {isSysAdmin && (
               <div>
                 {(isExpanded || isHovered || isMobileOpen) && (
-                  <h2 className="mb-4 flex text-xs leading-5 text-gray-400 uppercase">
+                  <h2 className="mb-4 flex text-xs font-semibold tracking-wider text-gray-500 uppercase">
                     {t("sidebar.groups.systemSettings")}
                   </h2>
                 )}

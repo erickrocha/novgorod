@@ -26,10 +26,10 @@ const Radio: React.FC<RadioProps> = ({
   return (
     <label
       htmlFor={id}
-      className={`relative flex cursor-pointer  select-none items-center gap-3 text-sm font-medium ${
+      className={`relative flex cursor-pointer select-none items-center gap-3 text-sm font-medium ${
         disabled
           ? "text-gray-300 dark:text-gray-600 cursor-not-allowed"
-          : "text-gray-700 dark:text-gray-400"
+          : "text-gray-900 dark:text-gray-200"
       } ${className}`}
     >
       <input
@@ -43,10 +43,10 @@ const Radio: React.FC<RadioProps> = ({
         disabled={disabled} // Disable input
       />
       <span
-        className={`flex h-5 w-5 items-center justify-center rounded-full border-[1.25px] ${
+        className={`flex h-5 w-5 items-center justify-center rounded-full border-[1.25px] transition-colors ${
           checked
             ? "border-brand-500 bg-brand-500"
-            : "bg-transparent border-gray-300 dark:border-gray-700"
+            : "bg-transparent border-gray-200 hover:border-gray-300 dark:border-gray-700"
         } ${
           disabled
             ? "bg-gray-100 dark:bg-gray-700 border-gray-200 dark:border-gray-700"

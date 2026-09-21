@@ -27,6 +27,9 @@ import Locations from "@/pages/Management/Locations";
 import Orders from "@/pages/Sales/Orders";
 import Carts from "@/pages/Sales/Carts";
 import Customers from "@/pages/Customers/Customers";
+import CustomerForm from "@/pages/Customers/CustomerForm";
+import ProfileEdit from "@/pages/Profile/ProfileEdit";
+import PersonAddressForm from "@/pages/Profile/PersonAddressForm";
 import Campaigns from "@/pages/Marketing/Campaigns";
 import Coupons from "@/pages/Marketing/Coupons";
 import ShippingRates from "@/pages/Operations/ShippingRates";
@@ -50,8 +53,13 @@ export const ProtectedRoutes = () => (
             <Route element={<AppLayout />}>
                 <Route index path="/" element={<Home />} />
 
-                {/* Others Page */}
+                {/* Profile */}
                 <Route path="/profile" element={<UserProfiles />} />
+                <Route path="/profile/edit" element={<ProfileEdit />} />
+                <Route path="/profile/addresses/new" element={<PersonAddressForm />} />
+                <Route path="/profile/addresses/:id/edit" element={<PersonAddressForm />} />
+
+                {/* Users & Tenants */}
                 <Route path="/users" element={<Users />} />
                 <Route path="/users/new" element={<UserForm />} />
                 <Route path="/users/:id/edit" element={<UserForm />} />
@@ -70,6 +78,8 @@ export const ProtectedRoutes = () => (
 
                 {/* Customers */}
                 <Route path="/customers" element={<Customers />} />
+                <Route path="/customers/new" element={<CustomerForm />} />
+                <Route path="/customers/:id/edit" element={<CustomerForm />} />
 
                 {/* Marketing */}
                 <Route path="/marketing/campaigns" element={<Campaigns />} />

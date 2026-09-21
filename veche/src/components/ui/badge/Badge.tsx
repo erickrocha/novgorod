@@ -1,7 +1,14 @@
 type BadgeVariant = "light" | "solid";
 type BadgeSize = "sm" | "md";
 type BadgeColor =
-  "primary" | "success" | "error" | "warning" | "info" | "light" | "dark";
+  | "primary"
+  | "accent"
+  | "success"
+  | "error"
+  | "warning"
+  | "info"
+  | "light"
+  | "dark";
 
 interface BadgeProps {
   variant?: BadgeVariant; // Light or solid variant
@@ -30,10 +37,12 @@ const Badge: React.FC<BadgeProps> = ({
   };
 
   // Define color styles for variants
-  const variants = {
+  const variants: Record<BadgeVariant, Record<BadgeColor, string>> = {
     light: {
       primary:
-        "bg-brand-50 text-brand-500 dark:bg-brand-500/15 dark:text-brand-400",
+        "bg-brand-50 text-brand-600 dark:bg-brand-500/15 dark:text-brand-400",
+      accent:
+        "bg-[#FFF4D1] text-gray-900 border border-[#FFC629]/40 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-700/50",
       success:
         "bg-success-50 text-success-600 dark:bg-success-500/15 dark:text-success-500",
       error:
@@ -46,6 +55,7 @@ const Badge: React.FC<BadgeProps> = ({
     },
     solid: {
       primary: "bg-brand-500 text-white dark:text-white",
+      accent: "bg-[#FFC629] text-gray-900 font-semibold dark:bg-[#FFC629] dark:text-gray-900",
       success: "bg-success-500 text-white dark:text-white",
       error: "bg-error-500 text-white dark:text-white",
       warning: "bg-warning-500 text-white dark:text-white",

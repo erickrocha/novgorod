@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from "react";
+import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { ChevronDown, Check, X, Loader2 } from "lucide-react";
 
 export interface ComboboxOption {
@@ -58,19 +58,24 @@ export default function FilterableCombobox({
     );
   }, [options, value]);
 
+  const handleSelect = useCallback(
+    (option: ComboboxOption) => {
+      onChange(option.value, option);
+      setIsOpen(false);
+      setQuery("");
+    },
+    [onChange],
+  );
+
   // When dropdown opens or closes, reset filter query
   useEffect(() => {
     if (!isOpen) {
-      setQuery("");
-      setHighlightedIndex(-1);
+      queueMicrotask(() => {
+        setQuery("");
+        setHighlightedIndex(-1);
+      });
     }
   }, [isOpen]);
-
-  const handleSelect = (option: ComboboxOption) => {
-    onChange(option.value, option);
-    setIsOpen(false);
-    setQuery("");
-  };
 
   // Close on outside click
   useEffect(() => {
@@ -97,7 +102,7 @@ export default function FilterableCombobox({
       return () =>
         document.removeEventListener("mousedown", handleClickOutside);
     }
-  }, [isOpen, query, options]);
+  }, [isOpen, query, options, handleSelect]);
 
   // Filtered options based on query (accent-insensitive)
   const filteredOptions = useMemo(() => {
@@ -187,10 +192,10 @@ export default function FilterableCombobox({
       <div
         className={`relative flex h-11 w-full items-center rounded-lg border transition-colors shadow-theme-xs ${
           disabled
-            ? "bg-gray-100 dark:bg-gray-800/50 border-gray-300 dark:border-gray-700 cursor-not-allowed opacity-70"
+            ? "bg-gray-50 dark:bg-gray-800/50 border-gray-200 dark:border-gray-700 cursor-not-allowed opacity-60"
             : isOpen
-            ? "border-brand-500 ring-3 ring-brand-500/10 dark:border-brand-500 bg-transparent"
-            : "border-gray-300 dark:border-gray-700 bg-transparent hover:border-gray-400 dark:hover:border-gray-600"
+            ? "border-brand-500 ring-3 ring-brand-500/15 dark:border-brand-500 bg-white"
+            : "border-gray-200 dark:border-gray-700 bg-white hover:border-gray-300 dark:hover:border-gray-600"
         }`}
         onClick={() => {
           if (!disabled) {
@@ -216,7 +221,7 @@ export default function FilterableCombobox({
           }}
           onKeyDown={handleKeyDown}
           autoComplete="off"
-          className="h-full w-full rounded-lg bg-transparent px-4 py-2.5 text-sm text-gray-800 placeholder:text-gray-400 focus:outline-hidden dark:text-white/90 dark:placeholder:text-white/30"
+          className="h-full w-full rounded-lg bg-transparent px-4 py-2.5 text-sm text-gray-900 placeholder:text-gray-400 focus:outline-hidden dark:text-white/90 dark:placeholder:text-white/30"
         />
 
         <div className="flex items-center gap-1 pe-3 text-gray-400">

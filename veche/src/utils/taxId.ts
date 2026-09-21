@@ -24,6 +24,20 @@ export function formatCnpj(value?: string | null): string {
 }
 
 /**
+ * Formats a raw or partially typed string into a masked Brazilian CPF (XXX.XXX.XXX-XX).
+ */
+export function formatCpf(value?: string | null): string {
+  const digits = stripNonDigits(value).slice(0, 11);
+  if (!digits) return "";
+  if (digits.length <= 3) return digits;
+  if (digits.length <= 6) return `${digits.slice(0, 3)}.${digits.slice(3)}`;
+  if (digits.length <= 9) {
+    return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(6)}`;
+  }
+  return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(6, 9)}-${digits.slice(9, 11)}`;
+}
+
+/**
  * Validates a Brazilian CNPJ number according to the official check-digit algorithm.
  */
 export function isValidCnpj(value?: string | null): boolean {

@@ -127,7 +127,7 @@ export default function DataGrid<T>({
             value={globalFilterState}
             onChange={(event) => table.setGlobalFilter(event.target.value)}
             placeholder="Search..."
-            className="h-9 min-w-64 rounded-lg border-gray-300 px-3 text-sm text-gray-800 focus:border-brand-300 focus:ring-brand-500/20 dark:border-gray-700 dark:text-white/90 border bg-transparent outline-none focus:ring-3"
+            className="h-9 min-w-64 rounded-lg border border-gray-200 bg-white px-3 text-sm text-gray-900 shadow-theme-xs placeholder:text-gray-400 focus:border-brand-500 focus:ring-brand-500/15 dark:border-gray-700 dark:bg-gray-900 dark:text-white/90 outline-none focus:ring-3 transition-colors"
           />
         ) : (
           <span />
@@ -144,9 +144,9 @@ export default function DataGrid<T>({
           {error}
         </div>
       )}
-      <div className="rounded-lg border-gray-200 dark:border-gray-800 overflow-x-auto border">
+      <div className="rounded-xl border border-gray-200 bg-white shadow-theme-xs dark:border-gray-800 dark:bg-transparent overflow-x-auto">
         <table className="text-sm min-w-full text-start">
-          <thead className="bg-gray-50 dark:bg-white/5">
+          <thead className="bg-gray-50/80 border-b border-gray-100 dark:bg-white/5 dark:border-gray-800">
             {table.getHeaderGroups().map((headerGroup) => (
               <tr key={headerGroup.id}>
                 {headerGroup.headers.map((header) => {
@@ -251,7 +251,7 @@ export default function DataGrid<T>({
           <select
             value={paginationState.pageSize}
             onChange={(event) => table.setPageSize(Number(event.target.value))}
-            className="h-9 rounded-lg border-gray-300 px-2 dark:border-gray-700 border bg-transparent"
+            className="h-9 rounded-lg border border-gray-200 bg-white px-2 text-xs font-medium text-gray-700 shadow-theme-xs focus:border-brand-500 focus:ring-brand-500/15 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 outline-none"
           >
             {pageSizeOptions.map((size) => (
               <option key={size} value={size}>
@@ -263,11 +263,11 @@ export default function DataGrid<T>({
             type="button"
             disabled={!table.getCanPreviousPage()}
             onClick={() => table.previousPage()}
-            className="rounded px-3 py-1.5 border disabled:opacity-40"
+            className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 shadow-theme-xs hover:bg-brand-50 hover:text-brand-600 hover:border-brand-500 disabled:opacity-40 disabled:pointer-events-none transition-all duration-200 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300"
           >
             Previous
           </button>
-          <span>
+          <span className="text-xs text-gray-500">
             Page {paginationState.pageIndex + 1} of{" "}
             {Math.max(1, table.getPageCount())}
           </span>
@@ -275,7 +275,7 @@ export default function DataGrid<T>({
             type="button"
             disabled={!table.getCanNextPage()}
             onClick={() => table.nextPage()}
-            className="rounded px-3 py-1.5 border disabled:opacity-40"
+            className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 shadow-theme-xs hover:bg-brand-50 hover:text-brand-600 hover:border-brand-500 disabled:opacity-40 disabled:pointer-events-none transition-all duration-200 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300"
           >
             Next
           </button>

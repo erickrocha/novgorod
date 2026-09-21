@@ -100,7 +100,7 @@ export default function UserDropdown() {
         className="inset-e-0 mt-4.25 w-65 rounded-2xl border-gray-200 bg-white p-3 shadow-theme-lg dark:border-gray-800 dark:bg-gray-dark absolute flex flex-col border"
       >
         <div>
-          <span className="text-theme-sm font-medium text-gray-700 dark:text-gray-400 block no-underline">
+          <span className="text-theme-sm font-semibold text-gray-900 dark:text-white block no-underline">
             {displayName}
           </span>
           {displayEmail && (
@@ -115,7 +115,7 @@ export default function UserDropdown() {
             <DropdownItem
               onItemClick={closeDropdown}
               tag="a"
-              to="/profile"
+              to="/profile/edit"
               className="group gap-3 rounded-lg px-3 py-2 text-theme-sm font-medium text-gray-700 hover:bg-gray-100 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-white/5 dark:hover:text-gray-300 flex items-center"
             >
               <svg

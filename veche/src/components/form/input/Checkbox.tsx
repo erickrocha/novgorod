@@ -30,7 +30,7 @@ const Checkbox: React.FC<CheckboxProps> = ({
           id={id}
           type="checkbox"
           className={cn(
-            "w-5 h-5 appearance-none cursor-pointer dark:border-gray-700 border border-gray-300 checked:border-transparent rounded-md checked:bg-brand-500 disabled:opacity-60",
+            "w-5 h-5 appearance-none cursor-pointer dark:border-gray-700 border border-gray-200 checked:border-brand-500 rounded-md checked:bg-brand-500 disabled:opacity-60 transition-colors",
             className
           )}
           checked={checked}
@@ -75,7 +75,7 @@ const Checkbox: React.FC<CheckboxProps> = ({
         )}
       </div>
       {label && (
-        <span className="text-sm font-medium text-gray-800 dark:text-gray-200">
+        <span className="text-sm font-medium text-gray-900 dark:text-gray-200">
           {label}
         </span>
       )}

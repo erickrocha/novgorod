@@ -44,7 +44,7 @@ const AppHeader: React.FC = () => {
   }, []);
 
   return (
-    <header className="sticky top-0 z-99999 flex w-full border-gray-200 bg-white xl:border-b dark:border-gray-800 dark:bg-gray-900">
+    <header className="sticky top-0 z-99999 flex w-full border-b border-gray-200 bg-white shadow-[0_1px_3px_rgba(15,42,71,0.04)] dark:border-gray-800 dark:bg-gray-900">
       <div className="flex grow flex-col items-center justify-between xl:flex-row xl:px-6">
         <div className="flex w-full items-center justify-between gap-2 border-b border-gray-200 px-3 py-3 sm:gap-4 xl:justify-normal xl:border-b-0 xl:px-0 xl:py-4 dark:border-gray-800">
           <button
@@ -141,7 +141,7 @@ const AppHeader: React.FC = () => {
                   ref={inputRef}
                   type="text"
                   placeholder={t("searchPlaceholder")}
-                  className="dark:bg-dark-900 h-11 w-full rounded-lg border border-gray-200 bg-transparent py-2.5 ps-12 pe-14 text-sm text-gray-800 shadow-theme-xs placeholder:text-gray-400 focus:border-brand-300 focus:ring-3 focus:ring-brand-500/10 focus:outline-hidden xl:w-107.5 dark:border-gray-800 dark:bg-white/3 dark:text-white/90 dark:placeholder:text-white/30 dark:focus:border-brand-800"
+                  className="dark:bg-dark-900 h-11 w-full rounded-lg border border-gray-200 bg-gray-50/50 py-2.5 ps-12 pe-14 text-sm text-gray-900 shadow-theme-xs placeholder:text-gray-400 focus:bg-white focus:border-brand-500 focus:ring-3 focus:ring-brand-500/15 focus:outline-hidden xl:w-107.5 dark:border-gray-800 dark:bg-white/3 dark:text-white/90 dark:placeholder:text-white/30 dark:focus:border-brand-500"
                 />
                 <button className="absolute inset-e-2.5 top-1/2 inline-flex -translate-y-1/2 items-center gap-0.5 rounded-lg border border-gray-200 bg-gray-50 px-1.75 py-[4.5px] text-xs tracking-[-0.2px] text-gray-500 dark:border-gray-800 dark:bg-white/3 dark:text-gray-400">
                   <span> ⌘ </span>

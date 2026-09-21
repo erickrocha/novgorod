@@ -32,14 +32,14 @@ const Button: React.FC<ButtonProps> = ({
   // Variant Classes
   const variantClasses = {
     primary:
-      "bg-brand-500 text-white shadow-theme-xs hover:bg-brand-600 disabled:bg-brand-300",
+      "bg-gradient-to-r from-brand-500 to-brand-600 text-white shadow-[0_2px_8px_rgba(29,111,209,0.35)] hover:shadow-[0_4px_14px_rgba(29,111,209,0.45)] hover:-translate-y-0.5 active:translate-y-0 disabled:opacity-50 disabled:pointer-events-none disabled:shadow-none",
     outline:
-      "bg-white text-gray-700 ring-1 ring-inset ring-gray-300 hover:bg-gray-50 dark:bg-gray-800 dark:text-gray-400 dark:ring-gray-700 dark:hover:bg-white/3 dark:hover:text-gray-300",
+      "bg-white text-gray-900 border border-gray-200 hover:bg-brand-50 hover:text-brand-600 hover:border-brand-500 dark:bg-gray-800 dark:text-gray-200 dark:border-gray-700 dark:hover:bg-brand-950 dark:hover:text-brand-400",
   };
 
   return (
     <button
-      className={`inline-flex items-center justify-center gap-2 rounded-lg font-medium transition ${className} ${
+      className={`inline-flex items-center justify-center gap-2 rounded-lg font-medium transition-all duration-300 ease-out ${className} ${
         sizeClasses[size]
       } ${variantClasses[variant]} ${
         disabled ? "cursor-not-allowed opacity-50" : ""
