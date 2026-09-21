@@ -370,4 +370,51 @@ export interface SkuStock {
 }
 export type SkuStockInput = Omit<SkuStock, "id" | "uuid" | "createdAt" | "createdBy" | "updatedAt" | "updatedBy">;
 
+export interface Person {
+  id: number;
+  uuid?: string;
+  tenantId?: number | null;
+  userId: number;
+  firstName: string;
+  surname?: string | null;
+  dateOfBirth?: string | null;
+  gender?: string | null;
+  avatar?: string | null;
+  avatarUrl?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}
+
+export interface PersonInput {
+  tenantId?: number | null;
+  userId?: number;
+  firstName: string;
+  surname?: string | null;
+  dateOfBirth?: string | null;
+  gender?: string | null;
+  avatar?: string | null;
+  phone?: string | null;
+  email?: string | null;
+}
+
+export interface ResourceProfile {
+  user: User;
+  person: Person | null;
+}
+
+export interface AvatarPresignRequest {
+  originalFilename: string;
+  mimeType: string;
+  sizeBytes: number;
+}
+
+export interface AvatarPresignResponse {
+  uploadUrl: string;
+  objectKey: string;
+  cdnUrl?: string | null;
+}
+
+
 

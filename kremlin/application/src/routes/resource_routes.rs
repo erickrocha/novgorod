@@ -107,5 +107,22 @@ pub fn resources_routes(state: AppState) -> Router<AppState> {
         .route("/products/{id}/images", get(crate::endpoints::product_image_endpoint::list))
         .route("/products/{id}/images/{image_id}", delete(crate::endpoints::product_image_endpoint::delete))
         .route("/products/{id}/images/{image_id}/primary", put(crate::endpoints::product_image_endpoint::set_primary))
+        // Profile & Avatar Resources
+        .route(
+            "/resource/profile",
+            get(crate::endpoints::resource_endpoint::get_profile)
+                .put(crate::endpoints::resource_endpoint::update_profile),
+        )
+        .route("/resource", get(crate::endpoints::resource_endpoint::get_profile))
+        .route("/resource/me", get(crate::endpoints::resource_endpoint::get_profile))
+        .route(
+            "/profile",
+            get(crate::endpoints::resource_endpoint::get_profile)
+                .put(crate::endpoints::resource_endpoint::update_profile),
+        )
+        .route(
+            "/resource/avatar/presign",
+            post(crate::endpoints::resource_endpoint::presign_avatar),
+        )
         .route_layer(middleware::from_fn_with_state(state, authentication))
 }

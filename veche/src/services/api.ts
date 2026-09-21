@@ -143,4 +143,5 @@ export { authService } from "./authService";
 export { tenantService } from "./tenantService";
 export { userService } from "./userService";
 export { locationService } from "./locationService";
+export { resourceService } from "./resourceService";
 export type * from "./types";

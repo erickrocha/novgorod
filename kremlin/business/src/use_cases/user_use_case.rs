@@ -2,7 +2,9 @@ use crate::commons::entity_mapper::EntityMapper;
 use crate::commons::gateway::Gateway;
 use crate::domain::business_error::BusinessError;
 use crate::domain::enums::Role;
+use crate::domain::person::Person;
 use crate::domain::user::{User, UserEntityMapper};
+use crate::gateway::person_gateway::PersonGateway;
 use crate::gateway::user_gateway::UserGateway;
 use chrono::Utc;
 use sea_orm::DbConn;
@@ -10,11 +12,23 @@ use std::env;
 
 pub struct UserUseCase {
     gateway: UserGateway,
+    person_gateway: PersonGateway,
 }
 
 impl UserUseCase {
     pub fn new(gateway: UserGateway) -> Self {
-        Self { gateway }
+        let person_gateway = PersonGateway::new(gateway.db().clone());
+        Self {
+            gateway,
+            person_gateway,
+        }
+    }
+
+    pub fn new_with_person_gateway(gateway: UserGateway, person_gateway: PersonGateway) -> Self {
+        Self {
+            gateway,
+            person_gateway,
+        }
     }
 
     pub async fn create(&self, user: User) -> Result<User, BusinessError> {
@@ -52,7 +66,18 @@ impl UserUseCase {
             BusinessError::new(msg)
         })?;
 
-        Ok(UserEntityMapper::from_active_model(entity))
+        let saved_user = UserEntityMapper::from_active_model(entity);
+
+        if let Some(person) = Self::build_person_for_user(&saved_user) {
+            let user_id = person.user_id;
+            if let Err(e) = self.person_gateway.persist(person).await {
+                let msg = format!("Failed to create person for user {}: {}", user_id, e);
+                log::error!("[UserUseCase::create] {}", msg);
+                return Err(BusinessError::new(msg));
+            }
+        }
+
+        Ok(saved_user)
     }
 
     pub async fn update(&self, id: i64, user: User) -> Result<User, BusinessError> {
@@ -227,7 +252,7 @@ impl UserUseCase {
             ..user
         };
 
-        let user_gateway = UserGateway::new(db);
+        let user_gateway = UserGateway::new(db.clone());
         let entity = user_gateway.persist(user_with_password_encrypted).await;
         if entity.is_err() {
             let error = entity.err().unwrap();
@@ -235,8 +260,14 @@ impl UserUseCase {
             return None;
         }
         let user = entity.unwrap();
+        let saved_user = UserEntityMapper::from_active_model(user);
 
-        Some(UserEntityMapper::from_active_model(user))
+        if let Some(person) = Self::build_person_for_user(&saved_user) {
+            let person_gateway = PersonGateway::new(db);
+            let _ = person_gateway.persist(person).await;
+        }
+
+        Some(saved_user)
     }
 
     pub async fn find_by_email(db: &DbConn, email: String) -> Option<User> {
@@ -367,4 +398,142 @@ impl UserUseCase {
         }
         created
     }
+
+    pub fn build_person_for_user(user: &User) -> Option<Person> {
+        let user_id = user.id?;
+        let first_name = match user.name.as_deref() {
+            Some(name) if !name.trim().is_empty() => name.trim().to_string(),
+            _ => user
+                .email
+                .split('@')
+                .next()
+                .unwrap_or("User")
+                .to_string(),
+        };
+
+        Some(Person {
+            id: None,
+            uuid: None,
+            tenant_id: user.tenant_id,
+            user_id,
+            first_name,
+            surname: None,
+            date_of_birth: None,
+            gender: None,
+            avatar: None,
+            phone: None,
+            email: None,
+            created_at: None,
+            created_by: user.created_by.clone(),
+            updated_at: None,
+            updated_by: None,
+        })
+    }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::enums::Role;
+
+    #[test]
+    fn test_build_person_for_user_with_name() {
+        let user = User {
+            id: Some(42),
+            uuid: None,
+            email: "john.doe@example.com".to_string(),
+            name: Some("John Doe".to_string()),
+            password: "secret".to_string(),
+            enabled: true,
+            first_login: false,
+            tenant_id: Some(7),
+            role: Role::TenantUser,
+            created_at: None,
+            created_by: Some("admin".to_string()),
+            updated_at: None,
+            updated_by: None,
+        };
+
+        let person = UserUseCase::build_person_for_user(&user).expect("person should be built");
+        assert_eq!(person.user_id, 42);
+        assert_eq!(person.tenant_id, Some(7));
+        assert_eq!(person.first_name, "John Doe");
+        assert_eq!(person.surname, None);
+        assert_eq!(person.date_of_birth, None);
+        assert_eq!(person.gender, None);
+        assert_eq!(person.email, None);
+        assert_eq!(person.created_by, Some("admin".to_string()));
+    }
+
+    #[test]
+    fn test_build_person_for_user_fallback_to_email_prefix() {
+        let user = User {
+            id: Some(10),
+            uuid: None,
+            email: "alice@company.com".to_string(),
+            name: None,
+            password: "secret".to_string(),
+            enabled: true,
+            first_login: false,
+            tenant_id: None,
+            role: Role::TenantUser,
+            created_at: None,
+            created_by: None,
+            updated_at: None,
+            updated_by: None,
+        };
+
+        let person = UserUseCase::build_person_for_user(&user).expect("person should be built");
+        assert_eq!(person.user_id, 10);
+        assert_eq!(person.tenant_id, None);
+        assert_eq!(person.first_name, "alice");
+        assert_eq!(person.surname, None);
+        assert_eq!(person.date_of_birth, None);
+        assert_eq!(person.gender, None);
+        assert_eq!(person.email, None);
+    }
+
+    #[test]
+    fn test_build_person_for_user_empty_whitespace_name_fallback() {
+        let user = User {
+            id: Some(10),
+            uuid: None,
+            email: "bob@company.com".to_string(),
+            name: Some("   ".to_string()),
+            password: "secret".to_string(),
+            enabled: true,
+            first_login: false,
+            tenant_id: None,
+            role: Role::TenantUser,
+            created_at: None,
+            created_by: None,
+            updated_at: None,
+            updated_by: None,
+        };
+
+        let person = UserUseCase::build_person_for_user(&user).expect("person should be built");
+        assert_eq!(person.first_name, "bob");
+    }
+
+    #[test]
+    fn test_build_person_for_user_without_id_returns_none() {
+        let user = User {
+            id: None,
+            uuid: None,
+            email: "test@example.com".to_string(),
+            name: Some("Test".to_string()),
+            password: "secret".to_string(),
+            enabled: true,
+            first_login: false,
+            tenant_id: None,
+            role: Role::TenantUser,
+            created_at: None,
+            created_by: None,
+            updated_at: None,
+            updated_by: None,
+        };
+
+        assert!(UserUseCase::build_person_for_user(&user).is_none());
+    }
+}
+

@@ -16,6 +16,8 @@ pub mod enums;
 pub mod order_item;
 pub mod order_status_history;
 pub mod orders;
+pub mod person;
+pub mod person_address;
 pub mod product;
 pub mod product_attribute;
 pub mod product_category;

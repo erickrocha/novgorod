@@ -10,6 +10,7 @@ use crate::routes::cart_routes::cart_routes;
 use crate::routes::customer_routes::customer_routes;
 use crate::routes::marketing_routes::marketing_routes;
 use crate::routes::order_routes::order_routes;
+use crate::routes::person_routes::person_routes;
 use crate::routes::resource_routes::resources_routes;
 use crate::routes::shipping_tax_routes::shipping_tax_routes;
 use crate::routes::tenant_routes::tenant_routes;
@@ -111,6 +112,22 @@ impl Modify for SecurityAddon {
         endpoints::customer_address_endpoint::get_by_id,
         endpoints::customer_address_endpoint::add,
         endpoints::customer_address_endpoint::update,
+        endpoints::person_endpoint::list_all,
+        endpoints::person_endpoint::paged,
+        endpoints::person_endpoint::get_by_id,
+        endpoints::person_endpoint::add,
+        endpoints::person_endpoint::update,
+        endpoints::person_endpoint::delete,
+        endpoints::person_address_endpoint::list_all,
+        endpoints::person_address_endpoint::paged,
+        endpoints::person_address_endpoint::get_by_id,
+        endpoints::person_address_endpoint::by_person,
+        endpoints::person_address_endpoint::add,
+        endpoints::person_address_endpoint::update,
+        endpoints::person_address_endpoint::delete,
+        endpoints::resource_endpoint::get_profile,
+        endpoints::resource_endpoint::update_profile,
+        endpoints::resource_endpoint::presign_avatar,
         endpoints::tax_rule_endpoint::list_all,
         endpoints::tax_rule_endpoint::paged,
         endpoints::tax_rule_endpoint::get_by_id,
@@ -218,6 +235,13 @@ impl Modify for SecurityAddon {
             endpoints::json::customer_json::CustomerInputJson,
             endpoints::json::customer_json::CustomerAddressJson,
             endpoints::json::customer_json::CustomerAddressInputJson,
+            endpoints::json::person_json::PersonJson,
+            endpoints::json::person_json::PersonInputJson,
+            endpoints::json::person_json::PersonAddressJson,
+            endpoints::json::person_json::PersonAddressInputJson,
+            endpoints::json::person_json::AvatarPresignRequest,
+            endpoints::json::person_json::AvatarPresignResponse,
+            endpoints::json::person_json::ResourceProfileJson,
             endpoints::json::tax_rule_json::TaxRuleJson,
             endpoints::json::tax_rule_json::TaxRuleInputJson,
             endpoints::json::campaign_json::CampaignJson,
@@ -257,6 +281,9 @@ impl Modify for SecurityAddon {
         (name = "ShippingRate", description = "Shipping rate endpoints"),
         (name = "Customer", description = "Customer endpoints"),
         (name = "CustomerAddress", description = "Customer address endpoints"),
+        (name = "Person", description = "Person endpoints"),
+        (name = "PersonAddress", description = "Person address endpoints"),
+        (name = "Resource", description = "User profile and resource endpoints"),
         (name = "TaxRule", description = "Tax rule endpoints"),
         (name = "Campaign", description = "Marketing campaign endpoints"),
         (name = "CampaignTarget", description = "Campaign target endpoints"),
@@ -339,6 +366,7 @@ async fn start() -> anyhow::Result<()> {
         .merge(auth_routes(state.clone()))
         .merge(resources_routes(state.clone()))
         .merge(customer_routes(state.clone()))
+        .merge(person_routes(state.clone()))
         .merge(order_routes(state.clone()))
         .merge(cart_routes(state.clone()))
         .merge(marketing_routes(state.clone()))

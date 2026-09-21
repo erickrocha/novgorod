@@ -27,3 +27,5 @@ pub use super::sku_stock_entity::Entity as SkuStockEntity;
 pub use super::tax_rule_entity::Entity as TaxRuleEntity;
 pub use super::tenant_entity::Entity as TenantEntity;
 pub use super::user_entity::Entity as UserEntity;
+pub use super::person_entity::Entity as PersonEntity;
+pub use super::person_address_entity::Entity as PersonAddressEntity;

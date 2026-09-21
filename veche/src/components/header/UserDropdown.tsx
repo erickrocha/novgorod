@@ -17,7 +17,7 @@ export default function UserDropdown() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const dispatch = useAppDispatch();
-  const { user } = useAppSelector((state) => state.auth);
+  const { user, person } = useAppSelector((state) => state.auth);
   const { language: locale, setLanguage } = useLanguage();
   const currentLang = getLanguage(locale as Locale);
   const CurrentFlagIcon = currentLang.FlagIcon;
@@ -54,8 +54,14 @@ export default function UserDropdown() {
     };
   }, []);
 
-  const displayName = user?.name || user?.email?.split("@")[0] || "User";
-  const displayEmail = user?.email || "";
+  const displayName = [
+    person?.firstName || user?.name || user?.email?.split("@")[0] || "User",
+    person?.surname,
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const displayEmail = person?.email || user?.email || "";
+  const avatarUrl = person?.avatarUrl || "/images/user/owner.png";
 
   return (
     <div className="relative">
@@ -64,7 +70,7 @@ export default function UserDropdown() {
         className="dropdown-toggle text-gray-700 dark:text-gray-400 flex items-center"
       >
         <span className="me-3 h-11 w-11 overflow-hidden rounded-full">
-          <img src="/images/user/owner.png" alt="User" />
+          <img src={avatarUrl} alt="User" className="h-full w-full object-cover" />
         </span>
 
         <span className="me-1 text-theme-sm font-medium block">{displayName}</span>

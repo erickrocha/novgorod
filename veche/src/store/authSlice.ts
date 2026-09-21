@@ -1,8 +1,9 @@
 import { createAsyncThunk, createSlice } from "@reduxjs/toolkit";
 
 import { authService } from "@/services/authService";
+import { resourceService } from "@/services/resourceService";
 import { getApiErrorMessage } from "@/services/api";
-import type { AuthResponse, AuthSession } from "@/services/types";
+import type { AuthResponse, AuthSession, Person, PersonInput, ResourceProfile } from "@/services/types";
 import { ROLES } from "@/utils/enums";
 import { isTokenExpired } from "@/utils/jwt";
 import { fetchTenantById } from "./tenantSlice";
@@ -16,6 +17,7 @@ interface AuthState {
   token: string | null;
   refreshToken: string | null;
   user: AuthResponse | null;
+  person: Person | null;
   isAuthenticated: boolean;
   isInitializing: boolean;
   isSysAdmin: boolean;
@@ -31,11 +33,17 @@ const clearStoredAuth = () => {
   localStorage.removeItem("token");
   localStorage.removeItem("refreshToken");
   localStorage.removeItem("user");
+  localStorage.removeItem("person");
 };
 
 const readStoredUser = (): AuthResponse | null => {
   const storedUser = localStorage.getItem("user");
   return storedUser ? (JSON.parse(storedUser) as AuthResponse) : null;
+};
+
+const readStoredPerson = (): Person | null => {
+  const stored = localStorage.getItem("person");
+  return stored ? (JSON.parse(stored) as Person) : null;
 };
 
 const getAccessToken = (data: AuthResponse): string =>
@@ -44,6 +52,40 @@ const getRefreshToken = (data: AuthResponse): string | null =>
   data.refreshToken || data.refresh_token || null;
 const getTenantId = (data: AuthResponse): number | null | undefined =>
   data.tenantId ?? data.tenant_id;
+
+export const fetchProfile = createAsyncThunk<
+  ResourceProfile,
+  void,
+  AuthThunkConfig
+>("auth/fetchProfile", async (_, { rejectWithValue }) => {
+  try {
+    const data = await resourceService.getProfile();
+    if (data.person) {
+      localStorage.setItem("person", JSON.stringify(data.person));
+    }
+    return data;
+  } catch (error: unknown) {
+    return rejectWithValue(
+      getApiErrorMessage(error, "Falha ao carregar perfil do usuário"),
+    );
+  }
+});
+
+export const updateUserProfile = createAsyncThunk<
+  Person,
+  PersonInput,
+  AuthThunkConfig
+>("auth/updateUserProfile", async (personData, { rejectWithValue }) => {
+  try {
+    const data = await resourceService.updateProfile(personData);
+    localStorage.setItem("person", JSON.stringify(data));
+    return data;
+  } catch (error: unknown) {
+    return rejectWithValue(
+      getApiErrorMessage(error, "Falha ao atualizar perfil"),
+    );
+  }
+});
 
 export const loginUser = createAsyncThunk<
   AuthResponse,
@@ -63,6 +105,7 @@ export const loginUser = createAsyncThunk<
 
       const tenantId = getTenantId(data);
       if (tenantId) dispatch(fetchTenantById(tenantId));
+      dispatch(fetchProfile());
       return data;
     } catch (error: unknown) {
       return rejectWithValue(
@@ -89,6 +132,7 @@ export const validateOrRefreshToken = createAsyncThunk<
         const tenantId = getTenantId(storedUser);
         if (tenantId) dispatch(fetchTenantById(tenantId));
       }
+      dispatch(fetchProfile());
       return { token, refreshToken, user: storedUser };
   }
 
@@ -109,6 +153,7 @@ export const validateOrRefreshToken = createAsyncThunk<
 
       const tenantId = getTenantId(data);
       if (tenantId) dispatch(fetchTenantById(tenantId));
+      dispatch(fetchProfile());
 
       return { token: newToken, refreshToken: newRefreshToken, user: data };
     } catch (error: unknown) {
@@ -128,6 +173,7 @@ const initialState: AuthState = {
   token: localStorage.getItem("token"),
   refreshToken: localStorage.getItem("refreshToken"),
   user: initialUser,
+  person: readStoredPerson(),
   isAuthenticated: false,
   isInitializing: true,
   isSysAdmin: initialUser?.role === ROLES.SYS_ADMIN,
@@ -143,6 +189,7 @@ const authSlice = createSlice({
       state.token = null;
       state.refreshToken = null;
       state.user = null;
+      state.person = null;
       state.isAuthenticated = false;
       state.isSysAdmin = false;
       state.isInitializing = false;
@@ -187,8 +234,15 @@ const authSlice = createSlice({
         state.token = null;
         state.refreshToken = null;
         state.user = null;
+        state.person = null;
         state.isAuthenticated = false;
         state.isSysAdmin = false;
+      })
+      .addCase(fetchProfile.fulfilled, (state, action) => {
+        state.person = action.payload.person;
+      })
+      .addCase(updateUserProfile.fulfilled, (state, action) => {
+        state.person = action.payload;
       });
   },
 });

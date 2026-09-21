@@ -9,6 +9,7 @@ pub mod customer_json;
 pub mod error_response_json;
 pub mod login_request;
 pub mod orders_json;
+pub mod person_json;
 pub mod product_category_json;
 pub mod product_image_json;
 pub mod province_json;

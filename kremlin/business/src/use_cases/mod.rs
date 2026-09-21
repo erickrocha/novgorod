@@ -15,6 +15,8 @@ pub mod customer_use_case;
 pub mod order_item_use_case;
 pub mod order_status_history_use_case;
 pub mod orders_use_case;
+pub mod person_address_use_case;
+pub mod person_use_case;
 pub mod product_attribute_use_case;
 pub mod product_attribute_value_use_case;
 pub mod product_category_use_case;

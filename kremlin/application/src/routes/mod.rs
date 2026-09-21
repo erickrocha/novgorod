@@ -3,6 +3,7 @@ pub mod cart_routes;
 pub mod customer_routes;
 pub mod marketing_routes;
 pub mod order_routes;
+pub mod person_routes;
 pub mod resource_routes;
 pub mod shipping_tax_routes;
 pub mod tenant_routes;

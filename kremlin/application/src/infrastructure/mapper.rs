@@ -13,6 +13,7 @@ use crate::endpoints::json::city_json::CityJson;
 use crate::endpoints::json::coupon_json::{CouponJson, CouponRedemptionJson};
 use crate::endpoints::json::customer_json::{CustomerAddressJson, CustomerJson};
 use crate::endpoints::json::orders_json::{OrderItemJson, OrderStatusHistoryJson, OrdersJson};
+use crate::endpoints::json::person_json::{PersonAddressJson, PersonJson};
 use crate::endpoints::json::product_category_json::ProductCategoryJson;
 use crate::endpoints::json::product_image_json::ProductImageJson;
 use crate::endpoints::json::province_json::ProvinceJson;
@@ -39,6 +40,8 @@ use business::domain::enums::Role;
 use business::domain::order_item::OrderItem;
 use business::domain::order_status_history::OrderStatusHistory;
 use business::domain::orders::Orders;
+use business::domain::person::Person;
+use business::domain::person_address::PersonAddress;
 use business::domain::product::Product;
 use business::domain::product_attribute::ProductAttribute;
 use business::domain::product_category::ProductCategory;
@@ -610,6 +613,112 @@ impl Mapper<CustomerAddress, CustomerAddressJson> for CustomerAddressMapper {
             cidade: u.cidade,
             uf: u.uf,
             is_default: u.is_default,
+            created_at: u.created_at,
+            created_by: None,
+            updated_at: u.updated_at,
+            updated_by: None,
+        }
+    }
+}
+
+pub struct PersonMapper;
+impl PersonMapper {
+    pub fn json_with_storage(
+        t: Person,
+        storage: &business::gateway::storage_gateway::StorageGateway,
+    ) -> PersonJson {
+        let avatar_url = t.avatar.as_deref().map(|key| storage.get_cdn_url(key));
+        PersonJson {
+            id: t.id.unwrap_or_default(),
+            uuid: t.uuid.unwrap_or_default(),
+            tenant_id: t.tenant_id,
+            user_id: t.user_id,
+            first_name: t.first_name,
+            surname: t.surname,
+            date_of_birth: t.date_of_birth,
+            gender: t.gender,
+            avatar: t.avatar,
+            avatar_url,
+            phone: t.phone,
+            email: t.email,
+            created_at: t.created_at,
+            updated_at: t.updated_at,
+        }
+    }
+}
+
+impl Mapper<Person, PersonJson> for PersonMapper {
+    fn json(t: Person) -> PersonJson {
+        PersonJson {
+            id: t.id.unwrap_or_default(),
+            uuid: t.uuid.unwrap_or_default(),
+            tenant_id: t.tenant_id,
+            user_id: t.user_id,
+            first_name: t.first_name,
+            surname: t.surname,
+            date_of_birth: t.date_of_birth,
+            gender: t.gender,
+            avatar: t.avatar,
+            avatar_url: None,
+            phone: t.phone,
+            email: t.email,
+            created_at: t.created_at,
+            updated_at: t.updated_at,
+        }
+    }
+
+    fn domain(u: PersonJson) -> Person {
+        Person {
+            id: if u.id > 0 { Some(u.id) } else { None },
+            uuid: if u.uuid.is_empty() { None } else { Some(u.uuid) },
+            tenant_id: u.tenant_id,
+            user_id: u.user_id,
+            first_name: u.first_name,
+            surname: u.surname,
+            date_of_birth: u.date_of_birth,
+            gender: u.gender,
+            avatar: u.avatar,
+            phone: u.phone,
+            email: u.email,
+            created_at: u.created_at,
+            created_by: None,
+            updated_at: u.updated_at,
+            updated_by: None,
+        }
+    }
+}
+
+pub struct PersonAddressMapper;
+impl Mapper<PersonAddress, PersonAddressJson> for PersonAddressMapper {
+    fn json(t: PersonAddress) -> PersonAddressJson {
+        PersonAddressJson {
+            id: t.id.unwrap_or_default(),
+            uuid: t.uuid.unwrap_or_default(),
+            tenant_id: t.tenant_id,
+            person_id: t.person_id,
+            address_line1: t.address_line1,
+            address_line2: t.address_line2,
+            locality: t.locality,
+            administrative_area: t.administrative_area,
+            postal_code: t.postal_code,
+            country_code: t.country_code,
+            created_at: t.created_at,
+            updated_at: t.updated_at,
+        }
+    }
+
+    fn domain(u: PersonAddressJson) -> PersonAddress {
+        PersonAddress {
+            id: if u.id > 0 { Some(u.id) } else { None },
+            uuid: if u.uuid.is_empty() { None } else { Some(u.uuid) },
+            tenant_id: u.tenant_id,
+            person_id: u.person_id,
+            address_line1: u.address_line1,
+            address_line2: u.address_line2,
+            locality: u.locality,
+            administrative_area: u.administrative_area,
+            postal_code: u.postal_code,
+            country_code: u.country_code,
             created_at: u.created_at,
             created_by: None,
             updated_at: u.updated_at,
@@ -1303,6 +1412,93 @@ mod new_domain_mapper_tests {
         let back = SkuStockMapper::domain(json);
         assert_eq!(back.quantity, domain.quantity);
         assert_eq!(back.reserved, domain.reserved);
+    }
+
+    #[test]
+    fn test_person_mapper() {
+        let dob = chrono::NaiveDate::from_ymd_opt(1995, 3, 20).unwrap();
+        let domain = Person {
+            id: Some(1),
+            uuid: Some("abc-123".to_string()),
+            tenant_id: Some(10),
+            user_id: 100,
+            first_name: "Jane".to_string(),
+            surname: Some("Doe".to_string()),
+            date_of_birth: Some(dob),
+            gender: Some("F".to_string()),
+            avatar: Some("jane.png".to_string()),
+            phone: Some("+5511999999999".to_string()),
+            email: Some("jane@example.com".to_string()),
+            created_at: None,
+            created_by: None,
+            updated_at: None,
+            updated_by: None,
+        };
+        let json = PersonMapper::json(domain.clone());
+        assert_eq!(json.id, 1);
+        assert_eq!(json.first_name, "Jane");
+        assert_eq!(json.surname, Some("Doe".to_string()));
+        assert_eq!(json.date_of_birth, Some(dob));
+        assert_eq!(json.gender, Some("F".to_string()));
+
+        let back = PersonMapper::domain(json.clone());
+        assert_eq!(back.id, domain.id);
+        assert_eq!(back.first_name, domain.first_name);
+        assert_eq!(back.surname, domain.surname);
+        assert_eq!(back.date_of_birth, Some(dob));
+        assert_eq!(json.avatar_url, None);
+
+        let resource_profile = crate::endpoints::json::person_json::ResourceProfileJson {
+            user: crate::endpoints::json::user_json::UserJson {
+                id: Some(100),
+                uuid: Some("user-uuid".to_string()),
+                name: Some("Jane".to_string()),
+                email: "jane@example.com".to_string(),
+                password: None,
+                enabled: true,
+                first_login: false,
+                role: "TenantUser".to_string(),
+                tenant_id: Some(10),
+                created_at: None,
+                created_by: None,
+                updated_at: None,
+                updated_by: None,
+            },
+            person: Some(json),
+        };
+        let serialized = serde_json::to_string(&resource_profile).unwrap();
+        assert!(serialized.contains("\"user\":"));
+        assert!(serialized.contains("\"person\":"));
+        assert!(serialized.contains("\"avatarUrl\":null"));
+    }
+
+    #[test]
+    fn test_person_address_mapper() {
+        let domain = PersonAddress {
+            id: Some(2),
+            uuid: Some("def-456".to_string()),
+            tenant_id: Some(10),
+            person_id: 1,
+            address_line1: Some("Av Paulista 1000".to_string()),
+            address_line2: Some("Apto 101".to_string()),
+            locality: Some("Bela Vista".to_string()),
+            administrative_area: Some("SP".to_string()),
+            postal_code: Some("01310-100".to_string()),
+            country_code: Some("BR".to_string()),
+            created_at: None,
+            created_by: None,
+            updated_at: None,
+            updated_by: None,
+        };
+        let json = PersonAddressMapper::json(domain.clone());
+        assert_eq!(json.id, 2);
+        assert_eq!(json.person_id, 1);
+        assert_eq!(json.locality, Some("Bela Vista".to_string()));
+
+        let back = PersonAddressMapper::domain(json);
+        assert_eq!(back.id, domain.id);
+        assert_eq!(back.person_id, domain.person_id);
+        assert_eq!(back.locality, domain.locality);
     }
 }
 

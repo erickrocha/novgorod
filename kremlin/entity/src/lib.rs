@@ -27,3 +27,5 @@ pub mod sku_stock_entity;
 pub mod tax_rule_entity;
 pub mod tenant_entity;
 pub mod user_entity;
+pub mod person_entity;
+pub mod person_address_entity;

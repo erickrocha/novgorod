@@ -13,6 +13,8 @@ pub mod customer_gateway;
 pub mod order_item_gateway;
 pub mod order_status_history_gateway;
 pub mod orders_gateway;
+pub mod person_address_gateway;
+pub mod person_gateway;
 pub mod product_attribute_gateway;
 pub mod product_attribute_value_gateway;
 pub mod product_category_gateway;
