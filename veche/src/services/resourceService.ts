@@ -4,6 +4,8 @@ import type {
   AvatarPresignRequest,
   AvatarPresignResponse,
   Person,
+  PersonAddress,
+  PersonAddressInput,
   PersonInput,
   ResourceProfile,
 } from "./types";
@@ -17,6 +19,25 @@ export const resourceService = {
   async updateProfile(data: PersonInput): Promise<Person> {
     const res = await api.put<Person>("/resource/profile", data);
     return res.data;
+  },
+
+  async getAddressesByPerson(personId: number): Promise<PersonAddress[]> {
+    const res = await api.get<PersonAddress[]>(`/person-addresses/by-person/${personId}`);
+    return res.data;
+  },
+
+  async addAddress(data: PersonAddressInput): Promise<PersonAddress> {
+    const res = await api.post<PersonAddress>("/person-addresses", data);
+    return res.data;
+  },
+
+  async updateAddress(id: number, data: PersonAddressInput): Promise<PersonAddress> {
+    const res = await api.put<PersonAddress>(`/person-addresses/${id}`, data);
+    return res.data;
+  },
+
+  async deleteAddress(id: number): Promise<void> {
+    await api.delete(`/person-addresses/${id}`);
   },
 
   async presignAvatar(req: AvatarPresignRequest): Promise<AvatarPresignResponse> {

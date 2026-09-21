@@ -387,6 +387,38 @@ export interface Person {
   updatedAt?: string | null;
 }
 
+export const Gender = {
+  MALE: "MALE",
+  FEMALE: "FEMALE",
+} as const;
+export type Gender = (typeof Gender)[keyof typeof Gender];
+
+export interface PersonAddress {
+  id?: number | null;
+  uuid?: string | null;
+  tenantId?: number | null;
+  personId: number;
+  addressLine1?: string | null;
+  addressLine2?: string | null;
+  locality?: string | null;
+  administrativeArea?: string | null;
+  postalCode?: string | null;
+  countryCode?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}
+
+export interface PersonAddressInput {
+  tenantId?: number | null;
+  personId: number;
+  addressLine1?: string | null;
+  addressLine2?: string | null;
+  locality?: string | null;
+  administrativeArea?: string | null;
+  postalCode?: string | null;
+  countryCode?: string | null;
+}
+
 export interface PersonInput {
   tenantId?: number | null;
   userId?: number;
@@ -402,6 +434,7 @@ export interface PersonInput {
 export interface ResourceProfile {
   user: User;
   person: Person | null;
+  addresses?: PersonAddress[];
 }
 
 export interface AvatarPresignRequest {

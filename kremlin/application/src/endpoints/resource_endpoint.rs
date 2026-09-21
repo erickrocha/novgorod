@@ -7,15 +7,16 @@ use crate::endpoints::json::error_response_json::{
 use crate::endpoints::json::person_json::{
     AvatarPresignRequest, AvatarPresignResponse, PersonInputJson, PersonJson, ResourceProfileJson,
 };
-use crate::infrastructure::mapper::{Mapper, PersonMapper, UserMapper};
+use crate::infrastructure::mapper::{Mapper, PersonAddressMapper, PersonMapper, UserMapper};
 use axum::extract::{Extension, State};
 use axum::Json;
 use business::commons::entity_mapper::EntityMapper;
 use business::domain::person::{Person, PersonEntityMapper};
+use business::domain::person_address::PersonAddressEntityMapper;
 use business::domain::user::User;
 use business::sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, IntoActiveModel, NotSet, QueryFilter, Set};
 use business::use_cases::user_use_case::UserUseCase;
-use entity::person_entity;
+use entity::{person_address_entity, person_entity};
 
 fn sanitize_filename(name: &str) -> String {
     name.chars()
@@ -89,12 +90,26 @@ pub async fn get_profile(
         }
     };
 
+    let addresses = if let Some(pid) = person_domain.id {
+        let mut query = person_address_entity::Entity::find()
+            .filter(person_address_entity::Column::PersonId.eq(pid));
+        if let Some(tid) = user.tenant_id {
+            query = query.filter(person_address_entity::Column::TenantId.eq(tid));
+        }
+        let r = query.all(state.conn.as_ref()).await.unwrap_or_default();
+        let domains = PersonAddressEntityMapper::from_models(r);
+        PersonAddressMapper::json_vec(domains)
+    } else {
+        Vec::new()
+    };
+
     let person_json = PersonMapper::json_with_storage(person_domain, &state.storage);
     let user_json = UserMapper::json(user);
 
     Ok(Json(ResourceProfileJson {
         user: user_json,
         person: Some(person_json),
+        addresses,
     }))
 }
 

@@ -243,5 +243,57 @@
       "usa": "EUA",
       "france": "França"
     }
+  },
+  "profile": {
+    "title": "Perfil",
+    "personalInfo": "Informações Pessoais",
+    "edit": "Editar",
+    "editProfile": "Editar Perfil",
+    "editProfileDesc": "Atualize seus dados para manter seu perfil atualizado.",
+    "firstName": "Nome",
+    "surname": "Sobrenome",
+    "email": "E-mail",
+    "phone": "Telefone",
+    "gender": "Gênero",
+    "selectGender": "Selecione o gênero",
+    "dateOfBirth": "Data de Nascimento",
+    "avatar": "Avatar",
+    "genders": {
+      "male": "Masculino",
+      "female": "Feminino"
+    },
+    "saveChanges": "Salvar Alterações",
+    "saving": "Salvando...",
+    "close": "Fechar",
+    "cancel": "Cancelar",
+    "requiredFirstName": "O primeiro nome é obrigatório.",
+    "avatarUploadError": "Falha ao enviar avatar para o S3.",
+    "profileUpdateError": "Erro ao atualizar perfil.",
+    "address": {
+      "title": "Endereço",
+      "addAddress": "Adicionar Endereço",
+      "editAddress": "Editar Endereço",
+      "addAddressDesc": "Adicione um novo endereço ao seu perfil.",
+      "editAddressDesc": "Atualize os dados do seu endereço para manter seu perfil atualizado.",
+      "noAddresses": "Nenhum endereço cadastrado ainda.",
+      "street": "Logradouro / Rua e Número",
+      "streetPlaceholder": "Ex: Av. Paulista, 1000",
+      "complement": "Complemento / Bairro",
+      "complementPlaceholder": "Ex: Apto 101, Bela Vista",
+      "locality": "Cidade",
+      "localityPlaceholder": "Ex: São Paulo",
+      "administrativeArea": "Estado / UF",
+      "administrativeAreaPlaceholder": "Ex: SP",
+      "postalCode": "CEP",
+      "postalCodePlaceholder": "Ex: 01310-100",
+      "countryCode": "País",
+      "countryPlaceholder": "Ex: BR",
+      "delete": "Excluir",
+      "confirmDelete": "Tem certeza que deseja excluir este endereço?",
+      "saveAddress": "Salvar Endereço",
+      "saving": "Salvando...",
+      "addressSaved": "Endereço salvo com sucesso.",
+      "addressDeleted": "Endereço excluído com sucesso."
+    }
   }
 }

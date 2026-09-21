@@ -1465,10 +1465,12 @@ mod new_domain_mapper_tests {
                 updated_by: None,
             },
             person: Some(json),
+            addresses: Vec::new(),
         };
         let serialized = serde_json::to_string(&resource_profile).unwrap();
         assert!(serialized.contains("\"user\":"));
         assert!(serialized.contains("\"person\":"));
+        assert!(serialized.contains("\"addresses\":[]"));
         assert!(serialized.contains("\"avatarUrl\":null"));
     }
 

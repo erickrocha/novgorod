@@ -43,6 +43,8 @@ pub struct AvatarPresignResponse {
 pub struct ResourceProfileJson {
     pub user: UserJson,
     pub person: Option<PersonJson>,
+    #[serde(default)]
+    pub addresses: Vec<PersonAddressJson>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]

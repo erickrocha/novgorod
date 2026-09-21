@@ -1,9 +1,18 @@
 import { createAsyncThunk, createSlice } from "@reduxjs/toolkit";
+import type { PayloadAction } from "@reduxjs/toolkit";
 
 import { authService } from "@/services/authService";
 import { resourceService } from "@/services/resourceService";
 import { getApiErrorMessage } from "@/services/api";
-import type { AuthResponse, AuthSession, Person, PersonInput, ResourceProfile } from "@/services/types";
+import type {
+  AuthResponse,
+  AuthSession,
+  Person,
+  PersonAddress,
+  PersonAddressInput,
+  PersonInput,
+  ResourceProfile,
+} from "@/services/types";
 import { ROLES } from "@/utils/enums";
 import { isTokenExpired } from "@/utils/jwt";
 import { fetchTenantById } from "./tenantSlice";
@@ -18,6 +27,7 @@ interface AuthState {
   refreshToken: string | null;
   user: AuthResponse | null;
   person: Person | null;
+  addresses: PersonAddress[];
   isAuthenticated: boolean;
   isInitializing: boolean;
   isSysAdmin: boolean;
@@ -167,6 +177,63 @@ export const validateOrRefreshToken = createAsyncThunk<
   return rejectWithValue("No valid session or token expired");
 });
 
+export const fetchPersonAddresses = createAsyncThunk<
+  PersonAddress[],
+  number,
+  AuthThunkConfig
+>("auth/fetchPersonAddresses", async (personId, { rejectWithValue }) => {
+  try {
+    return await resourceService.getAddressesByPerson(personId);
+  } catch (error: unknown) {
+    return rejectWithValue(
+      getApiErrorMessage(error, "Falha ao carregar endereços"),
+    );
+  }
+});
+
+export const addPersonAddress = createAsyncThunk<
+  PersonAddress,
+  PersonAddressInput,
+  AuthThunkConfig
+>("auth/addPersonAddress", async (input, { rejectWithValue }) => {
+  try {
+    return await resourceService.addAddress(input);
+  } catch (error: unknown) {
+    return rejectWithValue(
+      getApiErrorMessage(error, "Falha ao adicionar endereço"),
+    );
+  }
+});
+
+export const updatePersonAddress = createAsyncThunk<
+  PersonAddress,
+  { id: number; input: PersonAddressInput },
+  AuthThunkConfig
+>("auth/updatePersonAddress", async ({ id, input }, { rejectWithValue }) => {
+  try {
+    return await resourceService.updateAddress(id, input);
+  } catch (error: unknown) {
+    return rejectWithValue(
+      getApiErrorMessage(error, "Falha ao atualizar endereço"),
+    );
+  }
+});
+
+export const deletePersonAddress = createAsyncThunk<
+  number,
+  number,
+  AuthThunkConfig
+>("auth/deletePersonAddress", async (id, { rejectWithValue }) => {
+  try {
+    await resourceService.deleteAddress(id);
+    return id;
+  } catch (error: unknown) {
+    return rejectWithValue(
+      getApiErrorMessage(error, "Falha ao remover endereço"),
+    );
+  }
+});
+
 const initialUser = readStoredUser();
 
 const initialState: AuthState = {
@@ -174,6 +241,7 @@ const initialState: AuthState = {
   refreshToken: localStorage.getItem("refreshToken"),
   user: initialUser,
   person: readStoredPerson(),
+  addresses: [],
   isAuthenticated: false,
   isInitializing: true,
   isSysAdmin: initialUser?.role === ROLES.SYS_ADMIN,
@@ -190,6 +258,7 @@ const authSlice = createSlice({
       state.refreshToken = null;
       state.user = null;
       state.person = null;
+      state.addresses = [];
       state.isAuthenticated = false;
       state.isSysAdmin = false;
       state.isInitializing = false;
@@ -197,6 +266,9 @@ const authSlice = createSlice({
     },
     clearError: (state) => {
       state.error = null;
+    },
+    setAddresses: (state, action: PayloadAction<PersonAddress[]>) => {
+      state.addresses = action.payload;
     },
   },
   extraReducers: (builder) => {
@@ -235,17 +307,34 @@ const authSlice = createSlice({
         state.refreshToken = null;
         state.user = null;
         state.person = null;
+        state.addresses = [];
         state.isAuthenticated = false;
         state.isSysAdmin = false;
       })
       .addCase(fetchProfile.fulfilled, (state, action) => {
         state.person = action.payload.person;
+        state.addresses = action.payload.addresses || [];
       })
       .addCase(updateUserProfile.fulfilled, (state, action) => {
         state.person = action.payload;
+      })
+      .addCase(fetchPersonAddresses.fulfilled, (state, action) => {
+        state.addresses = action.payload;
+      })
+      .addCase(addPersonAddress.fulfilled, (state, action) => {
+        state.addresses.push(action.payload);
+      })
+      .addCase(updatePersonAddress.fulfilled, (state, action) => {
+        const index = state.addresses.findIndex((a) => a.id === action.payload.id);
+        if (index !== -1) {
+          state.addresses[index] = action.payload;
+        }
+      })
+      .addCase(deletePersonAddress.fulfilled, (state, action) => {
+        state.addresses = state.addresses.filter((a) => a.id !== action.payload);
       });
   },
 });
 
-export const { logout, clearError } = authSlice.actions;
+export const { logout, clearError, setAddresses } = authSlice.actions;
 export default authSlice.reducer;

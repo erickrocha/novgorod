@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import type { ChangeEvent, FormEvent } from "react";
+import { useTranslation } from "react-i18next";
 import { useModal } from "../../hooks/useModal";
-import { PencilIcon } from "../../icons";
+import { CalenderIcon, PencilIcon } from "../../icons";
 import Input from "../form/input/InputField";
 import Label from "../form/Label";
 import Button from "../ui/button/Button";
@@ -9,8 +10,11 @@ import { Modal } from "../ui/modal";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { fetchProfile, updateUserProfile } from "@/store/authSlice";
 import { resourceService } from "@/services/resourceService";
+import { Gender } from "@/services/types";
+import { maskPhone } from "@/utils/mask";
 
 export default function UserMetaCard() {
+  const { t } = useTranslation();
   const dispatch = useAppDispatch();
   const { user, person } = useAppSelector((state) => state.auth);
   const { isOpen, openModal, closeModal } = useModal();
@@ -38,8 +42,16 @@ export default function UserMetaCard() {
       setFirstName(person?.firstName || user?.name || "");
       setSurname(person?.surname || "");
       setEmail(person?.email || user?.email || "");
-      setPhone(person?.phone || "");
-      setGender(person?.gender || "");
+      setPhone(maskPhone(person?.phone || ""));
+      // Normalize gender to enum if possible
+      const g = (person?.gender || "").toUpperCase();
+      if (g === Gender.MALE || g === "M" || g === "MASCULINO") {
+        setGender(Gender.MALE);
+      } else if (g === Gender.FEMALE || g === "F" || g === "FEMININO") {
+        setGender(Gender.FEMALE);
+      } else {
+        setGender(person?.gender || "");
+      }
       setDateOfBirth(person?.dateOfBirth || "");
       setAvatar(person?.avatar || null);
       setPreviewAvatarUrl(person?.avatarUrl || null);
@@ -63,16 +75,20 @@ export default function UserMetaCard() {
       }
     } catch (err) {
       console.error("Failed to upload avatar", err);
-      setError("Falha ao enviar avatar para o S3.");
+      setError(t("profile.avatarUploadError"));
     } finally {
       setIsUploading(false);
     }
   };
 
+  const handlePhoneChange = (e: ChangeEvent<HTMLInputElement>) => {
+    setPhone(maskPhone(e.target.value));
+  };
+
   const handleSave = async (e: FormEvent) => {
     e.preventDefault();
     if (!firstName.trim()) {
-      setError("Primeiro nome é obrigatório.");
+      setError(t("profile.requiredFirstName"));
       return;
     }
 
@@ -95,7 +111,7 @@ export default function UserMetaCard() {
       closeModal();
     } catch (err: unknown) {
       console.error("Failed to update profile", err);
-      setError(typeof err === "string" ? err : "Erro ao atualizar perfil.");
+      setError(typeof err === "string" ? err : t("profile.profileUpdateError"));
     } finally {
       setIsSaving(false);
     }
@@ -105,8 +121,13 @@ export default function UserMetaCard() {
     .filter(Boolean)
     .join(" ");
   const displayEmail = person?.email || user?.email || "—";
-  const displayPhone = person?.phone || "—";
-  const displayGender = person?.gender || "—";
+  const displayPhone = person?.phone ? maskPhone(person.phone) : "—";
+  const displayGender =
+    person?.gender?.toUpperCase() === Gender.MALE || person?.gender === "M"
+      ? t("profile.genders.male")
+      : person?.gender?.toUpperCase() === Gender.FEMALE || person?.gender === "F"
+      ? t("profile.genders.female")
+      : person?.gender || "—";
   const displayDob = person?.dateOfBirth || "—";
   const currentAvatarUrl = person?.avatarUrl || "/images/user/owner.png";
 
@@ -147,7 +168,7 @@ export default function UserMetaCard() {
             <div className="relative grid max-w-4xl grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-4 xl:gap-x-11 xl:gap-y-7">
               <div className="w-full">
                 <p className="mb-2 text-xs leading-normal text-gray-500 dark:text-gray-400">
-                  First Name
+                  {t("profile.firstName")}
                 </p>
                 <p className="text-sm font-medium text-gray-800 dark:text-white/90">
                   {person?.firstName || user?.name || "—"}
@@ -155,7 +176,7 @@ export default function UserMetaCard() {
               </div>
               <div className="w-full">
                 <p className="mb-2 text-xs leading-normal text-gray-500 dark:text-gray-400">
-                  Last Name
+                  {t("profile.surname")}
                 </p>
                 <p className="text-sm font-medium text-gray-800 dark:text-white/90">
                   {person?.surname || "—"}
@@ -163,7 +184,7 @@ export default function UserMetaCard() {
               </div>
               <div>
                 <p className="mb-2 text-xs leading-normal text-gray-500 dark:text-gray-400">
-                  Email Address
+                  {t("profile.email")}
                 </p>
                 <p className="text-sm font-medium text-gray-800 dark:text-white/90">
                   {displayEmail}
@@ -171,7 +192,7 @@ export default function UserMetaCard() {
               </div>
               <div>
                 <p className="mb-2 text-xs leading-normal text-gray-500 dark:text-gray-400">
-                  Phone
+                  {t("profile.phone")}
                 </p>
                 <p className="text-sm font-medium text-gray-800 dark:text-white/90">
                   {displayPhone}
@@ -179,7 +200,7 @@ export default function UserMetaCard() {
               </div>
               <div>
                 <p className="mb-2 text-xs leading-normal text-gray-500 dark:text-gray-400">
-                  Gender
+                  {t("profile.gender")}
                 </p>
                 <p className="text-sm font-medium text-gray-800 dark:text-white/90">
                   {displayGender}
@@ -187,7 +208,7 @@ export default function UserMetaCard() {
               </div>
               <div>
                 <p className="mb-2 text-xs leading-normal text-gray-500 dark:text-gray-400">
-                  Date of Birth
+                  {t("profile.dateOfBirth")}
                 </p>
                 <p className="text-sm font-medium text-gray-800 dark:text-white/90">
                   {displayDob}
@@ -201,7 +222,7 @@ export default function UserMetaCard() {
               className="flex h-10 w-full items-center justify-center gap-2 rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 shadow-theme-xs hover:bg-gray-50 hover:text-gray-800 lg:inline-flex lg:w-auto dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-white/3 dark:hover:text-gray-200"
             >
               <PencilIcon className="size-4.5" />
-              Edit
+              {t("profile.edit")}
             </button>
           </div>
         </div>
@@ -211,10 +232,10 @@ export default function UserMetaCard() {
         <div className="relative no-scrollbar w-full max-w-[700px] overflow-y-auto rounded-3xl bg-white p-4 lg:p-11 dark:bg-gray-900">
           <div className="px-2 pr-14">
             <h4 className="mb-2 text-2xl font-semibold text-gray-800 dark:text-white/90">
-              Edit Personal Information
+              {t("profile.editProfile")}
             </h4>
             <p className="mb-6 text-sm text-gray-500 lg:mb-7 dark:text-gray-400">
-              Update your details to keep your profile up-to-date.
+              {t("profile.editProfileDesc")}
             </p>
             {error && (
               <div className="mb-4 rounded-lg bg-red-50 p-3 text-sm text-red-600 dark:bg-red-900/20 dark:text-red-400">
@@ -226,7 +247,7 @@ export default function UserMetaCard() {
             <div className="custom-scrollbar h-[450px] overflow-y-auto px-2 pb-3">
               <div>
                 <h4 className="mb-6 text-lg font-medium text-gray-800 dark:text-white/90">
-                  Change Profile Picture
+                  {t("profile.avatar")}
                 </h4>
                 <div className="mb-6 flex max-w-sm items-center gap-6 lg:pr-5">
                   <div className="relative size-20 shrink-0 rounded-full sm:size-25">
@@ -274,8 +295,8 @@ export default function UserMetaCard() {
                   <div>
                     <p className="text-sm text-gray-500 dark:text-gray-400">
                       {isUploading
-                        ? "Enviando imagem para o S3..."
-                        : "Envie uma imagem para atualizar seu avatar."}
+                        ? t("profile.saving")
+                        : t("profile.editProfileDesc")}
                     </p>
                   </div>
                 </div>
@@ -283,67 +304,76 @@ export default function UserMetaCard() {
 
               <div className="my-7">
                 <h5 className="mb-5 text-lg font-medium text-gray-800 lg:mb-6 dark:text-white/90">
-                  Personal Information
+                  {t("profile.personalInfo")}
                 </h5>
 
                 <div className="grid grid-cols-1 gap-x-6 gap-y-5 lg:grid-cols-2">
                   <div className="col-span-2 lg:col-span-1">
-                    <Label>First Name</Label>
+                    <Label>{t("profile.firstName")} *</Label>
                     <Input
                       type="text"
                       value={firstName}
                       onChange={(e) => setFirstName(e.target.value)}
-                      placeholder="Primeiro nome"
+                      placeholder={t("profile.firstName")}
                     />
                   </div>
 
                   <div className="col-span-2 lg:col-span-1">
-                    <Label>Last Name</Label>
+                    <Label>{t("profile.surname")}</Label>
                     <Input
                       type="text"
                       value={surname}
                       onChange={(e) => setSurname(e.target.value)}
-                      placeholder="Sobrenome"
+                      placeholder={t("profile.surname")}
                     />
                   </div>
 
                   <div className="col-span-2 lg:col-span-1">
-                    <Label>Email Address</Label>
+                    <Label>{t("profile.email")}</Label>
                     <Input
                       type="email"
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
-                      placeholder="E-mail"
+                      placeholder={t("profile.email")}
                     />
                   </div>
 
                   <div className="col-span-2 lg:col-span-1">
-                    <Label>Phone</Label>
+                    <Label>{t("profile.phone")}</Label>
                     <Input
                       type="tel"
                       value={phone}
-                      onChange={(e) => setPhone(e.target.value)}
-                      placeholder="Telefone"
+                      onChange={handlePhoneChange}
+                      placeholder="(99) 99999-9999"
                     />
                   </div>
 
                   <div className="col-span-2 lg:col-span-1">
-                    <Label>Gender</Label>
-                    <Input
-                      type="text"
+                    <Label>{t("profile.gender")}</Label>
+                    <select
                       value={gender}
                       onChange={(e) => setGender(e.target.value)}
-                      placeholder="M / F / Outro"
-                    />
+                      className="h-11 w-full appearance-none rounded-lg border border-gray-300 bg-transparent px-4 py-2.5 text-sm text-gray-800 shadow-theme-xs focus:border-brand-300 focus:outline-hidden dark:border-gray-700 dark:bg-gray-900 dark:text-white/90 dark:focus:border-brand-800"
+                    >
+                      <option value="">{t("profile.selectGender")}</option>
+                      <option value={Gender.MALE}>{t("profile.genders.male")}</option>
+                      <option value={Gender.FEMALE}>{t("profile.genders.female")}</option>
+                    </select>
                   </div>
 
                   <div className="col-span-2 lg:col-span-1">
-                    <Label>Date of Birth</Label>
-                    <Input
-                      type="date"
-                      value={dateOfBirth}
-                      onChange={(e) => setDateOfBirth(e.target.value)}
-                    />
+                    <Label>{t("profile.dateOfBirth")}</Label>
+                    <div className="relative">
+                      <input
+                        type="date"
+                        value={dateOfBirth}
+                        onChange={(e) => setDateOfBirth(e.target.value)}
+                        className="h-11 w-full appearance-none rounded-lg border border-gray-300 bg-transparent py-2.5 ps-4 pe-10 text-start text-sm text-gray-800 shadow-theme-xs placeholder:text-gray-400 focus:border-brand-300 focus:ring-3 focus:ring-brand-500/20 focus:outline-hidden dark:border-gray-700 dark:bg-gray-900 dark:text-white/90 dark:placeholder:text-white/30 dark:focus:border-brand-800"
+                      />
+                      <span className="pointer-events-none absolute inset-e-3 top-1/2 -translate-y-1/2 text-gray-500 dark:text-gray-400">
+                        <CalenderIcon className="size-5" />
+                      </span>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -356,14 +386,14 @@ export default function UserMetaCard() {
                 onClick={closeModal}
                 disabled={isSaving || isUploading}
               >
-                Close
+                {t("profile.close")}
               </Button>
               <Button
                 size="sm"
                 type="submit"
                 disabled={isSaving || isUploading}
               >
-                {isSaving ? "Saving..." : "Save Changes"}
+                {isSaving ? t("profile.saving") : t("profile.saveChanges")}
               </Button>
             </div>
           </form>
@@ -372,3 +402,4 @@ export default function UserMetaCard() {
     </>
   );
 }
+
