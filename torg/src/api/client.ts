@@ -36,6 +36,10 @@ apiClient.interceptors.request.use(
 apiClient.interceptors.response.use(
   (response) => response,
   (error: AxiosError) => {
+    if (error.response?.status === 401) {
+      localStorage.removeItem('torg_customer_token');
+    }
+
     const customError: ApiError = {
       message: error.message || 'Ocorreu um erro inesperado na comunicação.',
       status: error.response?.status,

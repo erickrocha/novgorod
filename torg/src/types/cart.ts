@@ -17,6 +17,12 @@ export interface Coupon {
   minimumAmount?: number;
 }
 
+export interface ShippingQuote {
+  cost: number;
+  deliveryDays: number;
+  service: string;
+}
+
 export interface CartSummary {
   subtotal: number;
   discountAmount: number;
@@ -26,3 +32,4 @@ export interface CartSummary {
   totalItems: number;
   appliedCoupon?: Coupon | null;
 }
+

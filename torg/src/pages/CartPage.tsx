@@ -1,18 +1,26 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { Link } from 'react-router-dom';
+import { useForm } from 'react-hook-form';
+import { yupResolver } from '@hookform/resolvers/yup';
+import * as yup from 'yup';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
 import {
   updateQuantity,
   removeFromCart,
-  applyCoupon,
   removeCoupon,
-  setShipping,
   clearCart,
+  validateAndApplyCoupon,
+  estimateShipping,
 } from '../store/slices/cartSlice';
 import { addToast } from '../store/slices/uiSlice';
-import { selectCartItems, selectCartSummary, selectAppliedCoupon } from '../store';
-import cartService from '../services/cartService';
-import catalogService from '../services/catalogService';
+import {
+  selectCartItems,
+  selectCartSummary,
+  selectAppliedCoupon,
+  selectCouponLoading,
+  selectShippingLoading,
+  selectShippingDetails,
+} from '../store';
 import {
   ShoppingBag,
   Trash2,
@@ -24,38 +32,64 @@ import {
   Truck,
 } from 'lucide-react';
 import Button from '../components/common/Button';
+import { Breadcrumb } from '../components/common/Breadcrumb';
+
+interface CouponFormData {
+  code: string;
+}
+
+interface ShippingFormData {
+  cep: string;
+}
+
+const couponSchema = yup.object({
+  code: yup.string().trim().required('Informe o código do cupom'),
+});
+
+const shippingSchema = yup.object({
+  cep: yup
+    .string()
+    .trim()
+    .required('Informe o CEP')
+    .matches(/^\d{5}-?\d{3}$/, 'CEP deve estar no formato 00000-000 ou 8 dígitos'),
+});
 
 export const CartPage: React.FC = () => {
   const dispatch = useAppDispatch();
   const items = useAppSelector(selectCartItems);
   const summary = useAppSelector(selectCartSummary);
   const appliedCoupon = useAppSelector(selectAppliedCoupon);
+  const couponLoading = useAppSelector(selectCouponLoading);
+  const shippingLoading = useAppSelector(selectShippingLoading);
+  const shippingDetails = useAppSelector(selectShippingDetails);
 
-  const [couponCode, setCouponCode] = useState('');
-  const [couponLoading, setCouponLoading] = useState(false);
-  const [cep, setCep] = useState('');
-  const [shippingLoading, setShippingLoading] = useState(false);
-  const [shippingDetails, setShippingDetails] = useState<{
-    cost: number;
-    deliveryDays: number;
-    service: string;
-  } | null>(null);
+  const {
+    register: registerCoupon,
+    handleSubmit: handleSubmitCoupon,
+    reset: resetCoupon,
+    formState: { errors: couponErrors },
+  } = useForm<CouponFormData>({
+    resolver: yupResolver(couponSchema),
+  });
 
-  const handleApplyCoupon = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!couponCode.trim()) return;
+  const {
+    register: registerShipping,
+    handleSubmit: handleSubmitShipping,
+    formState: { errors: shippingErrors },
+  } = useForm<ShippingFormData>({
+    resolver: yupResolver(shippingSchema),
+  });
 
-    setCouponLoading(true);
+  const onApplyCoupon = async (data: CouponFormData) => {
     try {
-      const coupon = await catalogService.validateCoupon(couponCode.trim());
-      dispatch(applyCoupon(coupon));
+      const coupon = await dispatch(validateAndApplyCoupon(data.code)).unwrap();
       dispatch(
         addToast({
           type: 'success',
           message: `Cupom ${coupon.code} aplicado com sucesso!`,
         })
       );
-      setCouponCode('');
+      resetCoupon();
     } catch {
       dispatch(
         addToast({
@@ -63,24 +97,16 @@ export const CartPage: React.FC = () => {
           message: 'Cupom inválido ou expirado. Tente TORG10 ou NOVGOROD50',
         })
       );
-    } finally {
-      setCouponLoading(false);
     }
   };
 
-  const handleCalculateShipping = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!cep.trim()) return;
-
-    setShippingLoading(true);
+  const onCalculateShipping = async (data: ShippingFormData) => {
     try {
-      const quote = await cartService.estimateShipping(cep);
-      setShippingDetails(quote);
-      dispatch(setShipping({ amount: quote.cost, cep }));
+      const result = await dispatch(estimateShipping(data.cep)).unwrap();
       dispatch(
         addToast({
           type: 'info',
-          message: `Frete calculado: ${quote.service} - R$ ${quote.cost.toFixed(2)}`,
+          message: `Frete calculado: ${result.quote.service} - R$ ${result.quote.cost.toFixed(2)}`,
         })
       );
     } catch {
@@ -90,35 +116,38 @@ export const CartPage: React.FC = () => {
           message: 'Falha ao calcular frete para este CEP.',
         })
       );
-    } finally {
-      setShippingLoading(false);
     }
   };
 
   if (items.length === 0) {
     return (
-      <div className="max-w-4xl mx-auto px-4 py-24 text-center">
-        <div className="w-20 h-20 bg-amber-50 rounded-full flex items-center justify-center mx-auto mb-6 text-amber-600">
-          <ShoppingBag className="w-10 h-10" />
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        <Breadcrumb items={[{ label: 'Carrinho' }]} className="mb-6" />
+        <div className="max-w-4xl mx-auto px-4 py-16 text-center">
+          <div className="w-20 h-20 bg-amber-50 rounded-full flex items-center justify-center mx-auto mb-6 text-amber-600">
+            <ShoppingBag className="w-10 h-10" />
+          </div>
+          <h1 className="text-3xl font-extrabold text-slate-900 mb-2">
+            Seu Carrinho está Vazio
+          </h1>
+          <p className="text-slate-500 mb-8 max-w-md mx-auto">
+            Parece que você ainda não selecionou nenhum item. Conheça nossa seleção de vinhos, azeites e queijos artesanais.
+          </p>
+          <Link to="/catalogo">
+            <Button variant="primary" size="lg" className="gap-2 font-bold">
+              <ArrowLeft className="w-4 h-4" />
+              <span>Explorar Vitrine</span>
+            </Button>
+          </Link>
         </div>
-        <h1 className="text-3xl font-extrabold text-slate-900 mb-2">
-          Seu Carrinho está Vazio
-        </h1>
-        <p className="text-slate-500 mb-8 max-w-md mx-auto">
-          Parece que você ainda não selecionou nenhum item. Conheça nossa seleção de vinhos, azeites e queijos artesanais.
-        </p>
-        <Link to="/catalogo">
-          <Button variant="primary" size="lg" className="gap-2 font-bold">
-            <ArrowLeft className="w-4 h-4" />
-            <span>Explorar Vitrine</span>
-          </Button>
-        </Link>
       </div>
     );
   }
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 space-y-8">
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+      <Breadcrumb items={[{ label: 'Carrinho' }]} />
+
       <div className="flex items-center justify-between border-b border-slate-200 pb-6">
         <div>
           <h1 className="text-3xl font-extrabold text-slate-900 tracking-tight">
@@ -129,6 +158,7 @@ export const CartPage: React.FC = () => {
           </p>
         </div>
         <button
+          type="button"
           onClick={() => dispatch(clearCart())}
           className="text-xs font-semibold text-rose-600 hover:text-rose-700 cursor-pointer"
         >
@@ -166,6 +196,7 @@ export const CartPage: React.FC = () => {
                 {/* Stepper */}
                 <div className="flex items-center border border-slate-300 rounded-xl overflow-hidden bg-slate-50">
                   <button
+                    type="button"
                     onClick={() =>
                       dispatch(
                         updateQuantity({ id: item.id, quantity: item.quantity - 1 })
@@ -179,6 +210,7 @@ export const CartPage: React.FC = () => {
                     {item.quantity}
                   </span>
                   <button
+                    type="button"
                     onClick={() =>
                       dispatch(
                         updateQuantity({ id: item.id, quantity: item.quantity + 1 })
@@ -199,6 +231,7 @@ export const CartPage: React.FC = () => {
 
                 {/* Remove */}
                 <button
+                  type="button"
                   onClick={() => dispatch(removeFromCart(item.id))}
                   className="p-2 text-slate-400 hover:text-rose-600 transition-colors cursor-pointer"
                   title="Remover produto"
@@ -229,16 +262,16 @@ export const CartPage: React.FC = () => {
             </h2>
 
             {/* Coupon Section */}
-            <form onSubmit={handleApplyCoupon} className="space-y-2">
-              <label className="text-xs font-bold uppercase tracking-wider text-slate-500 block">
+            <form onSubmit={handleSubmitCoupon(onApplyCoupon)} className="space-y-2">
+              <label htmlFor="coupon-code" className="text-xs font-bold uppercase tracking-wider text-slate-500 block">
                 Cupom de Desconto
               </label>
               <div className="flex gap-2">
                 <input
+                  id="coupon-code"
                   type="text"
                   placeholder="Ex: TORG10"
-                  value={couponCode}
-                  onChange={(e) => setCouponCode(e.target.value.toUpperCase())}
+                  {...registerCoupon('code')}
                   className="flex-1 text-xs uppercase p-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-amber-500"
                 />
                 <Button
@@ -250,6 +283,9 @@ export const CartPage: React.FC = () => {
                   Aplicar
                 </Button>
               </div>
+              {couponErrors.code && (
+                <p className="text-xs text-rose-600 mt-1">{couponErrors.code.message}</p>
+              )}
               {appliedCoupon && (
                 <div className="flex items-center justify-between text-xs bg-emerald-50 text-emerald-800 p-2.5 rounded-xl border border-emerald-200">
                   <div className="flex items-center gap-1.5">
@@ -268,16 +304,16 @@ export const CartPage: React.FC = () => {
             </form>
 
             {/* Shipping Estimator */}
-            <form onSubmit={handleCalculateShipping} className="space-y-2 border-t border-slate-100 pt-4">
-              <label className="text-xs font-bold uppercase tracking-wider text-slate-500 block">
+            <form onSubmit={handleSubmitShipping(onCalculateShipping)} className="space-y-2 border-t border-slate-100 pt-4">
+              <label htmlFor="shipping-cep" className="text-xs font-bold uppercase tracking-wider text-slate-500 block">
                 Calcular Frete Climatizado
               </label>
               <div className="flex gap-2">
                 <input
+                  id="shipping-cep"
                   type="text"
                   placeholder="00000-000"
-                  value={cep}
-                  onChange={(e) => setCep(e.target.value)}
+                  {...registerShipping('cep')}
                   className="flex-1 text-xs p-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-amber-500"
                 />
                 <Button
@@ -289,6 +325,9 @@ export const CartPage: React.FC = () => {
                   Calcular
                 </Button>
               </div>
+              {shippingErrors.cep && (
+                <p className="text-xs text-rose-600 mt-1">{shippingErrors.cep.message}</p>
+              )}
               {shippingDetails && (
                 <p className="text-xs text-slate-600 mt-1 flex items-center gap-1">
                   <Truck className="w-3.5 h-3.5 text-amber-600" />

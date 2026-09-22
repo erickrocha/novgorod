@@ -7,6 +7,7 @@ import { addToast } from '../store/slices/uiSlice';
 import ProductCard from '../components/product/ProductCard';
 import Button from '../components/common/Button';
 import Badge from '../components/common/Badge';
+import { Breadcrumb } from '../components/common/Breadcrumb';
 import {
   Star,
   ShoppingBag,
@@ -14,6 +15,7 @@ import {
   ShieldCheck,
   RotateCcw,
 } from 'lucide-react';
+
 
 export const ProductDetail: React.FC = () => {
   const { slug } = useParams<{ slug: string }>();
@@ -93,21 +95,17 @@ export const ProductDetail: React.FC = () => {
   };
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 space-y-16">
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-12">
       {/* Breadcrumb Navigation */}
-      <div className="flex items-center gap-2 text-xs font-semibold text-slate-500">
-        <Link to="/" className="hover:text-amber-700 transition-colors">
-          Início
-        </Link>
-        <span>/</span>
-        <Link to="/catalogo" className="hover:text-amber-700 transition-colors">
-          Catálogo
-        </Link>
-        <span>/</span>
-        <span className="text-slate-900 truncate max-w-xs">{selectedProduct.name}</span>
-      </div>
+      <Breadcrumb
+        items={[
+          { label: 'Catálogo', href: '/catalogo' },
+          { label: selectedProduct.name },
+        ]}
+      />
 
       {/* Main Product Info Grid */}
+
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 items-start">
         {/* Gallery */}
         <div className="lg:col-span-6 space-y-4">

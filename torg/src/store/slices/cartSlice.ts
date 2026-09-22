@@ -1,12 +1,19 @@
-import { createSlice, type PayloadAction } from '@reduxjs/toolkit';
-import type { CartItem, Product, ProductVariant, Coupon } from '../../types';
+import { createSlice, createAsyncThunk, type PayloadAction } from '@reduxjs/toolkit';
+import type { CartItem, Product, ProductVariant, Coupon, ShippingQuote } from '../../types';
+import catalogService from '../../services/catalogService';
+import cartService from '../../services/cartService';
 
-interface CartState {
+export interface CartState {
   items: CartItem[];
   isOpen: boolean;
   appliedCoupon: Coupon | null;
+  couponLoading: boolean;
+  couponError: string | null;
   shippingAmount: number;
   shippingCep: string;
+  shippingLoading: boolean;
+  shippingError: string | null;
+  shippingDetails: ShippingQuote | null;
 }
 
 const STORAGE_KEY = 'torg_cart_items';
@@ -32,9 +39,40 @@ const initialState: CartState = {
   items: loadSavedCart(),
   isOpen: false,
   appliedCoupon: null,
+  couponLoading: false,
+  couponError: null,
   shippingAmount: 0,
   shippingCep: '',
+  shippingLoading: false,
+  shippingError: null,
+  shippingDetails: null,
 };
+
+export const validateAndApplyCoupon = createAsyncThunk(
+  'cart/validateAndApplyCoupon',
+  async (code: string, { rejectWithValue }) => {
+    try {
+      const coupon = await catalogService.validateCoupon(code.trim());
+      return coupon;
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Cupom inválido ou expirado';
+      return rejectWithValue(message);
+    }
+  }
+);
+
+export const estimateShipping = createAsyncThunk(
+  'cart/estimateShipping',
+  async (cep: string, { rejectWithValue }) => {
+    try {
+      const quote = await cartService.estimateShipping(cep.trim());
+      return { quote, cep: cep.trim() };
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Falha ao calcular frete para este CEP';
+      return rejectWithValue(message);
+    }
+  }
+);
 
 export const cartSlice = createSlice({
   name: 'cart',
@@ -65,7 +103,7 @@ export const cartSlice = createSlice({
       }
 
       saveCart(state.items);
-      state.isOpen = true; // Automatically open cart drawer for immediate user feedback
+      state.isOpen = true;
     },
 
     removeFromCart: (state, action: PayloadAction<string>) => {
@@ -94,6 +132,8 @@ export const cartSlice = createSlice({
       state.items = [];
       state.appliedCoupon = null;
       state.shippingAmount = 0;
+      state.shippingCep = '';
+      state.shippingDetails = null;
       saveCart([]);
     },
 
@@ -111,19 +151,57 @@ export const cartSlice = createSlice({
 
     applyCoupon: (state, action: PayloadAction<Coupon>) => {
       state.appliedCoupon = action.payload;
+      state.couponError = null;
     },
 
     removeCoupon: (state) => {
       state.appliedCoupon = null;
+      state.couponError = null;
     },
 
     setShipping: (
       state,
-      action: PayloadAction<{ amount: number; cep: string }>
+      action: PayloadAction<{ amount: number; cep: string; details?: ShippingQuote }>
     ) => {
       state.shippingAmount = action.payload.amount;
       state.shippingCep = action.payload.cep;
+      if (action.payload.details) {
+        state.shippingDetails = action.payload.details;
+      }
     },
+  },
+  extraReducers: (builder) => {
+    // Coupon
+    builder.addCase(validateAndApplyCoupon.pending, (state) => {
+      state.couponLoading = true;
+      state.couponError = null;
+    });
+    builder.addCase(validateAndApplyCoupon.fulfilled, (state, action) => {
+      state.couponLoading = false;
+      state.appliedCoupon = action.payload;
+      state.couponError = null;
+    });
+    builder.addCase(validateAndApplyCoupon.rejected, (state, action) => {
+      state.couponLoading = false;
+      state.couponError = action.payload as string;
+    });
+
+    // Shipping
+    builder.addCase(estimateShipping.pending, (state) => {
+      state.shippingLoading = true;
+      state.shippingError = null;
+    });
+    builder.addCase(estimateShipping.fulfilled, (state, action) => {
+      state.shippingLoading = false;
+      state.shippingAmount = action.payload.quote.cost;
+      state.shippingCep = action.payload.cep;
+      state.shippingDetails = action.payload.quote;
+      state.shippingError = null;
+    });
+    builder.addCase(estimateShipping.rejected, (state, action) => {
+      state.shippingLoading = false;
+      state.shippingError = action.payload as string;
+    });
   },
 });
 

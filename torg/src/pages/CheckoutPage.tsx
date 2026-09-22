@@ -1,10 +1,14 @@
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
+import { useForm, Controller } from 'react-hook-form';
+import { yupResolver } from '@hookform/resolvers/yup';
+import * as yup from 'yup';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
-import { selectCartItems, selectCartSummary } from '../store';
+import { selectCartItems, selectCartSummary, selectShippingCep } from '../store';
 import { clearCart } from '../store/slices/cartSlice';
 import { addToast } from '../store/slices/uiSlice';
 import Button from '../components/common/Button';
+import { Breadcrumb } from '../components/common/Breadcrumb';
 import {
   ShieldCheck,
   CreditCard,
@@ -15,44 +19,80 @@ import {
   ArrowLeft,
 } from 'lucide-react';
 
+interface CheckoutFormData {
+  name: string;
+  email: string;
+  phone: string;
+  postalCode: string;
+  street: string;
+  number: string;
+  neighborhood: string;
+  city: string;
+  state: string;
+  paymentMethod: 'pix' | 'credit' | 'boleto';
+}
+
+const checkoutSchema = yup.object({
+  name: yup.string().trim().min(3, 'Nome deve ter no mínimo 3 caracteres').required('Nome é obrigatório'),
+  email: yup.string().trim().email('E-mail inválido').required('E-mail é obrigatório'),
+  phone: yup.string().trim().min(8, 'Telefone inválido').required('Telefone é obrigatório'),
+  postalCode: yup
+    .string()
+    .trim()
+    .required('CEP é obrigatório')
+    .matches(/^\d{5}-?\d{3}$/, 'CEP deve ter 8 dígitos'),
+  street: yup.string().trim().required('Rua/Avenida é obrigatória'),
+  number: yup.string().trim().required('Número é obrigatório'),
+  neighborhood: yup.string().trim().required('Bairro é obrigatório'),
+  city: yup.string().trim().required('Cidade é obrigatória'),
+  state: yup.string().trim().required('Estado é obrigatório'),
+  paymentMethod: yup
+    .string()
+    .oneOf(['pix', 'credit', 'boleto'] as const)
+    .required('Selecione um método de pagamento'),
+});
+
 export const CheckoutPage: React.FC = () => {
   const dispatch = useAppDispatch();
   const items = useAppSelector(selectCartItems);
   const summary = useAppSelector(selectCartSummary);
+  const savedCep = useAppSelector(selectShippingCep);
 
-  const [paymentMethod, setPaymentMethod] = useState<'pix' | 'credit' | 'boleto'>('pix');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [orderCompleted, setOrderCompleted] = useState(false);
   const [orderNumber, setOrderNumber] = useState('');
+  const [completedPaymentMethod, setCompletedPaymentMethod] = useState<'pix' | 'credit' | 'boleto'>('pix');
 
-  // Form states
-  const [formData, setFormData] = useState({
-    name: '',
-    email: '',
-    phone: '',
-    street: '',
-    number: '',
-    neighborhood: '',
-    city: 'São Paulo',
-    state: 'SP',
-    postalCode: '01310-100',
+  const {
+    register,
+    handleSubmit,
+    control,
+    formState: { errors },
+  } = useForm<CheckoutFormData>({
+    resolver: yupResolver(checkoutSchema),
+    defaultValues: {
+      name: '',
+      email: '',
+      phone: '',
+      postalCode: savedCep || '01310-100',
+      street: '',
+      number: '',
+      neighborhood: '',
+      city: 'São Paulo',
+      state: 'SP',
+      paymentMethod: 'pix',
+    },
   });
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setFormData({
-      ...formData,
-      [e.target.name]: e.target.value,
-    });
-  };
 
-  const handlePlaceOrder = (e: React.FormEvent) => {
-    e.preventDefault();
+  const onSubmit = (data: CheckoutFormData) => {
     setIsSubmitting(true);
 
     setTimeout(() => {
       setIsSubmitting(false);
       const generatedOrder = `TRG-${Math.floor(100000 + Math.random() * 900000)}`;
       setOrderNumber(generatedOrder);
+      setCompletedPaymentMethod(data.paymentMethod);
       setOrderCompleted(true);
       dispatch(clearCart());
       dispatch(
@@ -66,42 +106,53 @@ export const CheckoutPage: React.FC = () => {
 
   if (orderCompleted) {
     return (
-      <div className="max-w-2xl mx-auto px-4 py-20 text-center space-y-6">
-        <div className="w-20 h-20 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto shadow-inner">
-          <CheckCircle className="w-10 h-10" />
-        </div>
-        <h1 className="text-3xl font-extrabold text-slate-950">
-          Pedido Realizado com Sucesso!
-        </h1>
-        <p className="text-slate-600 max-w-md mx-auto">
-          Obrigado por comprar no Mercado Torg. Seu pedido <strong className="text-slate-900">#{orderNumber}</strong> foi registrado e enviado para o núcleo de processamento Novgorod.
-        </p>
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        <Breadcrumb
+          items={[
+            { label: 'Carrinho', href: '/carrinho' },
+            { label: 'Checkout', href: '/checkout' },
+            { label: 'Confirmação' },
+          ]}
+          className="mb-6"
+        />
 
-        <div className="p-6 bg-white rounded-3xl border border-slate-200/80 max-w-md mx-auto text-left space-y-3 text-sm">
-          <div className="flex justify-between border-b pb-2">
-            <span className="text-slate-500">Número do Pedido:</span>
-            <span className="font-bold text-slate-900">{orderNumber}</span>
+        <div className="max-w-2xl mx-auto py-12 text-center space-y-6">
+          <div className="w-20 h-20 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto shadow-inner">
+            <CheckCircle className="w-10 h-10" />
           </div>
-          <div className="flex justify-between border-b pb-2">
-            <span className="text-slate-500">Método de Pagamento:</span>
-            <span className="font-bold text-slate-900 uppercase">{paymentMethod}</span>
-          </div>
-          <div className="flex justify-between border-b pb-2">
-            <span className="text-slate-500">Valor Total:</span>
-            <span className="font-bold text-amber-700">R$ {summary.total.toFixed(2).replace('.', ',')}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-slate-500">Status:</span>
-            <span className="font-bold text-emerald-600">Aguardando Confirmação</span>
-          </div>
-        </div>
+          <h1 className="text-3xl font-extrabold text-slate-950">
+            Pedido Realizado com Sucesso!
+          </h1>
+          <p className="text-slate-600 max-w-md mx-auto">
+            Obrigado por comprar no Mercado Torg. Seu pedido <strong className="text-slate-900">#{orderNumber}</strong> foi registrado e enviado para o núcleo de processamento Novgorod.
+          </p>
 
-        <div className="pt-4">
-          <Link to="/">
-            <Button variant="primary" size="lg" className="font-bold">
-              Retornar à Página Inicial
-            </Button>
-          </Link>
+          <div className="p-6 bg-white rounded-3xl border border-slate-200/80 max-w-md mx-auto text-left space-y-3 text-sm">
+            <div className="flex justify-between border-b pb-2">
+              <span className="text-slate-500">Número do Pedido:</span>
+              <span className="font-bold text-slate-900">{orderNumber}</span>
+            </div>
+            <div className="flex justify-between border-b pb-2">
+              <span className="text-slate-500">Método de Pagamento:</span>
+              <span className="font-bold text-slate-900 uppercase">{completedPaymentMethod}</span>
+            </div>
+            <div className="flex justify-between border-b pb-2">
+              <span className="text-slate-500">Valor Total:</span>
+              <span className="font-bold text-amber-700">R$ {summary.total.toFixed(2).replace('.', ',')}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-slate-500">Status:</span>
+              <span className="font-bold text-emerald-600">Aguardando Confirmação</span>
+            </div>
+          </div>
+
+          <div className="pt-4">
+            <Link to="/">
+              <Button variant="primary" size="lg" className="font-bold">
+                Retornar à Página Inicial
+              </Button>
+            </Link>
+          </div>
         </div>
       </div>
     );
@@ -109,35 +160,47 @@ export const CheckoutPage: React.FC = () => {
 
   if (items.length === 0) {
     return (
-      <div className="max-w-4xl mx-auto px-4 py-20 text-center">
-        <h2 className="text-2xl font-bold text-slate-900">Seu carrinho está vazio</h2>
-        <p className="text-slate-500 mt-2 mb-6">Adicione produtos antes de ir para o checkout.</p>
-        <Link to="/catalogo">
-          <Button variant="primary">Ver Catálogo</Button>
-        </Link>
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        <Breadcrumb items={[{ label: 'Carrinho', href: '/carrinho' }, { label: 'Checkout' }]} className="mb-6" />
+        <div className="max-w-4xl mx-auto py-16 text-center">
+          <h2 className="text-2xl font-bold text-slate-900">Seu carrinho está vazio</h2>
+          <p className="text-slate-500 mt-2 mb-6">Adicione produtos antes de ir para o checkout.</p>
+          <Link to="/catalogo">
+            <Button variant="primary">Ver Catálogo</Button>
+          </Link>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 space-y-8">
-      <div className="border-b border-slate-200 pb-6">
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+      <Breadcrumb
+        items={[
+          { label: 'Carrinho', href: '/carrinho' },
+          { label: 'Checkout' },
+        ]}
+      />
+
+      <div className="border-b border-slate-200 pb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-extrabold text-slate-950 tracking-tight">
+            Finalização de Compra (Checkout)
+          </h1>
+          <p className="text-sm text-slate-500 mt-0.5">
+            Preencha seus dados de entrega e selecione a forma de pagamento seguro.
+          </p>
+        </div>
         <Link
           to="/carrinho"
-          className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-500 hover:text-amber-700 mb-2 transition-colors"
+          className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-600 hover:text-amber-700 transition-colors"
         >
           <ArrowLeft className="w-4 h-4" />
           <span>Voltar ao Carrinho</span>
         </Link>
-        <h1 className="text-3xl font-extrabold text-slate-950 tracking-tight">
-          Finalização de Compra (Checkout)
-        </h1>
-        <p className="text-sm text-slate-500 mt-0.5">
-          Preencha seus dados de entrega e selecione a forma de pagamento.
-        </p>
       </div>
 
-      <form onSubmit={handlePlaceOrder} className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+      <form onSubmit={handleSubmit(onSubmit)} className="grid grid-cols-1 lg:grid-cols-12 gap-8">
         {/* Forms column */}
         <div className="lg:col-span-8 space-y-6">
           {/* Customer info */}
@@ -147,40 +210,55 @@ export const CheckoutPage: React.FC = () => {
             </h2>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
               <div className="sm:col-span-2">
-                <label className="text-xs font-semibold text-slate-700 block mb-1">Nome Completo</label>
+                <label htmlFor="customer-name" className="text-xs font-semibold text-slate-700 block mb-1">
+                  Nome Completo
+                </label>
                 <input
+                  id="customer-name"
                   type="text"
-                  name="name"
-                  required
                   placeholder="Ex: João da Silva"
-                  value={formData.name}
-                  onChange={handleInputChange}
-                  className="w-full p-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-amber-500 text-sm"
+                  {...register('name')}
+                  className={`w-full p-2.5 rounded-xl border text-sm focus:outline-none ${
+                    errors.name ? 'border-rose-500' : 'border-slate-200 focus:border-amber-500'
+                  }`}
                 />
+                {errors.name && (
+                  <p className="text-xs text-rose-600 mt-1">{errors.name.message}</p>
+                )}
               </div>
               <div>
-                <label className="text-xs font-semibold text-slate-700 block mb-1">E-mail</label>
+                <label htmlFor="customer-email" className="text-xs font-semibold text-slate-700 block mb-1">
+                  E-mail
+                </label>
                 <input
+                  id="customer-email"
                   type="email"
-                  name="email"
-                  required
                   placeholder="joao@exemplo.com"
-                  value={formData.email}
-                  onChange={handleInputChange}
-                  className="w-full p-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-amber-500 text-sm"
+                  {...register('email')}
+                  className={`w-full p-2.5 rounded-xl border text-sm focus:outline-none ${
+                    errors.email ? 'border-rose-500' : 'border-slate-200 focus:border-amber-500'
+                  }`}
                 />
+                {errors.email && (
+                  <p className="text-xs text-rose-600 mt-1">{errors.email.message}</p>
+                )}
               </div>
               <div>
-                <label className="text-xs font-semibold text-slate-700 block mb-1">Telefone / WhatsApp</label>
+                <label htmlFor="customer-phone" className="text-xs font-semibold text-slate-700 block mb-1">
+                  Telefone / WhatsApp
+                </label>
                 <input
+                  id="customer-phone"
                   type="tel"
-                  name="phone"
-                  required
                   placeholder="(11) 99999-9999"
-                  value={formData.phone}
-                  onChange={handleInputChange}
-                  className="w-full p-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-amber-500 text-sm"
+                  {...register('phone')}
+                  className={`w-full p-2.5 rounded-xl border text-sm focus:outline-none ${
+                    errors.phone ? 'border-rose-500' : 'border-slate-200 focus:border-amber-500'
+                  }`}
                 />
+                {errors.phone && (
+                  <p className="text-xs text-rose-600 mt-1">{errors.phone.message}</p>
+                )}
               </div>
             </div>
           </div>
@@ -193,62 +271,89 @@ export const CheckoutPage: React.FC = () => {
             </h2>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-sm">
               <div>
-                <label className="text-xs font-semibold text-slate-700 block mb-1">CEP</label>
+                <label htmlFor="shipping-postal-code" className="text-xs font-semibold text-slate-700 block mb-1">
+                  CEP
+                </label>
                 <input
+                  id="shipping-postal-code"
                   type="text"
-                  name="postalCode"
-                  required
-                  value={formData.postalCode}
-                  onChange={handleInputChange}
-                  className="w-full p-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-amber-500 text-sm"
+                  placeholder="00000-000"
+                  {...register('postalCode')}
+                  className={`w-full p-2.5 rounded-xl border text-sm focus:outline-none ${
+                    errors.postalCode ? 'border-rose-500' : 'border-slate-200 focus:border-amber-500'
+                  }`}
                 />
+                {errors.postalCode && (
+                  <p className="text-xs text-rose-600 mt-1">{errors.postalCode.message}</p>
+                )}
               </div>
               <div className="sm:col-span-2">
-                <label className="text-xs font-semibold text-slate-700 block mb-1">Rua / Avenida</label>
+                <label htmlFor="shipping-street" className="text-xs font-semibold text-slate-700 block mb-1">
+                  Rua / Avenida
+                </label>
                 <input
+                  id="shipping-street"
                   type="text"
-                  name="street"
-                  required
                   placeholder="Av. Paulista"
-                  value={formData.street}
-                  onChange={handleInputChange}
-                  className="w-full p-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-amber-500 text-sm"
+                  {...register('street')}
+                  className={`w-full p-2.5 rounded-xl border text-sm focus:outline-none ${
+                    errors.street ? 'border-rose-500' : 'border-slate-200 focus:border-amber-500'
+                  }`}
                 />
+                {errors.street && (
+                  <p className="text-xs text-rose-600 mt-1">{errors.street.message}</p>
+                )}
               </div>
               <div>
-                <label className="text-xs font-semibold text-slate-700 block mb-1">Número</label>
+                <label htmlFor="shipping-number" className="text-xs font-semibold text-slate-700 block mb-1">
+                  Número
+                </label>
                 <input
+                  id="shipping-number"
                   type="text"
-                  name="number"
-                  required
                   placeholder="1000"
-                  value={formData.number}
-                  onChange={handleInputChange}
-                  className="w-full p-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-amber-500 text-sm"
+                  {...register('number')}
+                  className={`w-full p-2.5 rounded-xl border text-sm focus:outline-none ${
+                    errors.number ? 'border-rose-500' : 'border-slate-200 focus:border-amber-500'
+                  }`}
                 />
+                {errors.number && (
+                  <p className="text-xs text-rose-600 mt-1">{errors.number.message}</p>
+                )}
               </div>
               <div>
-                <label className="text-xs font-semibold text-slate-700 block mb-1">Bairro</label>
+                <label htmlFor="shipping-neighborhood" className="text-xs font-semibold text-slate-700 block mb-1">
+                  Bairro
+                </label>
                 <input
+                  id="shipping-neighborhood"
                   type="text"
-                  name="neighborhood"
-                  required
                   placeholder="Bela Vista"
-                  value={formData.neighborhood}
-                  onChange={handleInputChange}
-                  className="w-full p-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-amber-500 text-sm"
+                  {...register('neighborhood')}
+                  className={`w-full p-2.5 rounded-xl border text-sm focus:outline-none ${
+                    errors.neighborhood ? 'border-rose-500' : 'border-slate-200 focus:border-amber-500'
+                  }`}
                 />
+                {errors.neighborhood && (
+                  <p className="text-xs text-rose-600 mt-1">{errors.neighborhood.message}</p>
+                )}
               </div>
               <div>
-                <label className="text-xs font-semibold text-slate-700 block mb-1">Cidade / UF</label>
+                <label htmlFor="shipping-city" className="text-xs font-semibold text-slate-700 block mb-1">
+                  Cidade
+                </label>
                 <input
+                  id="shipping-city"
                   type="text"
-                  name="city"
-                  required
-                  value={`${formData.city} - ${formData.state}`}
-                  onChange={handleInputChange}
-                  className="w-full p-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-amber-500 text-sm"
+                  placeholder="São Paulo"
+                  {...register('city')}
+                  className={`w-full p-2.5 rounded-xl border text-sm focus:outline-none ${
+                    errors.city ? 'border-rose-500' : 'border-slate-200 focus:border-amber-500'
+                  }`}
                 />
+                {errors.city && (
+                  <p className="text-xs text-rose-600 mt-1">{errors.city.message}</p>
+                )}
               </div>
             </div>
           </div>
@@ -260,60 +365,69 @@ export const CheckoutPage: React.FC = () => {
               <span>3. Método de Pagamento Seguro</span>
             </h2>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <button
-                type="button"
-                onClick={() => setPaymentMethod('pix')}
-                className={`p-4 rounded-2xl border-2 text-left flex flex-col justify-between transition-all cursor-pointer ${
-                  paymentMethod === 'pix'
-                    ? 'border-amber-600 bg-amber-50/50 text-slate-950'
-                    : 'border-slate-200 hover:border-slate-300 text-slate-600'
-                }`}
-              >
-                <div className="flex items-center justify-between mb-2">
-                  <QrCode className="w-6 h-6 text-amber-600" />
-                  <span className="text-[10px] font-bold uppercase bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full">
-                    Aprovação Instantânea
-                  </span>
-                </div>
-                <div>
-                  <div className="font-bold text-sm text-slate-900">PIX</div>
-                  <p className="text-xs text-slate-500">Chave QR Code instantânea</p>
-                </div>
-              </button>
+            <Controller
+              name="paymentMethod"
+              control={control}
+              render={({ field }) => (
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => field.onChange('pix')}
+                    className={`p-4 rounded-2xl border-2 text-left flex flex-col justify-between transition-all cursor-pointer ${
+                      field.value === 'pix'
+                        ? 'border-amber-600 bg-amber-50/50 text-slate-950 ring-2 ring-amber-600/20'
+                        : 'border-slate-200 hover:border-slate-300 text-slate-600'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-2">
+                      <QrCode className="w-6 h-6 text-amber-600" />
+                      <span className="text-[10px] font-bold uppercase bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full">
+                        Instantâneo
+                      </span>
+                    </div>
+                    <div>
+                      <div className="font-bold text-sm text-slate-900">PIX</div>
+                      <p className="text-xs text-slate-500">Chave QR Code instantânea</p>
+                    </div>
+                  </button>
 
-              <button
-                type="button"
-                onClick={() => setPaymentMethod('credit')}
-                className={`p-4 rounded-2xl border-2 text-left flex flex-col justify-between transition-all cursor-pointer ${
-                  paymentMethod === 'credit'
-                    ? 'border-amber-600 bg-amber-50/50 text-slate-950'
-                    : 'border-slate-200 hover:border-slate-300 text-slate-600'
-                }`}
-              >
-                <CreditCard className="w-6 h-6 text-amber-600 mb-2" />
-                <div>
-                  <div className="font-bold text-sm text-slate-900">Cartão de Crédito</div>
-                  <p className="text-xs text-slate-500">Até 6x sem juros</p>
-                </div>
-              </button>
+                  <button
+                    type="button"
+                    onClick={() => field.onChange('credit')}
+                    className={`p-4 rounded-2xl border-2 text-left flex flex-col justify-between transition-all cursor-pointer ${
+                      field.value === 'credit'
+                        ? 'border-amber-600 bg-amber-50/50 text-slate-950 ring-2 ring-amber-600/20'
+                        : 'border-slate-200 hover:border-slate-300 text-slate-600'
+                    }`}
+                  >
+                    <CreditCard className="w-6 h-6 text-amber-600 mb-2" />
+                    <div>
+                      <div className="font-bold text-sm text-slate-900">Cartão de Crédito</div>
+                      <p className="text-xs text-slate-500">Até 6x sem juros</p>
+                    </div>
+                  </button>
 
-              <button
-                type="button"
-                onClick={() => setPaymentMethod('boleto')}
-                className={`p-4 rounded-2xl border-2 text-left flex flex-col justify-between transition-all cursor-pointer ${
-                  paymentMethod === 'boleto'
-                    ? 'border-amber-600 bg-amber-50/50 text-slate-950'
-                    : 'border-slate-200 hover:border-slate-300 text-slate-600'
-                }`}
-              >
-                <FileText className="w-6 h-6 text-amber-600 mb-2" />
-                <div>
-                  <div className="font-bold text-sm text-slate-900">Boleto Bancário</div>
-                  <p className="text-xs text-slate-500">Compensação em 1 dia útil</p>
+                  <button
+                    type="button"
+                    onClick={() => field.onChange('boleto')}
+                    className={`p-4 rounded-2xl border-2 text-left flex flex-col justify-between transition-all cursor-pointer ${
+                      field.value === 'boleto'
+                        ? 'border-amber-600 bg-amber-50/50 text-slate-950 ring-2 ring-amber-600/20'
+                        : 'border-slate-200 hover:border-slate-300 text-slate-600'
+                    }`}
+                  >
+                    <FileText className="w-6 h-6 text-amber-600 mb-2" />
+                    <div>
+                      <div className="font-bold text-sm text-slate-900">Boleto Bancário</div>
+                      <p className="text-xs text-slate-500">Compensação em 1 dia útil</p>
+                    </div>
+                  </button>
                 </div>
-              </button>
-            </div>
+              )}
+            />
+            {errors.paymentMethod && (
+              <p className="text-xs text-rose-600 mt-1">{errors.paymentMethod.message}</p>
+            )}
           </div>
         </div>
 
@@ -367,16 +481,28 @@ export const CheckoutPage: React.FC = () => {
               </div>
             </div>
 
-            {/* Submit */}
-            <Button
-              type="submit"
-              variant="primary"
-              size="lg"
-              isLoading={isSubmitting}
-              className="w-full font-bold shadow-md mt-4"
-            >
-              Confirmar e Pagar
-            </Button>
+            {/* Actions: Cancel / Back on left, Submit on right */}
+            <div className="pt-4 flex flex-col gap-2">
+              <Button
+                type="submit"
+                variant="primary"
+                size="lg"
+                isLoading={isSubmitting}
+                className="w-full font-bold shadow-md"
+              >
+                Confirmar e Pagar
+              </Button>
+              <Link to="/carrinho" className="w-full">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="md"
+                  className="w-full text-slate-500 hover:text-slate-700 text-xs"
+                >
+                  Voltar e revisar carrinho
+                </Button>
+              </Link>
+            </div>
           </div>
         </div>
       </form>

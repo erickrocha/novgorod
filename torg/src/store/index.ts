@@ -16,11 +16,16 @@ export const store = configureStore({
 export type RootState = ReturnType<typeof store.getState>;
 export type AppDispatch = typeof store.dispatch;
 
-// Helper selectors
 export const selectCartItems = (state: RootState) => state.cart.items;
 export const selectCartIsOpen = (state: RootState) => state.cart.isOpen;
 export const selectAppliedCoupon = (state: RootState) => state.cart.appliedCoupon;
+export const selectCouponLoading = (state: RootState) => state.cart.couponLoading;
+export const selectCouponError = (state: RootState) => state.cart.couponError;
 export const selectShippingAmount = (state: RootState) => state.cart.shippingAmount;
+export const selectShippingCep = (state: RootState) => state.cart.shippingCep;
+export const selectShippingLoading = (state: RootState) => state.cart.shippingLoading;
+export const selectShippingError = (state: RootState) => state.cart.shippingError;
+export const selectShippingDetails = (state: RootState) => state.cart.shippingDetails;
 
 export const selectCartSummary = createSelector(
   [
