@@ -14,7 +14,7 @@ import { ROLES } from "@/utils/enums";
 import { formatPhone } from "@/utils/taxId";
 import type { Tenant } from "@/services/types";
 
-export default function Tenants() {
+export function Tenants() {
   const { t } = useTranslation();
   const [searchParams, setSearchParams] = useSearchParams();
   const dispatch = useAppDispatch();
@@ -160,3 +160,5 @@ export default function Tenants() {
     </>
   );
 }
+
+export default Tenants;

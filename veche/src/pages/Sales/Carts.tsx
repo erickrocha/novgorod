@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { Eye, Package, RefreshCw, ShoppingCart } from "lucide-react";
@@ -12,8 +12,12 @@ import { Modal } from "@/components/ui/modal";
 import DataGrid from "@/components/data-grid/DataGrid";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { fetchTenants } from "@/store/tenantSlice";
-import { cartService } from "@/services/cartService";
-import type { Cart, CartItem, PageQueryParams } from "@/services/types";
+import {
+  clearSelectedCart,
+  fetchCartItems,
+  fetchCartsPaged,
+} from "@/store/cartSlice";
+import type { Cart, PageQueryParams } from "@/services/types";
 import { ROLES } from "@/utils/enums";
 
 const CART_STATUS_COLORS: Record<string, "success" | "warning" | "info" | "light"> = {
@@ -22,7 +26,7 @@ const CART_STATUS_COLORS: Record<string, "success" | "warning" | "info" | "light
   CONVERTED: "success",
 };
 
-export default function CartsPage() {
+export function CartsPage() {
   const { t } = useTranslation();
   const [searchParams, setSearchParams] = useSearchParams();
   const dispatch = useAppDispatch();
@@ -30,15 +34,16 @@ export default function CartsPage() {
   const { user } = useAppSelector((s) => s.auth);
   const isSysAdmin = user?.role === ROLES.SYS_ADMIN;
 
-  const [carts, setCarts] = useState<Cart[]>([]);
-  const [total, setTotal] = useState(0);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  // Detail Modal State
-  const [selectedCart, setSelectedCart] = useState<Cart | null>(null);
-  const [items, setItems] = useState<CartItem[]>([]);
-  const [loadingItems, setLoadingItems] = useState(false);
+  const {
+    cartsList: carts,
+    paged,
+    loading,
+    error,
+    selectedCart,
+    cartItems: items,
+  } = useAppSelector((s) => s.cart);
+  const total = paged?.total || 0;
+  const loadingItems = loading;
 
   const page = Number(searchParams.get("page") || "1");
   const pageSize = Number(searchParams.get("pageSize") || "10");
@@ -46,21 +51,10 @@ export default function CartsPage() {
   const sortBy = searchParams.get("sortBy") || "id";
   const sortDir = (searchParams.get("sortDir") as "asc" | "desc") || "desc";
 
-  const loadCarts = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const params: PageQueryParams = { page, pageSize, q, sortBy, sortDir };
-      const res = await cartService.paged(params);
-      setCarts(res.items);
-      setTotal(res.total);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Failed to load carts";
-      setError(msg);
-    } finally {
-      setLoading(false);
-    }
-  }, [page, pageSize, q, sortBy, sortDir]);
+  const loadCarts = useCallback(() => {
+    const params: PageQueryParams = { page, pageSize, q, sortBy, sortDir };
+    dispatch(fetchCartsPaged(params));
+  }, [dispatch, page, pageSize, q, sortBy, sortDir]);
 
   useEffect(() => {
     let active = true;
@@ -111,17 +105,8 @@ export default function CartsPage() {
     setSearchParams(params);
   };
 
-  const openCartDetails = async (cart: Cart) => {
-    setSelectedCart(cart);
-    setLoadingItems(true);
-    try {
-      const res = await cartService.itemsPaged({ cartId: cart.id, pageSize: 50 });
-      setItems(res.items);
-    } catch {
-      setItems([]);
-    } finally {
-      setLoadingItems(false);
-    }
+  const openCartDetails = (cart: Cart) => {
+    dispatch(fetchCartItems(cart));
   };
 
   const formatCurrency = (cents: number) =>
@@ -261,7 +246,7 @@ export default function CartsPage() {
       {/* Cart Detail Modal */}
       <Modal
         isOpen={!!selectedCart}
-        onClose={() => setSelectedCart(null)}
+        onClose={() => dispatch(clearSelectedCart())}
         className="max-w-2xl p-6"
       >
         {selectedCart && (
@@ -353,3 +338,5 @@ export default function CartsPage() {
     </>
   );
 }
+
+export default CartsPage;

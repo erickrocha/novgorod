@@ -7,7 +7,7 @@ interface NotFoundProps {
   className?: string;
 }
 
-export default function NotFound({ className }: NotFoundProps) {
+export function NotFound({ className }: NotFoundProps) {
   return (
     <>
       <PageMeta
@@ -58,3 +58,5 @@ export default function NotFound({ className }: NotFoundProps) {
     </>
   );
 }
+
+export default NotFound;

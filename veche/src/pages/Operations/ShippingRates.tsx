@@ -13,7 +13,10 @@ import { Modal } from "@/components/ui/modal";
 import DataGrid from "@/components/data-grid/DataGrid";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { fetchTenants } from "@/store/tenantSlice";
-import { shippingRateService } from "@/services/shippingRateService";
+import {
+  fetchShippingRatesPaged,
+  saveShippingRate,
+} from "@/store/operationSlice";
 import type { PageQueryParams, ShippingRate, ShippingRateInput } from "@/services/types";
 import { ROLES } from "@/utils/enums";
 
@@ -23,7 +26,7 @@ const BRAZIL_UFS = [
   "RO", "RR", "RS", "SC", "SE", "SP", "TO",
 ];
 
-export default function ShippingRates() {
+export function ShippingRates() {
   const { t } = useTranslation();
   const [searchParams, setSearchParams] = useSearchParams();
   const dispatch = useAppDispatch();
@@ -31,10 +34,9 @@ export default function ShippingRates() {
   const { user } = useAppSelector((s) => s.auth);
   const isSysAdmin = user?.role === ROLES.SYS_ADMIN;
 
-  const [rates, setRates] = useState<ShippingRate[]>([]);
-  const [total, setTotal] = useState(0);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { shippingRatesPaged, loading, error } = useAppSelector((s) => s.operation);
+  const rates = shippingRatesPaged?.items || [];
+  const total = shippingRatesPaged?.total || 0;
 
   // Modal State
   const [modalOpen, setModalOpen] = useState(false);
@@ -53,21 +55,10 @@ export default function ShippingRates() {
   const sortBy = searchParams.get("sortBy") || "id";
   const sortDir = (searchParams.get("sortDir") as "asc" | "desc") || "asc";
 
-  const loadData = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const params: PageQueryParams = { page, pageSize, q, sortBy, sortDir };
-      const res = await shippingRateService.paged(params);
-      setRates(res.items);
-      setTotal(res.total);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Failed to load shipping rates";
-      setError(msg);
-    } finally {
-      setLoading(false);
-    }
-  }, [page, pageSize, q, sortBy, sortDir]);
+  const loadData = useCallback(() => {
+    const params: PageQueryParams = { page, pageSize, q, sortBy, sortDir };
+    dispatch(fetchShippingRatesPaged(params));
+  }, [dispatch, page, pageSize, q, sortBy, sortDir]);
 
   useEffect(() => {
     let active = true;
@@ -152,13 +143,15 @@ export default function ShippingRates() {
         tenantId: formData.tenantId,
       };
 
-      if (editingRate?.id) {
-        await shippingRateService.update(editingRate.id, payload);
+      const res = await dispatch(
+        saveShippingRate({ id: editingRate?.id, data: payload }),
+      );
+      if (res.meta.requestStatus === "fulfilled") {
+        setModalOpen(false);
+        loadData();
       } else {
-        await shippingRateService.create(payload);
+        setFormError((res.payload as string) || "Failed to save shipping rate");
       }
-      setModalOpen(false);
-      loadData();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Failed to save shipping rate";
       setFormError(msg);
@@ -379,3 +372,5 @@ export default function ShippingRates() {
     </>
   );
 }
+
+export default ShippingRates;

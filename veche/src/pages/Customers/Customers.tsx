@@ -20,12 +20,15 @@ import { Modal } from "@/components/ui/modal";
 import DataGrid from "@/components/data-grid/DataGrid";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { fetchTenants } from "@/store/tenantSlice";
-import { customerService } from "@/services/customerService";
+import {
+  createCustomerAddress,
+  fetchCustomerAddresses,
+  fetchCustomersPaged,
+} from "@/store/customerSlice";
 import { locationService } from "@/services/locationService";
 import { formatPostalCode, stripNonDigits } from "@/utils/taxId";
 import type {
   Customer,
-  CustomerAddress,
   CustomerAddressInput,
   PageQueryParams,
   Province,
@@ -33,7 +36,7 @@ import type {
 } from "@/services/types";
 import { ROLES } from "@/utils/enums";
 
-export default function Customers() {
+export function Customers() {
   const [searchParams, setSearchParams] = useSearchParams();
   const dispatch = useAppDispatch();
   const { t } = useTranslation();
@@ -41,16 +44,13 @@ export default function Customers() {
   const { user } = useAppSelector((s) => s.auth);
   const isSysAdmin = user?.role === ROLES.SYS_ADMIN;
 
-  const [customers, setCustomers] = useState<Customer[]>([]);
-  const [total, setTotal] = useState(0);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { customersList: customers, paged, loading, error, addresses } = useAppSelector((s) => s.customer);
+  const total = paged?.total || 0;
+  const loadingAddresses = loading;
 
   // Addresses Modal State
   const [addressModalOpen, setAddressModalOpen] = useState(false);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
-  const [addresses, setAddresses] = useState<CustomerAddress[]>([]);
-  const [loadingAddresses, setLoadingAddresses] = useState(false);
   const [showAddAddress, setShowAddAddress] = useState(false);
   const [savingAddress, setSavingAddress] = useState(false);
   const [addressError, setAddressError] = useState<string | null>(null);
@@ -186,21 +186,10 @@ export default function Customers() {
   const sortBy = searchParams.get("sortBy") || "id";
   const sortDir = (searchParams.get("sortDir") as "asc" | "desc") || "asc";
 
-  const loadCustomers = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const params: PageQueryParams = { page, pageSize, q, sortBy, sortDir };
-      const res = await customerService.paged(params);
-      setCustomers(res.items);
-      setTotal(res.total);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Failed to load customers";
-      setError(msg);
-    } finally {
-      setLoading(false);
-    }
-  }, [page, pageSize, q, sortBy, sortDir]);
+  const loadCustomers = useCallback(() => {
+    const params: PageQueryParams = { page, pageSize, q, sortBy, sortDir };
+    dispatch(fetchCustomersPaged(params));
+  }, [dispatch, page, pageSize, q, sortBy, sortDir]);
 
   useEffect(() => {
     let active = true;
@@ -251,7 +240,7 @@ export default function Customers() {
     setSearchParams(params);
   };
 
-  const openAddressesModal = async (c: Customer) => {
+  const openAddressesModal = (c: Customer) => {
     setSelectedCustomer(c);
     setShowAddAddress(false);
     setAddressError(null);
@@ -270,16 +259,7 @@ export default function Customers() {
       isDefault: false,
     });
     setAddressModalOpen(true);
-    setLoadingAddresses(true);
-    try {
-      const res = await customerService.addressesPaged({ customerId: c.id, pageSize: 50 });
-      setAddresses(res.items);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Failed to load addresses";
-      setAddressError(msg);
-    } finally {
-      setLoadingAddresses(false);
-    }
+    dispatch(fetchCustomerAddresses({ customerId: c.id, pageSize: 50 }));
   };
 
   const handleSaveAddress = async (e: React.FormEvent) => {
@@ -288,32 +268,39 @@ export default function Customers() {
     setSavingAddress(true);
     setAddressError(null);
     try {
-      await customerService.createAddress({
-        ...newAddress,
-        cep: stripNonDigits(newAddress.cep),
-        customerId: selectedCustomer.id,
-        tenantId: selectedCustomer.tenantId,
-      });
-      setShowAddAddress(false);
-      const res = await customerService.addressesPaged({
-        customerId: selectedCustomer.id,
-        pageSize: 50,
-      });
-      setAddresses(res.items);
-      setNewAddress({
-        tenantId: selectedCustomer.tenantId,
-        customerId: selectedCustomer.id,
-        recipientName: "",
-        phone: "",
-        cep: "",
-        street: "",
-        number: "",
-        complement: "",
-        neighborhood: "",
-        city: "",
-        uf: "",
-        isDefault: false,
-      });
+      const res = await dispatch(
+        createCustomerAddress({
+          ...newAddress,
+          cep: stripNonDigits(newAddress.cep),
+          customerId: selectedCustomer.id,
+          tenantId: selectedCustomer.tenantId,
+        }),
+      );
+      if (res.meta.requestStatus === "fulfilled") {
+        setShowAddAddress(false);
+        dispatch(
+          fetchCustomerAddresses({
+            customerId: selectedCustomer.id,
+            pageSize: 50,
+          }),
+        );
+        setNewAddress({
+          tenantId: selectedCustomer.tenantId,
+          customerId: selectedCustomer.id,
+          recipientName: "",
+          phone: "",
+          cep: "",
+          street: "",
+          number: "",
+          complement: "",
+          neighborhood: "",
+          city: "",
+          uf: "",
+          isDefault: false,
+        });
+      } else {
+        setAddressError((res.payload as string) || "Failed to add address");
+      }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Failed to add address";
       setAddressError(msg);
@@ -711,3 +698,5 @@ export default function Customers() {
     </>
   );
 }
+
+export default Customers;

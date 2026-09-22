@@ -13,7 +13,7 @@ import { Modal } from "@/components/ui/modal";
 import DataGrid from "@/components/data-grid/DataGrid";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { fetchTenants } from "@/store/tenantSlice";
-import { taxRuleService } from "@/services/taxRuleService";
+import { fetchTaxRulesPaged, saveTaxRule } from "@/store/operationSlice";
 import type { PageQueryParams, TaxRule, TaxRuleInput } from "@/services/types";
 import { ROLES } from "@/utils/enums";
 
@@ -23,7 +23,7 @@ const BRAZIL_UFS = [
   "RO", "RR", "RS", "SC", "SE", "SP", "TO",
 ];
 
-export default function TaxRules() {
+export function TaxRules() {
   const { t } = useTranslation();
   const [searchParams, setSearchParams] = useSearchParams();
   const dispatch = useAppDispatch();
@@ -31,10 +31,9 @@ export default function TaxRules() {
   const { user } = useAppSelector((s) => s.auth);
   const isSysAdmin = user?.role === ROLES.SYS_ADMIN;
 
-  const [rules, setRules] = useState<TaxRule[]>([]);
-  const [total, setTotal] = useState(0);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { taxRulesPaged, loading, error } = useAppSelector((s) => s.operation);
+  const rules = taxRulesPaged?.items || [];
+  const total = taxRulesPaged?.total || 0;
 
   // Modal State
   const [modalOpen, setModalOpen] = useState(false);
@@ -73,21 +72,10 @@ export default function TaxRules() {
   const sortBy = searchParams.get("sortBy") || "id";
   const sortDir = (searchParams.get("sortDir") as "asc" | "desc") || "asc";
 
-  const loadData = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const params: PageQueryParams = { page, pageSize, q, sortBy, sortDir };
-      const res = await taxRuleService.paged(params);
-      setRules(res.items);
-      setTotal(res.total);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Failed to load tax rules";
-      setError(msg);
-    } finally {
-      setLoading(false);
-    }
-  }, [page, pageSize, q, sortBy, sortDir]);
+  const loadData = useCallback(() => {
+    const params: PageQueryParams = { page, pageSize, q, sortBy, sortDir };
+    dispatch(fetchTaxRulesPaged(params));
+  }, [dispatch, page, pageSize, q, sortBy, sortDir]);
 
   useEffect(() => {
     let active = true;
@@ -195,13 +183,15 @@ export default function TaxRules() {
         tenantId: formData.tenantId,
       };
 
-      if (editingRule?.id) {
-        await taxRuleService.update(editingRule.id, payload);
+      const res = await dispatch(
+        saveTaxRule({ id: editingRule?.id, data: payload }),
+      );
+      if (res.meta.requestStatus === "fulfilled") {
+        setModalOpen(false);
+        loadData();
       } else {
-        await taxRuleService.create(payload);
+        setFormError((res.payload as string) || "Failed to save tax rule");
       }
-      setModalOpen(false);
-      loadData();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Failed to save tax rule";
       setFormError(msg);
@@ -547,3 +537,5 @@ export default function TaxRules() {
     </>
   );
 }
+
+export default TaxRules;

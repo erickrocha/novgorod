@@ -1,7 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
-import type { FormEvent } from "react";
+import { useEffect, useMemo } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
+import { useForm } from "react-hook-form";
+import { yupResolver } from "@hookform/resolvers/yup";
+import * as yup from "yup";
 import PageBreadcrumb from "@/components/common/PageBreadCrumb";
 import PageMeta from "@/components/common/PageMeta";
 import ComponentCard from "@/components/common/ComponentCard";
@@ -18,7 +20,19 @@ import { fetchTenants } from "@/store/tenantSlice";
 import { ROLES } from "@/utils/enums";
 import type { Role, UserInput } from "@/services/types";
 
-export default function UserForm() {
+const userSchema = yup.object({
+  name: yup.string().nullable().defined(),
+  email: yup.string().email("E-mail inválido").required("E-mail é obrigatório"),
+  password: yup.string().defined().default(""),
+  role: yup.string().required("Função é obrigatória"),
+  tenantId: yup.string().defined().default(""),
+  enabled: yup.boolean().defined().default(true),
+  firstLogin: yup.boolean().defined().default(true),
+});
+
+type UserFormData = yup.InferType<typeof userSchema>;
+
+export function UserForm() {
   const { id } = useParams();
   const navigate = useNavigate();
   const dispatch = useAppDispatch();
@@ -33,26 +47,35 @@ export default function UserForm() {
   const ownTenant = user?.tenantId ?? user?.tenant_id;
   const existing = usersList.find((u) => String(u.id) === id);
 
-  const [form, setForm] = useState({
-    name: "",
-    email: "",
-    password: "",
-    role: ROLES.TENANT_USER as Role,
-    tenantId: ownTenant ? String(ownTenant) : "",
-    enabled: true,
-    firstLogin: true,
+  const {
+    handleSubmit,
+    setValue,
+    watch,
+    reset,
+    formState: { errors },
+  } = useForm<UserFormData>({
+    resolver: yupResolver(userSchema) as any,
+    defaultValues: {
+      name: "",
+      email: "",
+      password: "",
+      role: ROLES.TENANT_USER,
+      tenantId: ownTenant ? String(ownTenant) : "",
+      enabled: true,
+      firstLogin: true,
+    },
   });
+
+  const formValues = watch();
 
   useEffect(() => {
     dispatch(fetchUsers());
     dispatch(fetchTenants());
   }, [dispatch]);
 
-  // Form state is synchronized when the asynchronously loaded record becomes available.
-  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => {
     if (existing) {
-      setForm({
+      reset({
         name: existing.name || "",
         email: existing.email,
         password: "",
@@ -62,7 +85,7 @@ export default function UserForm() {
         firstLogin: existing.firstLogin ?? true,
       });
     }
-  }, [existing]);
+  }, [existing, reset]);
 
   const roleOptions: ComboboxOption[] = useMemo(() => {
     const roles: ComboboxOption[] = [
@@ -83,14 +106,14 @@ export default function UserForm() {
           ]
         : []),
     ];
-    if (form.role && !roles.some((r) => r.value === form.role)) {
+    if (formValues.role && !roles.some((r) => r.value === formValues.role)) {
       roles.push({
-        value: form.role,
-        label: form.role,
+        value: formValues.role,
+        label: formValues.role,
       });
     }
     return roles;
-  }, [sysAdmin, form.role, t]);
+  }, [sysAdmin, formValues.role, t]);
 
   const tenantOptions: ComboboxOption[] = useMemo(() => {
     const list = tenantsList
@@ -100,27 +123,26 @@ export default function UserForm() {
         label: t.businessName || t.companyName || `Tenant #${t.id}`,
       }));
 
-    if (form.tenantId && !list.some((o) => o.value === form.tenantId)) {
+    if (formValues.tenantId && !list.some((o) => o.value === formValues.tenantId)) {
       list.unshift({
-        value: form.tenantId,
-        label: `Tenant #${form.tenantId}`,
+        value: formValues.tenantId,
+        label: `Tenant #${formValues.tenantId}`,
       });
     }
     return list;
-  }, [tenantsList, form.tenantId]);
+  }, [tenantsList, formValues.tenantId]);
 
-  const submit = async (e: FormEvent) => {
-    e.preventDefault();
+  const onSubmit = async (data: UserFormData) => {
     const payload: UserInput = {
-      name: form.name || undefined,
-      email: form.email,
-      role: sysAdmin ? form.role : (existing?.role || ROLES.TENANT_USER),
+      name: data.name || undefined,
+      email: data.email,
+      role: sysAdmin ? (data.role as Role) : (existing?.role || ROLES.TENANT_USER),
       tenantId: sysAdmin
-        ? (form.tenantId ? Number(form.tenantId) : null)
+        ? (data.tenantId ? Number(data.tenantId) : null)
         : (ownTenant ?? null),
-      enabled: form.enabled,
-      firstLogin: form.firstLogin,
-      ...(form.password ? { password: form.password } : {}),
+      enabled: data.enabled,
+      firstLogin: data.firstLogin,
+      ...(data.password ? { password: data.password } : {}),
     };
 
     const result =
@@ -154,15 +176,15 @@ export default function UserForm() {
       />
       <PageBreadcrumb pageTitle={pageTitle} />
       <ComponentCard title={pageTitle}>
-        <form onSubmit={submit} className="space-y-6">
+        <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
           {/* First row: combo box to select tenant width 100%, use filterable combo box */}
           <div>
             <Label htmlFor="tenant">{t("users.tenant", "Empresa")}</Label>
             <FilterableCombobox
               id="tenant"
               options={tenantOptions}
-              value={form.tenantId}
-              onChange={(v) => setForm({ ...form, tenantId: v })}
+              value={formValues.tenantId}
+              onChange={(v) => setValue("tenantId", v)}
               placeholder={t("users.selectTenant", "Selecione a empresa...")}
               disabled={!sysAdmin}
               emptyText={t("users.noTenantFound", "Nenhuma empresa encontrada")}
@@ -176,8 +198,8 @@ export default function UserForm() {
               <Label htmlFor="name">{t("users.name", "Nome")}</Label>
               <Input
                 id="name"
-                value={form.name}
-                onChange={(e) => setForm({ ...form, name: e.target.value })}
+                value={formValues.name || ""}
+                onChange={(e) => setValue("name", e.target.value)}
                 placeholder={t("users.namePlaceholder", "Nome completo")}
               />
             </div>
@@ -186,8 +208,8 @@ export default function UserForm() {
               <FilterableCombobox
                 id="role"
                 options={roleOptions}
-                value={form.role}
-                onChange={(v) => setForm({ ...form, role: v as Role })}
+                value={formValues.role}
+                onChange={(v) => setValue("role", v as Role, { shouldValidate: true })}
                 placeholder={t("users.selectRole", "Selecione a função...")}
                 disabled={!sysAdmin}
                 className="w-full"
@@ -202,9 +224,10 @@ export default function UserForm() {
               <Input
                 id="email"
                 type="email"
-                required
-                value={form.email}
-                onChange={(e) => setForm({ ...form, email: e.target.value })}
+                value={formValues.email}
+                onChange={(e) => setValue("email", e.target.value, { shouldValidate: true })}
+                error={Boolean(errors.email)}
+                hint={errors.email?.message}
                 placeholder={t("users.emailPlaceholder", "nome@exemplo.com")}
               />
             </div>
@@ -220,9 +243,8 @@ export default function UserForm() {
               <Input
                 id="password"
                 type="password"
-                required={!editing}
-                value={form.password}
-                onChange={(e) => setForm({ ...form, password: e.target.value })}
+                value={formValues.password}
+                onChange={(e) => setValue("password", e.target.value)}
                 placeholder={t("users.passwordPlaceholder", "Digite a senha")}
               />
             </div>
@@ -231,10 +253,10 @@ export default function UserForm() {
               <div className="h-11 flex items-center">
                 <Switch
                   id="enabled"
-                  checked={form.enabled}
-                  onChange={(checked) => setForm({ ...form, enabled: checked })}
+                  checked={formValues.enabled}
+                  onChange={(checked) => setValue("enabled", checked)}
                   label={
-                    form.enabled
+                    formValues.enabled
                       ? t("users.active", "Ativo")
                       : t("users.inactive", "Inativo")
                   }
@@ -267,3 +289,5 @@ export default function UserForm() {
     </>
   );
 }
+
+export default UserForm;

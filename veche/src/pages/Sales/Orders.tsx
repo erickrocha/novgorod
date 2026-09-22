@@ -14,13 +14,14 @@ import { Modal } from "@/components/ui/modal";
 import DataGrid from "@/components/data-grid/DataGrid";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { fetchTenants } from "@/store/tenantSlice";
-import { orderService } from "@/services/orderService";
-import { customerService } from "@/services/customerService";
+import {
+  clearSelectedOrder,
+  fetchOrderDetails,
+  fetchOrdersPaged,
+  updateOrderStatus,
+} from "@/store/orderSlice";
 import type {
-  Customer,
-  OrderItem,
   Orders,
-  OrderStatusHistory,
   PageQueryParams,
 } from "@/services/types";
 import { ROLES } from "@/utils/enums";
@@ -34,7 +35,7 @@ const ORDER_STATUS_COLORS: Record<string, "warning" | "success" | "info" | "erro
   CANCELLED: "error",
 };
 
-export default function OrdersPage() {
+export function OrdersPage() {
   const { t } = useTranslation();
   const [searchParams, setSearchParams] = useSearchParams();
   const dispatch = useAppDispatch();
@@ -42,17 +43,20 @@ export default function OrdersPage() {
   const { user } = useAppSelector((s) => s.auth);
   const isSysAdmin = user?.role === ROLES.SYS_ADMIN;
 
-  const [orders, setOrders] = useState<Orders[]>([]);
-  const [total, setTotal] = useState(0);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const {
+    ordersList: orders,
+    paged,
+    loading,
+    error,
+    selectedOrder,
+    orderItems: items,
+    statusHistories: histories,
+    orderCustomer,
+  } = useAppSelector((s) => s.order);
+  const total = paged?.total || 0;
 
   // Detail Modal State
-  const [selectedOrder, setSelectedOrder] = useState<Orders | null>(null);
-  const [orderCustomer, setOrderCustomer] = useState<Customer | null>(null);
-  const [items, setItems] = useState<OrderItem[]>([]);
-  const [histories, setHistories] = useState<OrderStatusHistory[]>([]);
-  const [loadingDetails, setLoadingDetails] = useState(false);
+  const loadingDetails = loading;
   const [updatingStatus, setUpdatingStatus] = useState(false);
   const [newStatus, setNewStatus] = useState("PAID");
   const [statusNote, setStatusNote] = useState("");
@@ -64,21 +68,10 @@ export default function OrdersPage() {
   const sortBy = searchParams.get("sortBy") || "id";
   const sortDir = (searchParams.get("sortDir") as "asc" | "desc") || "desc";
 
-  const loadOrders = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const params: PageQueryParams = { page, pageSize, q, sortBy, sortDir };
-      const res = await orderService.paged(params);
-      setOrders(res.items);
-      setTotal(res.total);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Failed to load orders";
-      setError(msg);
-    } finally {
-      setLoading(false);
-    }
-  }, [page, pageSize, q, sortBy, sortDir]);
+  const loadOrders = useCallback(() => {
+    const params: PageQueryParams = { page, pageSize, q, sortBy, sortDir };
+    dispatch(fetchOrdersPaged(params));
+  }, [dispatch, page, pageSize, q, sortBy, sortDir]);
 
   useEffect(() => {
     let active = true;
@@ -129,26 +122,11 @@ export default function OrdersPage() {
     setSearchParams(params);
   };
 
-  const openOrderDetails = async (order: Orders) => {
-    setSelectedOrder(order);
+  const openOrderDetails = (order: Orders) => {
     setNewStatus(order.status);
     setStatusNote("");
     setStatusError(null);
-    setLoadingDetails(true);
-    try {
-      const [itemsRes, historyRes, customerRes] = await Promise.all([
-        orderService.itemsPaged({ orderId: order.id, pageSize: 50 }),
-        orderService.statusHistoriesPaged({ orderId: order.id, pageSize: 50 }),
-        customerService.getById(order.customerId).catch(() => null),
-      ]);
-      setItems(itemsRes.items);
-      setHistories(historyRes.items);
-      setOrderCustomer(customerRes);
-    } catch {
-      // Gracefully handle detail failures
-    } finally {
-      setLoadingDetails(false);
-    }
+    dispatch(fetchOrderDetails(order));
   };
 
   const handleUpdateStatus = async (e: React.FormEvent) => {
@@ -157,36 +135,27 @@ export default function OrdersPage() {
     setUpdatingStatus(true);
     setStatusError(null);
     try {
-      await orderService.addStatusHistory({
-        tenantId: selectedOrder.tenantId,
-        orderId: selectedOrder.id,
-        fromStatus: selectedOrder.status,
-        toStatus: newStatus,
-        actorType: user?.role || "SYSADMIN",
-        actorId: user?.userId,
-        note: statusNote.trim() || null,
-      });
-
-      await orderService.update(selectedOrder.id, {
-        tenantId: selectedOrder.tenantId,
-        orderNumber: selectedOrder.orderNumber,
-        customerId: selectedOrder.customerId,
-        status: newStatus,
-        subtotalCents: selectedOrder.subtotalCents,
-        discountCents: selectedOrder.discountCents,
-        shippingCents: selectedOrder.shippingCents,
-        totalCents: selectedOrder.totalCents,
-        couponId: selectedOrder.couponId,
-      });
-
-      setSelectedOrder({ ...selectedOrder, status: newStatus });
-      const updatedHistories = await orderService.statusHistoriesPaged({
-        orderId: selectedOrder.id,
-        pageSize: 50,
-      });
-      setHistories(updatedHistories.items);
-      setStatusNote("");
-      loadOrders();
+      const res = await dispatch(
+        updateOrderStatus({
+          orderId: selectedOrder.id,
+          status: newStatus,
+          historyInput: {
+            tenantId: selectedOrder.tenantId,
+            orderId: selectedOrder.id,
+            fromStatus: selectedOrder.status,
+            toStatus: newStatus,
+            actorType: user?.role || "SYSADMIN",
+            actorId: user?.userId,
+            note: statusNote.trim() || null,
+          },
+        }),
+      );
+      if (res.meta.requestStatus === "fulfilled") {
+        setStatusNote("");
+        loadOrders();
+      } else {
+        setStatusError((res.payload as string) || "Failed to update status");
+      }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Failed to update status";
       setStatusError(msg);
@@ -334,7 +303,7 @@ export default function OrdersPage() {
       {/* Order Detail Modal */}
       <Modal
         isOpen={!!selectedOrder}
-        onClose={() => setSelectedOrder(null)}
+        onClose={() => dispatch(clearSelectedOrder())}
         className="max-w-3xl p-6"
       >
         {selectedOrder && (
@@ -546,3 +515,5 @@ export default function OrdersPage() {
     </>
   );
 }
+
+export default OrdersPage;

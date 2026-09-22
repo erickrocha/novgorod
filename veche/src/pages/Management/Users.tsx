@@ -14,7 +14,7 @@ import { fetchUsers } from "@/store/userSlice";
 import { ROLES } from "@/utils/enums";
 import type { User } from "@/services/types";
 
-export default function Users() {
+export function Users() {
   const { t } = useTranslation();
   const [searchParams, setSearchParams] = useSearchParams();
   const dispatch = useAppDispatch();
@@ -174,3 +174,5 @@ export default function Users() {
     </>
   );
 }
+
+export default Users;

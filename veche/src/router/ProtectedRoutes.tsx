@@ -9,6 +9,7 @@ import LineChart from "@/pages/Charts/LineChart";
 import Home from "@/pages/Dashboard/Ecommerce";
 import FormElements from "@/pages/Forms/FormElements";
 import Blank from "@/pages/OtherPage/Blank";
+import { NotFound } from "@/pages/OtherPage/NotFound.tsx";
 import BasicTables from "@/pages/Tables/BasicTables";
 import Alerts from "@/pages/UiElements/Alerts";
 import Avatars from "@/pages/UiElements/Avatars";
@@ -117,7 +118,7 @@ export const ProtectedRoutes = () => (
                 <Route path="/bar-chart" element={<BarChart />} />
             </Route>
             <Route path="/login" element={<Navigate to="/" replace />} />
-            <Route path="*" element={<Navigate to="/" replace />} />
+            <Route path="*" element={<NotFound />} />
         </Routes>
     </Suspense>
 );

@@ -1,7 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
-import type { FormEvent } from "react";
+import { useEffect, useMemo } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
+import { useForm } from "react-hook-form";
+import { yupResolver } from "@hookform/resolvers/yup";
+import * as yup from "yup";
 import PageBreadcrumb from "@/components/common/PageBreadCrumb";
 import PageMeta from "@/components/common/PageMeta";
 import ComponentCard from "@/components/common/ComponentCard";
@@ -14,12 +16,29 @@ import FilterableCombobox, {
 } from "@/components/form/FilterableCombobox";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { fetchTenants } from "@/store/tenantSlice";
-import { customerService } from "@/services/customerService";
+import {
+  createCustomer,
+  fetchCustomerById,
+  updateCustomer,
+} from "@/store/customerSlice";
 import { ROLES } from "@/utils/enums";
 import { formatCpf, formatPhone, stripNonDigits } from "@/utils/taxId";
 import type { CustomerInput } from "@/services/types";
 
-export default function CustomerForm() {
+const customerSchema = yup.object({
+  name: yup.string().required("Nome é obrigatório"),
+  email: yup.string().email("E-mail inválido").required("E-mail é obrigatório"),
+  password: yup.string().defined().default(""),
+  cpf: yup.string().nullable().defined(),
+  phone: yup.string().nullable().defined(),
+  active: yup.boolean().defined().default(true),
+  marketingConsent: yup.boolean().defined().default(false),
+  tenantId: yup.string().defined().default(""),
+});
+
+type CustomerFormData = yup.InferType<typeof customerSchema>;
+
+export function CustomerForm() {
   const { id } = useParams();
   const navigate = useNavigate();
   const dispatch = useAppDispatch();
@@ -27,27 +46,35 @@ export default function CustomerForm() {
   const editing = Boolean(id);
 
   const { tenantsList } = useAppSelector((s) => s.tenant);
+  const { currentCustomer, loading, error } = useAppSelector((s) => s.customer);
   const { user } = useAppSelector((s) => s.auth);
   const isSysAdmin = user?.role === ROLES.SYS_ADMIN;
-
-  const [loading, setLoading] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const [form, setForm] = useState({
-    name: "",
-    email: "",
-    password: "",
-    cpf: "",
-    phone: "",
-    active: true,
-    marketingConsent: false,
-    tenantId: user?.tenantId ? String(user.tenantId) : "",
-  });
 
   const pageTitle = editing
     ? t("customers.editCustomer", "Editar Cliente")
     : t("customers.addCustomer", "Novo Cliente");
+
+  const {
+    handleSubmit,
+    setValue,
+    watch,
+    reset,
+    formState: { errors, isSubmitting },
+  } = useForm<CustomerFormData>({
+    resolver: yupResolver(customerSchema) as any,
+    defaultValues: {
+      name: "",
+      email: "",
+      password: "",
+      cpf: "",
+      phone: "",
+      active: true,
+      marketingConsent: false,
+      tenantId: user?.tenantId ? String(user.tenantId) : "",
+    },
+  });
+
+  const formValues = watch();
 
   useEffect(() => {
     if (isSysAdmin && tenantsList.length === 0) {
@@ -57,44 +84,24 @@ export default function CustomerForm() {
 
   useEffect(() => {
     if (editing && id) {
-      let active = true;
-      queueMicrotask(() => {
-        if (!active) return;
-        setLoading(true);
-        customerService
-          .getById(Number(id))
-          .then((c) => {
-            if (!active) return;
-            setForm({
-              name: c.name || "",
-              email: c.email || "",
-              password: "",
-              cpf: c.cpf ? formatCpf(c.cpf) : "",
-              phone: c.phone ? formatPhone(c.phone) : "",
-              active: c.active ?? true,
-              marketingConsent: c.marketingConsent ?? false,
-              tenantId: c.tenantId ? String(c.tenantId) : "",
-            });
-          })
-          .catch((err) => {
-            if (!active) return;
-            const msg =
-              err instanceof Error ? err.message : t("customers.saveError", "Falha ao carregar cliente");
-            setError(msg);
-          })
-          .finally(() => {
-            if (active) setLoading(false);
-          });
-      });
-
-      return () => {
-        active = false;
-      };
+      dispatch(fetchCustomerById(Number(id)));
     }
-  }, [editing, id, t]);
+  }, [dispatch, editing, id]);
 
-  const set = (key: keyof typeof form, value: unknown) =>
-    setForm((current) => ({ ...current, [key]: value }));
+  useEffect(() => {
+    if (editing && currentCustomer && String(currentCustomer.id) === id) {
+      reset({
+        name: currentCustomer.name || "",
+        email: currentCustomer.email || "",
+        password: "",
+        cpf: currentCustomer.cpf ? formatCpf(currentCustomer.cpf) : "",
+        phone: currentCustomer.phone ? formatPhone(currentCustomer.phone) : "",
+        active: currentCustomer.active ?? true,
+        marketingConsent: currentCustomer.marketingConsent ?? false,
+        tenantId: currentCustomer.tenantId ? String(currentCustomer.tenantId) : "",
+      });
+    }
+  }, [editing, currentCustomer, id, reset]);
 
   const tenantOptions: ComboboxOption[] = useMemo(() => {
     const list = tenantsList
@@ -104,55 +111,43 @@ export default function CustomerForm() {
         label: tn.businessName || tn.companyName || `Tenant #${tn.id}`,
       }));
 
-    if (form.tenantId && !list.some((o) => o.value === form.tenantId)) {
+    if (formValues.tenantId && !list.some((o) => o.value === formValues.tenantId)) {
       list.unshift({
-        value: form.tenantId,
-        label: `Tenant #${form.tenantId}`,
+        value: formValues.tenantId,
+        label: `Tenant #${formValues.tenantId}`,
       });
     }
     return list;
-  }, [tenantsList, form.tenantId]);
+  }, [tenantsList, formValues.tenantId]);
 
   const handleCpfChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    set("cpf", formatCpf(e.target.value));
+    setValue("cpf", formatCpf(e.target.value));
   };
 
   const handlePhoneChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    set("phone", formatPhone(e.target.value));
+    setValue("phone", formatPhone(e.target.value));
   };
 
-  const submit = async (e: FormEvent) => {
-    e.preventDefault();
-    setError(null);
-    setSaving(true);
+  const onSubmit = async (data: CustomerFormData) => {
+    const payload: CustomerInput = {
+      name: data.name.trim(),
+      email: data.email.trim(),
+      cpf: data.cpf ? stripNonDigits(data.cpf) || null : null,
+      phone: data.phone ? stripNonDigits(data.phone) || null : null,
+      active: data.active,
+      marketingConsent: data.marketingConsent,
+      tenantId: isSysAdmin
+        ? (data.tenantId ? Number(data.tenantId) : null)
+        : (user?.tenantId ?? null),
+      ...(data.password ? { password: data.password } : {}),
+    };
 
-    try {
-      const payload: CustomerInput = {
-        name: form.name.trim(),
-        email: form.email.trim(),
-        cpf: form.cpf ? stripNonDigits(form.cpf) || null : null,
-        phone: form.phone ? stripNonDigits(form.phone) || null : null,
-        active: form.active,
-        marketingConsent: form.marketingConsent,
-        tenantId: isSysAdmin
-          ? (form.tenantId ? Number(form.tenantId) : null)
-          : (user?.tenantId ?? null),
-        ...(form.password ? { password: form.password } : {}),
-      };
+    const action = editing && id
+      ? await dispatch(updateCustomer({ id: Number(id), data: payload }))
+      : await dispatch(createCustomer(payload));
 
-      if (editing && id) {
-        await customerService.update(Number(id), payload);
-      } else {
-        await customerService.create(payload);
-      }
-
+    if (action.meta.requestStatus === "fulfilled") {
       navigate("/customers");
-    } catch (err: unknown) {
-      const msg =
-        err instanceof Error ? err.message : t("customers.saveError", "Falha ao salvar cliente");
-      setError(msg);
-    } finally {
-      setSaving(false);
     }
   };
 
@@ -167,7 +162,7 @@ export default function CustomerForm() {
         items={[{ label: t("customers.title", "Clientes"), href: "/customers" }]}
       />
       <ComponentCard title={pageTitle}>
-        <form onSubmit={submit} className="space-y-5">
+        <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
           {error && (
             <div className="rounded-lg border border-error-200 bg-error-50 p-3 text-sm text-error-600 dark:bg-error-500/10 dark:border-error-500/20">
               {error}
@@ -181,10 +176,11 @@ export default function CustomerForm() {
             </Label>
             <Input
               id="customerName"
-              required
               disabled={loading}
-              value={form.name}
-              onChange={(e) => set("name", e.target.value)}
+              value={formValues.name}
+              onChange={(e) => setValue("name", e.target.value, { shouldValidate: true })}
+              error={Boolean(errors.name)}
+              hint={errors.name?.message}
               placeholder={t("customers.fullNamePlaceholder", "Maria Silva")}
             />
           </div>
@@ -198,10 +194,11 @@ export default function CustomerForm() {
               <Input
                 id="customerEmail"
                 type="email"
-                required
                 disabled={loading}
-                value={form.email}
-                onChange={(e) => set("email", e.target.value)}
+                value={formValues.email}
+                onChange={(e) => setValue("email", e.target.value, { shouldValidate: true })}
+                error={Boolean(errors.email)}
+                hint={errors.email?.message}
                 placeholder={t("customers.emailPlaceholder", "maria@exemplo.com")}
               />
             </div>
@@ -215,10 +212,9 @@ export default function CustomerForm() {
                 id="customerPassword"
                 type="password"
                 disabled={loading}
-                value={form.password}
-                onChange={(e) => set("password", e.target.value)}
+                value={formValues.password}
+                onChange={(e) => setValue("password", e.target.value)}
                 placeholder={t("customers.passwordPlaceholder", "••••••••")}
-                {...(!editing ? { required: true } : {})}
               />
             </div>
           </div>
@@ -232,7 +228,7 @@ export default function CustomerForm() {
               <Input
                 id="customerCpf"
                 disabled={loading}
-                value={form.cpf}
+                value={formValues.cpf || ""}
                 onChange={handleCpfChange}
                 maxLength={14}
                 placeholder={t("customers.cpfPlaceholder", "000.000.000-00")}
@@ -246,7 +242,7 @@ export default function CustomerForm() {
                 id="customerPhone"
                 type="tel"
                 disabled={loading}
-                value={form.phone}
+                value={formValues.phone || ""}
                 onChange={handlePhoneChange}
                 maxLength={15}
                 placeholder={t("customers.phonePlaceholder", "(00) 00000-0000")}
@@ -258,13 +254,13 @@ export default function CustomerForm() {
           <div className="flex flex-wrap items-center gap-6 pt-2">
             <Switch
               label={t("customers.activeAccount", "Conta Ativa")}
-              checked={form.active}
-              onChange={(checked) => set("active", checked)}
+              checked={formValues.active}
+              onChange={(checked) => setValue("active", checked)}
             />
             <Switch
               label={t("customers.marketingConsent", "Consentimento de Marketing")}
-              checked={form.marketingConsent}
-              onChange={(checked) => set("marketingConsent", checked)}
+              checked={formValues.marketingConsent}
+              onChange={(checked) => setValue("marketingConsent", checked)}
             />
           </div>
 
@@ -276,9 +272,9 @@ export default function CustomerForm() {
               </Label>
               <FilterableCombobox
                 id="customerTenant"
-                value={form.tenantId}
+                value={formValues.tenantId}
                 options={tenantOptions}
-                onChange={(val) => set("tenantId", val)}
+                onChange={(val) => setValue("tenantId", val)}
                 placeholder={t("customers.defaultNone", "Padrão / Nenhuma")}
                 emptyText={t("tenants.noTenantsFound", "Nenhuma empresa encontrada")}
               />
@@ -292,8 +288,8 @@ export default function CustomerForm() {
                 {t("customers.cancel", "Cancelar")}
               </Button>
             </Link>
-            <Button disabled={saving || loading} type="submit">
-              {saving
+            <Button disabled={isSubmitting || loading} type="submit">
+              {isSubmitting
                 ? t("customers.saving", "Salvando...")
                 : editing
                 ? t("customers.saveChanges", "Salvar Alterações")
@@ -305,3 +301,5 @@ export default function CustomerForm() {
     </>
   );
 }
+
+export default CustomerForm;

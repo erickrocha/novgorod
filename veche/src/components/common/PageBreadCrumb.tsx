@@ -30,7 +30,7 @@ const ChevronIcon = () => (
   </svg>
 );
 
-const PageBreadcrumb: React.FC<BreadcrumbProps> = ({
+export const PageBreadcrumb: React.FC<BreadcrumbProps> = ({
   pageTitle,
   showTitle = false,
   items = [],

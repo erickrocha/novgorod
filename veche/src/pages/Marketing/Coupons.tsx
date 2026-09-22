@@ -15,16 +15,19 @@ import { Modal } from "@/components/ui/modal";
 import DataGrid from "@/components/data-grid/DataGrid";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { fetchTenants } from "@/store/tenantSlice";
-import { marketingService } from "@/services/marketingService";
+import {
+  fetchCouponsPaged,
+  fetchRedemptionsPaged,
+  saveCoupon,
+} from "@/store/marketingSlice";
 import type {
   Coupon,
   CouponInput,
-  CouponRedemption,
   PageQueryParams,
 } from "@/services/types";
 import { ROLES } from "@/utils/enums";
 
-export default function CouponsPage() {
+export function CouponsPage() {
   const { t } = useTranslation();
   const [searchParams, setSearchParams] = useSearchParams();
   const dispatch = useAppDispatch();
@@ -32,10 +35,13 @@ export default function CouponsPage() {
   const { user } = useAppSelector((s) => s.auth);
   const isSysAdmin = user?.role === ROLES.SYS_ADMIN;
 
-  const [coupons, setCoupons] = useState<Coupon[]>([]);
-  const [total, setTotal] = useState(0);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { couponsPaged, redemptionsPaged, loading, error } = useAppSelector(
+    (s) => s.marketing,
+  );
+  const coupons = couponsPaged?.items || [];
+  const total = couponsPaged?.total || 0;
+  const redemptions = redemptionsPaged?.items || [];
+  const loadingRedemptions = loading;
 
   // Coupon Modal
   const [modalOpen, setModalOpen] = useState(false);
@@ -71,8 +77,6 @@ export default function CouponsPage() {
   // Redemptions Modal
   const [redemptionsModalOpen, setRedemptionsModalOpen] = useState(false);
   const [selectedCoupon, setSelectedCoupon] = useState<Coupon | null>(null);
-  const [redemptions, setRedemptions] = useState<CouponRedemption[]>([]);
-  const [loadingRedemptions, setLoadingRedemptions] = useState(false);
 
   const page = Number(searchParams.get("page") || "1");
   const pageSize = Number(searchParams.get("pageSize") || "10");
@@ -80,21 +84,10 @@ export default function CouponsPage() {
   const sortBy = searchParams.get("sortBy") || "id";
   const sortDir = (searchParams.get("sortDir") as "asc" | "desc") || "desc";
 
-  const loadCoupons = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const params: PageQueryParams = { page, pageSize, q, sortBy, sortDir };
-      const res = await marketingService.couponsPaged(params);
-      setCoupons(res.items);
-      setTotal(res.total);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Failed to load coupons";
-      setError(msg);
-    } finally {
-      setLoading(false);
-    }
-  }, [page, pageSize, q, sortBy, sortDir]);
+  const loadCoupons = useCallback(() => {
+    const params: PageQueryParams = { page, pageSize, q, sortBy, sortDir };
+    dispatch(fetchCouponsPaged(params));
+  }, [dispatch, page, pageSize, q, sortBy, sortDir]);
 
   useEffect(() => {
     let active = true;
@@ -209,13 +202,15 @@ export default function CouponsPage() {
         tenantId: formData.tenantId,
       };
 
-      if (editingCoupon?.id) {
-        await marketingService.updateCoupon(editingCoupon.id, payload);
+      const res = await dispatch(
+        saveCoupon({ id: editingCoupon?.id, data: payload }),
+      );
+      if (res.meta.requestStatus === "fulfilled") {
+        setModalOpen(false);
+        loadCoupons();
       } else {
-        await marketingService.createCoupon(payload);
+        setFormError((res.payload as string) || "Failed to save coupon");
       }
-      setModalOpen(false);
-      loadCoupons();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Failed to save coupon";
       setFormError(msg);
@@ -224,18 +219,10 @@ export default function CouponsPage() {
     }
   };
 
-  const openRedemptionsModal = async (c: Coupon) => {
+  const openRedemptionsModal = (c: Coupon) => {
     setSelectedCoupon(c);
     setRedemptionsModalOpen(true);
-    setLoadingRedemptions(true);
-    try {
-      const res = await marketingService.redemptionsPaged({ couponId: c.id, pageSize: 50 });
-      setRedemptions(res.items);
-    } catch {
-      setRedemptions([]);
-    } finally {
-      setLoadingRedemptions(false);
-    }
+    dispatch(fetchRedemptionsPaged({ couponId: c.id, pageSize: 50 }));
   };
 
   const tenantName = (id?: number | null) =>
@@ -618,3 +605,5 @@ export default function CouponsPage() {
     </>
   );
 }
+
+export default CouponsPage;

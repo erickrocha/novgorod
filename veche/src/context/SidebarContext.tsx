@@ -1,85 +1,60 @@
-import { createContext, useContext, useEffect, useState } from 'react';
-
-type SidebarContextType = {
-    isExpanded: boolean;
-    isMobileOpen: boolean;
-    isHovered: boolean;
-    activeItem: string | null;
-    openSubmenu: string | null;
-    toggleSidebar: () => void;
-    toggleMobileSidebar: () => void;
-    setIsHovered: (isHovered: boolean) => void;
-    setActiveItem: (item: string | null) => void;
-    toggleSubmenu: (item: string) => void;
-    setIsMobileOpen: (open: boolean) => void;
-};
-
-const SidebarContext = createContext<SidebarContextType | undefined>(undefined);
-
-export const useSidebar = () => {
-    const context = useContext(SidebarContext);
-    if (!context) {
-        throw new Error('useSidebar must be used within a SidebarProvider');
-    }
-    return context;
-};
+import type React from "react";
+import { useEffect } from "react";
+import { useAppDispatch, useAppSelector } from "@/store/hooks";
+import {
+  setActiveItem,
+  setIsHovered,
+  setIsMobile,
+  setIsMobileOpen,
+  toggleMobileSidebar,
+  toggleSidebar,
+  toggleSubmenu,
+} from "@/store/uiSlice";
 
 export const SidebarProvider: React.FC<{ children: React.ReactNode }> = ({
-    children,
+  children,
 }) => {
-    const [isExpanded, setIsExpanded] = useState(true);
-    const [isMobileOpen, setIsMobileOpen] = useState(false);
-    const [isMobile, setIsMobile] = useState(false);
-    const [isHovered, setIsHovered] = useState(false);
-    const [activeItem, setActiveItem] = useState<string | null>(null);
-    const [openSubmenu, setOpenSubmenu] = useState<string | null>(null);
+  const dispatch = useAppDispatch();
 
-    useEffect(() => {
-        const handleResize = () => {
-            const mobile = window.innerWidth < 1280; // Mobile behavior up to xl breakpoint (1280px)
-            setIsMobile(mobile);
-            if (!mobile) {
-                setIsMobileOpen(false);
-            }
-        };
-
-        handleResize();
-        window.addEventListener('resize', handleResize);
-
-        return () => {
-            window.removeEventListener('resize', handleResize);
-        };
-    }, []);
-
-    const toggleSidebar = () => {
-        setIsExpanded((prev) => !prev);
+  useEffect(() => {
+    const handleResize = () => {
+      const mobile = window.innerWidth < 1280;
+      dispatch(setIsMobile(mobile));
     };
 
-    const toggleMobileSidebar = () => {
-        setIsMobileOpen((prev) => !prev);
+    handleResize();
+    window.addEventListener("resize", handleResize);
+    return () => {
+      window.removeEventListener("resize", handleResize);
     };
+  }, [dispatch]);
 
-    const toggleSubmenu = (item: string) => {
-        setOpenSubmenu((prev) => (prev === item ? null : item));
-    };
-
-    return (
-        <SidebarContext.Provider
-            value={{
-                isExpanded: isMobile ? false : isExpanded,
-                isMobileOpen,
-                isHovered,
-                activeItem,
-                openSubmenu,
-                toggleSidebar,
-                toggleMobileSidebar,
-                setIsHovered,
-                setActiveItem,
-                toggleSubmenu,
-                setIsMobileOpen,
-            }}
-        >
-            {children}
-        </SidebarContext.Provider>
-    );
+  return <>{children}</>;
 };
+
+export const useSidebar = () => {
+  const dispatch = useAppDispatch();
+  const {
+    isExpanded,
+    isMobileOpen,
+    isMobile,
+    isHovered,
+    activeItem,
+    openSubmenu,
+  } = useAppSelector((state) => state.ui);
+
+  return {
+    isExpanded: isMobile ? false : isExpanded,
+    isMobileOpen,
+    isHovered,
+    activeItem,
+    openSubmenu,
+    toggleSidebar: () => dispatch(toggleSidebar()),
+    toggleMobileSidebar: () => dispatch(toggleMobileSidebar()),
+    setIsHovered: (hovered: boolean) => dispatch(setIsHovered(hovered)),
+    setActiveItem: (item: string | null) => dispatch(setActiveItem(item)),
+    toggleSubmenu: (item: string) => dispatch(toggleSubmenu(item)),
+    setIsMobileOpen: (open: boolean) => dispatch(setIsMobileOpen(open)),
+  };
+};
+

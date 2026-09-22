@@ -15,17 +15,21 @@ import { Modal } from "@/components/ui/modal";
 import DataGrid from "@/components/data-grid/DataGrid";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { fetchTenants } from "@/store/tenantSlice";
-import { marketingService } from "@/services/marketingService";
+import {
+  createTarget,
+  fetchCampaignsPaged,
+  fetchTargetsPaged,
+  saveCampaign,
+} from "@/store/marketingSlice";
 import type {
   Campaign,
   CampaignInput,
-  CampaignTarget,
   CampaignTargetInput,
   PageQueryParams,
 } from "@/services/types";
 import { ROLES } from "@/utils/enums";
 
-export default function CampaignsPage() {
+export function CampaignsPage() {
   const { t } = useTranslation();
   const [searchParams, setSearchParams] = useSearchParams();
   const dispatch = useAppDispatch();
@@ -33,10 +37,13 @@ export default function CampaignsPage() {
   const { user } = useAppSelector((s) => s.auth);
   const isSysAdmin = user?.role === ROLES.SYS_ADMIN;
 
-  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
-  const [total, setTotal] = useState(0);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { campaignsPaged, targetsPaged, loading, error } = useAppSelector(
+    (s) => s.marketing,
+  );
+  const campaigns = campaignsPaged?.items || [];
+  const total = campaignsPaged?.total || 0;
+  const targets = targetsPaged?.items || [];
+  const loadingTargets = loading;
 
   // Campaign Form Modal
   const [modalOpen, setModalOpen] = useState(false);
@@ -66,8 +73,6 @@ export default function CampaignsPage() {
   // Target Modal State
   const [targetsModalOpen, setTargetsModalOpen] = useState(false);
   const [selectedCampaign, setSelectedCampaign] = useState<Campaign | null>(null);
-  const [targets, setTargets] = useState<CampaignTarget[]>([]);
-  const [loadingTargets, setLoadingTargets] = useState(false);
   const [showAddTarget, setShowAddTarget] = useState(false);
   const [newTarget, setNewTarget] = useState<{ targetType: string; targetId: number }>({
     targetType: "CATEGORY",
@@ -80,21 +85,10 @@ export default function CampaignsPage() {
   const sortBy = searchParams.get("sortBy") || "id";
   const sortDir = (searchParams.get("sortDir") as "asc" | "desc") || "desc";
 
-  const loadCampaigns = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const params: PageQueryParams = { page, pageSize, q, sortBy, sortDir };
-      const res = await marketingService.campaignsPaged(params);
-      setCampaigns(res.items);
-      setTotal(res.total);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Failed to load campaigns";
-      setError(msg);
-    } finally {
-      setLoading(false);
-    }
-  }, [page, pageSize, q, sortBy, sortDir]);
+  const loadCampaigns = useCallback(() => {
+    const params: PageQueryParams = { page, pageSize, q, sortBy, sortDir };
+    dispatch(fetchCampaignsPaged(params));
+  }, [dispatch, page, pageSize, q, sortBy, sortDir]);
 
   useEffect(() => {
     let active = true;
@@ -197,13 +191,15 @@ export default function CampaignsPage() {
         tenantId: formData.tenantId,
       };
 
-      if (editingCampaign?.id) {
-        await marketingService.updateCampaign(editingCampaign.id, payload);
+      const res = await dispatch(
+        saveCampaign({ id: editingCampaign?.id, data: payload }),
+      );
+      if (res.meta.requestStatus === "fulfilled") {
+        setModalOpen(false);
+        loadCampaigns();
       } else {
-        await marketingService.createCampaign(payload);
+        setFormError((res.payload as string) || "Failed to save campaign");
       }
-      setModalOpen(false);
-      loadCampaigns();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Failed to save campaign";
       setFormError(msg);
@@ -212,19 +208,11 @@ export default function CampaignsPage() {
     }
   };
 
-  const openTargetsModal = async (camp: Campaign) => {
+  const openTargetsModal = (camp: Campaign) => {
     setSelectedCampaign(camp);
     setShowAddTarget(false);
     setTargetsModalOpen(true);
-    setLoadingTargets(true);
-    try {
-      const res = await marketingService.targetsPaged({ campaignId: camp.id, pageSize: 50 });
-      setTargets(res.items);
-    } catch {
-      setTargets([]);
-    } finally {
-      setLoadingTargets(false);
-    }
+    dispatch(fetchTargetsPaged({ campaignId: camp.id, pageSize: 50 }));
   };
 
   const handleAddTarget = async (e: React.FormEvent) => {
@@ -237,13 +225,18 @@ export default function CampaignsPage() {
         targetType: newTarget.targetType,
         targetId: Number(newTarget.targetId),
       };
-      await marketingService.createTarget(payload);
-      setShowAddTarget(false);
-      const res = await marketingService.targetsPaged({
-        campaignId: selectedCampaign.id,
-        pageSize: 50,
-      });
-      setTargets(res.items);
+      const res = await dispatch(createTarget(payload));
+      if (res.meta.requestStatus === "fulfilled") {
+        setShowAddTarget(false);
+        dispatch(
+          fetchTargetsPaged({
+            campaignId: selectedCampaign.id,
+            pageSize: 50,
+          }),
+        );
+      } else {
+        alert((res.payload as string) || "Failed to add target");
+      }
     } catch (err: unknown) {
       alert(err instanceof Error ? err.message : "Failed to add target");
     }
@@ -650,3 +643,5 @@ export default function CampaignsPage() {
     </>
   );
 }
+
+export default CampaignsPage;

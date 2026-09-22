@@ -1,7 +1,9 @@
 import { useEffect, useState, useMemo, useCallback, useRef } from "react";
-import type { FormEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
+import { useForm } from "react-hook-form";
+import { yupResolver } from "@hookform/resolvers/yup";
+import * as yup from "yup";
 import PageBreadcrumb from "@/components/common/PageBreadCrumb";
 import PageMeta from "@/components/common/PageMeta";
 import ComponentCard from "@/components/common/ComponentCard";
@@ -27,7 +29,31 @@ import {
 } from "@/utils/taxId";
 import type { TenantInput, Province, City } from "@/services/types";
 
-export default function TenantForm() {
+const tenantSchema = yup.object({
+  businessName: yup.string().required("Campo obrigatório"),
+  companyName: yup.string().nullable().defined(),
+  taxId: yup
+    .string()
+    .required("CNPJ é obrigatório")
+    .test("cnpj-check", "CNPJ inválido", (val) => {
+      if (!val) return false;
+      const digits = stripNonDigits(val);
+      return digits.length === 14 && isValidCnpj(digits);
+    }),
+  email: yup.string().nullable().defined(),
+  phone: yup.string().nullable().defined(),
+  website: yup.string().nullable().defined(),
+  addressLine1: yup.string().nullable().defined(),
+  addressLine2: yup.string().nullable().defined(),
+  locality: yup.string().nullable().defined(),
+  administrativeArea: yup.string().nullable().defined(),
+  postalCode: yup.string().nullable().defined(),
+  countryCode: yup.string().defined().default("BR"),
+});
+
+type TenantFormData = yup.InferType<typeof tenantSchema>;
+
+export function TenantForm() {
   const { id } = useParams();
   const navigate = useNavigate();
   const dispatch = useAppDispatch();
@@ -50,30 +76,47 @@ export default function TenantForm() {
     ? t("tenants.editTenant", "Editar empresa")
     : t("tenants.addTenant", "Nova empresa");
 
-  const [form, setForm] = useState({
-    businessName: "",
-    companyName: "",
-    taxId: "",
-    email: "",
-    phone: "",
-    website: "",
-    addressLine1: "",
-    addressLine2: "",
-    locality: "",
-    administrativeArea: "",
-    postalCode: "",
-    countryCode: defaultCountryCode,
-  });
-
-  const [taxIdError, setTaxIdError] = useState<string | null>(null);
-  const [taxIdTouched, setTaxIdTouched] = useState(false);
-
   const [provinces, setProvinces] = useState<Province[]>([]);
   const [loadingProvinces, setLoadingProvinces] = useState(false);
   const [cities, setCities] = useState<City[]>([]);
   const [loadingCities, setLoadingCities] = useState(false);
 
   const activeProvinceIdRef = useRef<number | null>(null);
+
+  const {
+    handleSubmit,
+    setValue,
+    watch,
+    reset,
+    formState: { errors },
+  } = useForm<TenantFormData>({
+    resolver: yupResolver(tenantSchema) as any,
+    defaultValues: {
+      businessName: "",
+      companyName: "",
+      taxId: "",
+      email: "",
+      phone: "",
+      website: "",
+      addressLine1: "",
+      addressLine2: "",
+      locality: "",
+      administrativeArea: "",
+      postalCode: "",
+      countryCode: defaultCountryCode,
+    },
+  });
+
+  const administrativeArea = watch("administrativeArea") || "";
+  const locality = watch("locality") || "";
+  const businessName = watch("businessName") || "";
+  const companyName = watch("companyName") || "";
+  const taxId = watch("taxId") || "";
+  const phone = watch("phone") || "";
+  const website = watch("website") || "";
+  const addressLine1 = watch("addressLine1") || "";
+  const addressLine2 = watch("addressLine2") || "";
+  const postalCode = watch("postalCode") || "";
 
   useEffect(() => {
     dispatch(fetchTenants());
@@ -124,32 +167,24 @@ export default function TenantForm() {
   useEffect(() => {
     if (existing) {
       const provVal = existing.administrativeArea || existing.province || "";
-      queueMicrotask(() => {
-        setForm({
-          businessName: existing.businessName || "",
-          companyName: existing.companyName || "",
-          taxId: existing.taxId ? formatCnpj(existing.taxId) : "",
-          email: existing.email || "",
-          phone: existing.phone ? formatPhone(existing.phone) : "",
-          website: existing.website || "",
-          addressLine1: existing.addressLine1 || "",
-          addressLine2: existing.addressLine2 || "",
-          locality: existing.locality || existing.city || "",
-          administrativeArea: provVal,
-          postalCode: (existing.postalCode || existing.zipcode)
-            ? formatPostalCode(existing.postalCode || existing.zipcode)
-            : "",
-          countryCode: existing.countryCode || defaultCountryCode,
-        });
-
-        setTaxIdError(null);
-        setTaxIdTouched(false);
+      reset({
+        businessName: existing.businessName || "",
+        companyName: existing.companyName || "",
+        taxId: existing.taxId ? formatCnpj(existing.taxId) : "",
+        email: existing.email || "",
+        phone: existing.phone ? formatPhone(existing.phone) : "",
+        website: existing.website || "",
+        addressLine1: existing.addressLine1 || "",
+        addressLine2: existing.addressLine2 || "",
+        locality: existing.locality || existing.city || "",
+        administrativeArea: provVal,
+        postalCode: (existing.postalCode || existing.zipcode)
+          ? formatPostalCode(existing.postalCode || existing.zipcode)
+          : "",
+        countryCode: existing.countryCode || defaultCountryCode,
       });
     }
-  }, [existing, defaultCountryCode]);
-
-  const set = (key: keyof typeof form, value: string) =>
-    setForm((current) => ({ ...current, [key]: value }));
+  }, [existing, defaultCountryCode, reset]);
 
   const handleProvinceChange = (val: string, option?: ComboboxOption) => {
     const searchVal = val.trim().toLowerCase();
@@ -161,16 +196,13 @@ export default function TenantForm() {
           p.name.toLowerCase() === searchVal,
       );
     const chosenAcronym = prov ? prov.acronym : val;
-    setForm((prev) => ({
-      ...prev,
-      administrativeArea: chosenAcronym,
-      locality: "",
-    }));
+    setValue("administrativeArea", chosenAcronym, { shouldValidate: true });
+    setValue("locality", "", { shouldValidate: true });
   };
 
   // Ensure cities are loaded whenever administrativeArea is set and provinces are loaded
   useEffect(() => {
-    if (!form.administrativeArea) {
+    if (!administrativeArea) {
       activeProvinceIdRef.current = null;
       queueMicrotask(() => {
         setCities([]);
@@ -180,7 +212,7 @@ export default function TenantForm() {
     if (provinces.length === 0) {
       return;
     }
-    const target = form.administrativeArea.trim().toLowerCase();
+    const target = administrativeArea.trim().toLowerCase();
     const prov = provinces.find(
       (p) =>
         p.acronym.toLowerCase() === target || p.name.toLowerCase() === target,
@@ -195,7 +227,7 @@ export default function TenantForm() {
         setCities([]);
       });
     }
-  }, [form.administrativeArea, provinces, loadCities]);
+  }, [administrativeArea, provinces, loadCities]);
 
   const provinceOptions: ComboboxOption[] = useMemo(() => {
     return provinces.map((p) => ({
@@ -215,72 +247,30 @@ export default function TenantForm() {
   }, [cities]);
 
   const handleTaxIdChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const formatted = formatCnpj(e.target.value);
-    set("taxId", formatted);
-
-    const digits = stripNonDigits(formatted);
-    if (digits.length === 14) {
-      if (!isValidCnpj(digits)) {
-        setTaxIdError(t("tenants.invalidTaxId", "CNPJ inválido"));
-      } else {
-        setTaxIdError(null);
-      }
-    } else if (taxIdTouched) {
-      if (!digits) {
-        setTaxIdError(t("tenants.taxIdRequired", "CNPJ é obrigatório"));
-      } else {
-        setTaxIdError(t("tenants.invalidTaxId", "CNPJ inválido"));
-      }
-    } else {
-      setTaxIdError(null);
-    }
-  };
-
-  const handleTaxIdBlur = () => {
-    setTaxIdTouched(true);
-    const digits = stripNonDigits(form.taxId);
-    if (!digits) {
-      setTaxIdError(t("tenants.taxIdRequired", "CNPJ é obrigatório"));
-    } else if (!isValidCnpj(digits)) {
-      setTaxIdError(t("tenants.invalidTaxId", "CNPJ inválido"));
-    } else {
-      setTaxIdError(null);
-    }
+    setValue("taxId", formatCnpj(e.target.value), { shouldValidate: true });
   };
 
   const handlePhoneChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    set("phone", formatPhone(e.target.value));
+    setValue("phone", formatPhone(e.target.value));
   };
 
   const handlePostalCodeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    set("postalCode", formatPostalCode(e.target.value));
+    setValue("postalCode", formatPostalCode(e.target.value));
   };
 
-  const submit = async (e: FormEvent) => {
-    e.preventDefault();
-
-    setTaxIdTouched(true);
-    const digits = stripNonDigits(form.taxId);
-    if (!digits) {
-      setTaxIdError(t("tenants.taxIdRequired", "CNPJ é obrigatório"));
-      return;
-    }
-    if (!isValidCnpj(digits)) {
-      setTaxIdError(t("tenants.invalidTaxId", "CNPJ inválido"));
-      return;
-    }
-
+  const onSubmit = async (data: TenantFormData) => {
+    const digits = stripNonDigits(data.taxId);
     const payload = Object.fromEntries(
-      Object.entries(form).map(([k, v]) => [
+      Object.entries(data).map(([k, v]) => [
         k,
         typeof v === "string" ? v.trim() || null : v,
       ]),
     ) as TenantInput;
 
-    payload.countryCode = form.countryCode || defaultCountryCode || "BR";
+    payload.countryCode = data.countryCode || defaultCountryCode || "BR";
     payload.taxId = digits;
-    payload.phone = form.phone ? stripNonDigits(form.phone) || null : null;
-    payload.postalCode = form.postalCode ? stripNonDigits(form.postalCode) || null : null;
+    payload.phone = data.phone ? stripNonDigits(data.phone) || null : null;
+    payload.postalCode = data.postalCode ? stripNonDigits(data.postalCode) || null : null;
 
     const result =
       editing && existing?.id
@@ -309,7 +299,7 @@ export default function TenantForm() {
       />
       <PageBreadcrumb pageTitle={pageTitle} />
       <ComponentCard title={pageTitle}>
-        <form onSubmit={submit} className="space-y-5">
+        <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
           {/* First row: Business name (70%) and Tax ID (30%) */}
           <div className="grid grid-cols-1 md:grid-cols-10 gap-5">
             <div className="md:col-span-7">
@@ -318,9 +308,10 @@ export default function TenantForm() {
               </Label>
               <Input
                 id="businessName"
-                required
-                value={form.businessName}
-                onChange={(e) => set("businessName", e.target.value)}
+                value={businessName}
+                onChange={(e) => setValue("businessName", e.target.value, { shouldValidate: true })}
+                error={Boolean(errors.businessName)}
+                hint={errors.businessName?.message}
                 placeholder={t("tenants.businessNamePlaceholder", "Nome fantasia")}
               />
             </div>
@@ -328,12 +319,10 @@ export default function TenantForm() {
               <Label htmlFor="taxId">{t("tenants.taxId", "CNPJ")}</Label>
               <Input
                 id="taxId"
-                required
-                value={form.taxId}
+                value={taxId}
                 onChange={handleTaxIdChange}
-                onBlur={handleTaxIdBlur}
-                error={Boolean(taxIdError)}
-                hint={taxIdError || undefined}
+                error={Boolean(errors.taxId)}
+                hint={errors.taxId?.message}
                 maxLength={18}
                 placeholder={t("tenants.taxIdPlaceholder", "00.000.000/0000-00")}
               />
@@ -347,8 +336,8 @@ export default function TenantForm() {
             </Label>
             <Input
               id="companyName"
-              value={form.companyName}
-              onChange={(e) => set("companyName", e.target.value)}
+              value={companyName}
+              onChange={(e) => setValue("companyName", e.target.value)}
               placeholder={t("tenants.companyNamePlaceholder", "Razão social")}
             />
           </div>
@@ -360,7 +349,7 @@ export default function TenantForm() {
               <Input
                 id="phone"
                 type="tel"
-                value={form.phone}
+                value={phone}
                 onChange={handlePhoneChange}
                 maxLength={15}
                 placeholder={t("tenants.phonePlaceholder", "(00) 00000-0000")}
@@ -371,8 +360,8 @@ export default function TenantForm() {
               <Input
                 id="website"
                 type="text"
-                value={form.website}
-                onChange={(e) => set("website", e.target.value)}
+                value={website}
+                onChange={(e) => setValue("website", e.target.value)}
                 placeholder={t("tenants.websitePlaceholder", "Website")}
               />
             </div>
@@ -391,8 +380,8 @@ export default function TenantForm() {
               </Label>
               <Input
                 id="addressLine1"
-                value={form.addressLine1}
-                onChange={(e) => set("addressLine1", e.target.value)}
+                value={addressLine1}
+                onChange={(e) => setValue("addressLine1", e.target.value)}
                 placeholder={t("tenants.addressLine1Placeholder", "Endereço")}
               />
             </div>
@@ -405,8 +394,8 @@ export default function TenantForm() {
                 </Label>
                 <Input
                   id="addressLine2"
-                  value={form.addressLine2}
-                  onChange={(e) => set("addressLine2", e.target.value)}
+                  value={addressLine2}
+                  onChange={(e) => setValue("addressLine2", e.target.value)}
                   placeholder={t("tenants.addressLine2Placeholder", "Complemento")}
                 />
               </div>
@@ -414,7 +403,7 @@ export default function TenantForm() {
                 <Label htmlFor="postalCode">{t("tenants.postalCode", "CEP")}</Label>
                 <Input
                   id="postalCode"
-                  value={form.postalCode}
+                  value={postalCode}
                   onChange={handlePostalCodeChange}
                   maxLength={9}
                   placeholder={t("tenants.postalCodePlaceholder", "00000-000")}
@@ -450,7 +439,7 @@ export default function TenantForm() {
                 </Label>
                 <FilterableCombobox
                   id="stateProvince"
-                  value={form.administrativeArea}
+                  value={administrativeArea}
                   options={provinceOptions}
                   onChange={handleProvinceChange}
                   placeholder={t("tenants.selectState", "Selecione o estado...")}
@@ -462,17 +451,17 @@ export default function TenantForm() {
                 <Label htmlFor="city">{t("tenants.city", "Cidade")}</Label>
                 <FilterableCombobox
                   id="city"
-                  value={form.locality}
+                  value={locality}
                   options={cityOptions}
-                  onChange={(val) => set("locality", val)}
+                  onChange={(val) => setValue("locality", val, { shouldValidate: true })}
                   placeholder={
-                    !form.administrativeArea
+                    !administrativeArea
                       ? t("tenants.selectStateFirst", "Selecione o estado primeiro...")
                       : loadingCities
                       ? t("tenants.loadingCities", "Carregando cidades...")
                       : t("tenants.selectOrSearchCity", "Selecione ou busque a cidade...")
                   }
-                  disabled={!form.administrativeArea}
+                  disabled={!administrativeArea}
                   loading={loadingCities}
                   emptyText={
                     loadingCities
@@ -508,3 +497,5 @@ export default function TenantForm() {
     </>
   );
 }
+
+export default TenantForm;

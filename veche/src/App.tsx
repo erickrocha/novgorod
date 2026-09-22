@@ -1,7 +1,6 @@
 import { BrowserRouter } from "react-router-dom";
 import { Sparkles } from "lucide-react";
 import "./styles/main.scss";
-import { store } from "@/store";
 import { fetchTenantById } from "@/store/tenantSlice";
 import { validateOrRefreshToken } from "@/store/authSlice";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
@@ -9,7 +8,6 @@ import { useTranslation } from "react-i18next";
 import { useEffect } from "react";
 import { ProtectedRoutes } from "@/router/ProtectedRoutes.tsx";
 import { PublicRoutes } from "@/router/PublicRoutes.tsx";
-import { Provider } from "react-redux";
 
 function AppContent() {
   const dispatch = useAppDispatch();
@@ -33,33 +31,12 @@ function AppContent() {
 
   if (isInitializing) {
     return (
-      <div
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          justifyContent: "center",
-          height: "100vh",
-          backgroundColor: "var(--bg-primary)",
-          color: "var(--text-body)",
-        }}
-      >
+      <div className="flex flex-col items-center justify-center min-h-screen bg-[var(--bg-primary)] text-[var(--text-body)]">
         <Sparkles
           size={36}
-          style={{
-            color: "var(--accent-primary)",
-            marginBottom: "1rem",
-            animation: "spin 2s linear infinite",
-          }}
+          className="text-[var(--accent-primary)] mb-4 animate-spin"
         />
-        <p
-          style={{
-            fontSize: "0.9rem",
-            letterSpacing: "0.08em",
-            color: "var(--text-body)",
-            textTransform: "uppercase",
-          }}
-        >
+        <p className="text-[0.9rem] tracking-[0.08em] text-[var(--text-body)] uppercase">
           {t("common.validatingSession")}
         </p>
       </div>
@@ -73,12 +50,12 @@ function AppContent() {
   return <ProtectedRoutes />;
 }
 
-export default function App() {
+export function App() {
   return (
-    <Provider store={store}>
-      <BrowserRouter>
-        <AppContent />
-      </BrowserRouter>
-    </Provider>
+    <BrowserRouter>
+      <AppContent />
+    </BrowserRouter>
   );
 }
+
+export default App;
