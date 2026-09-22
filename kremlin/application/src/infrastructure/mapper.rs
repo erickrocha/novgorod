@@ -6,8 +6,7 @@ use crate::endpoints::json::access_token_json::AccessTokenJson;
 use crate::endpoints::json::campaign_json::{CampaignJson, CampaignTargetJson};
 use crate::endpoints::json::cart_json::{CartItemJson, CartJson};
 use crate::endpoints::json::catalog_json::{
-    CatalogAttributeJson, CatalogAttributeValueJson, CategoryJson, ProductAttributeJson,
-    ProductJson, SkuJson,
+    CatalogAttributeJson, CatalogAttributeValueJson, CategoryJson, ProductAttributeJson, SkuJson,
 };
 use crate::endpoints::json::city_json::CityJson;
 use crate::endpoints::json::coupon_json::{CouponJson, CouponRedemptionJson};
@@ -54,6 +53,7 @@ use business::domain::sku_stock::SkuStock;
 use business::domain::tax_rule::TaxRule;
 use business::domain::tenant::Tenant;
 use business::domain::user::User;
+use crate::endpoints::json::product_json::ProductJson;
 
 pub trait Mapper<T, U> {
     fn json(t: T) -> U;

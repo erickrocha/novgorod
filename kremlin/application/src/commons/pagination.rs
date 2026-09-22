@@ -94,29 +94,52 @@ impl NormalizedPagination {
 #[serde(rename_all = "camelCase")]
 pub struct PagedResponse<T> {
     pub items: Vec<T>,
-    pub total: u64,
-    pub page: u64,
-    pub page_size: u64,
+    pub total: Option<u64>,
+    pub page: Option<u64>,
+    pub page_size: Option<u64>,
+    pub next_cursor: Option<i64>,
 }
 
 impl<T> PagedResponse<T> {
     pub fn new(items: Vec<T>, total: u64, page: u64, page_size: u64) -> Self {
         Self {
             items,
-            total,
-            page,
-            page_size,
+            total: Some(total),
+            page: Some(page),
+            page_size: Some(page_size),
+            next_cursor: None,
         }
     }
 
     pub fn empty(page: u64, page_size: u64) -> Self {
         Self {
             items: Vec::new(),
-            total: 0,
-            page,
-            page_size,
+            total: Some(0),
+            page: Some(page),
+            page_size: Some(page_size),
+            next_cursor: None,
         }
     }
+
+    pub fn page_by_cursor(items: Vec<T>, next_cursor: Option<i64>) -> Self {
+        Self {
+            items,
+            total: None,
+            page: None,
+            page_size: None,
+            next_cursor,
+        }
+    }
+}
+
+#[derive(Debug, Clone, serde::Deserialize, IntoParams)]
+#[serde(rename_all = "camelCase")]
+pub struct CursorPageQuery {
+    pub cursor: Option<i64>,
+    pub limit: Option<u64>,
+    pub q: Option<String>,
+    pub active: Option<bool>,
+    pub brand: Option<String>,
 }
 
 #[cfg(test)]
@@ -197,10 +220,10 @@ mod tests {
         assert!(json.contains(r#""items":["test"]"#));
 
         let empty: PagedResponse<String> = PagedResponse::empty(1, 25);
-        assert_eq!(empty.total, 0);
+        assert_eq!(empty.total.unwrap(), 0);
         assert_eq!(empty.items.len(), 0);
-        assert_eq!(empty.page, 1);
-        assert_eq!(empty.page_size, 25);
+        assert_eq!(empty.page.unwrap(), 1);
+        assert_eq!(empty.page_size.unwrap(), 25);
     }
 
     #[test]

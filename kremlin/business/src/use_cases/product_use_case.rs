@@ -32,6 +32,23 @@ impl ProductUseCase {
         }
     }
 
+    pub async fn find_paged_by_cursor(&self,query: crate::domain::product::ProductSearchQuery) -> (Vec<Product>, Option<i64>) {
+        log::info!("[ProductUseCase::find_paged_by_cursor] Executing find all paged products]");
+        let result = self.gateway.find_paged_by_cursor(query).await;
+
+        match result {
+            Ok(entities) => {
+                let (domains, next_cursor) = entities;
+                let products = ProductEntityMapper::from_models(domains);
+                (products, next_cursor)
+            }
+            Err(e) => {
+                log::error!("[ProductUseCase::find_all] Failed to fetch products: {:?}", e.to_string());
+                (Vec::new(),None)
+            }
+        }
+    }
+
     pub async fn find_by_id(&self, id: i64) -> Result<Product, BusinessError> {
         let entity = self.gateway.find_by_id(id).await.map_err(|e| {
             BusinessError::new(format!("Database error: {}", e))

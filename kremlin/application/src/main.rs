@@ -200,6 +200,8 @@ impl Modify for SecurityAddon {
         endpoints::sku_stock_endpoint::add,
         endpoints::sku_stock_endpoint::update,
         endpoints::sku_stock_endpoint::delete,
+        endpoints::web_store_endpoint::products,
+        endpoints::web_store_endpoint::query_products,
     ),
     components(
         schemas(
@@ -214,7 +216,6 @@ impl Modify for SecurityAddon {
             endpoints::json::catalog_json::CategoryJson,
             endpoints::json::catalog_json::CatalogAttributeJson,
             endpoints::json::catalog_json::CatalogAttributeValueJson,
-            endpoints::json::catalog_json::ProductJson,
             endpoints::json::catalog_json::ProductAttributeJson,
             endpoints::json::catalog_json::SkuJson,
             endpoints::json::catalog_json::CategoryInputJson,
@@ -226,6 +227,7 @@ impl Modify for SecurityAddon {
             endpoints::json::sku_attribute_json::SkuAttributeValueInputJson,
             endpoints::json::sku_stock_json::SkuStockJson,
             endpoints::json::sku_stock_json::SkuStockInputJson,
+            endpoints::json::product_json::ProductJson,
             endpoints::json::product_image_json::ProductImagePresignItemRequest,
             endpoints::json::product_image_json::ProductImagePresignBatchRequest,
             endpoints::json::product_image_json::ProductImagePresignItemResponse,
@@ -263,10 +265,11 @@ impl Modify for SecurityAddon {
             endpoints::json::orders_json::OrderItemInputJson,
             endpoints::json::orders_json::OrderStatusHistoryJson,
             endpoints::json::orders_json::OrderStatusHistoryInputJson,
+            endpoints::json::orders_json::OrderStatusHistoryInputJson,
         ),
     ),
     tags(
-        (name = "Hermes", description = "REST API for Hermes"),
+        (name = "Novgorod", description = "REST API for Novgorod"),
         (name = "Tenant", description = "Tenant management endpoints"),
         (name = "User", description = "User management endpoints"),
         (name = "Province", description = "Province endpoints"),
@@ -295,6 +298,7 @@ impl Modify for SecurityAddon {
         (name = "Orders", description = "Order management endpoints"),
         (name = "OrderItem", description = "Order item endpoints"),
         (name = "OrderStatusHistory", description = "Order status history endpoints"),
+        (name = "WebStore", description = "Web store endpoints"),
     )
 )]
 struct ApiDoc;

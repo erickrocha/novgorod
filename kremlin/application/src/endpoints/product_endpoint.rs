@@ -17,6 +17,7 @@ use business::sea_orm::{
 };
 use business::use_cases::product_use_case::ProductUseCase;
 use entity::product_entity;
+use crate::endpoints::json::product_json::ProductJson;
 use crate::infrastructure::mapper::{Mapper, ProductMapper};
 
 fn tenant_for_write(user: &User, requested: Option<i64>) -> Option<i64> {

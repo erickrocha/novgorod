@@ -103,3 +103,11 @@ impl EntityMapper<Product, Model, ActiveModel> for ProductEntityMapper {
     }
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct ProductSearchQuery {
+    pub cursor: Option<i64>,
+    pub limit: Option<u64>,
+    pub q: Option<String>,
+    pub active: Option<bool>,
+    pub brand: Option<String>,
+}
