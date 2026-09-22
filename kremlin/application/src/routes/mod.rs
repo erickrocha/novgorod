@@ -8,3 +8,4 @@ pub mod resource_routes;
 pub mod shipping_tax_routes;
 pub mod tenant_routes;
 pub mod user_routes;
+pub mod web_store_routes;

@@ -176,7 +176,7 @@ pub async fn paged(
     state: State<AppState>,
     Extension(current_user): Extension<User>,
     Query(params): Query<UserPageQuery>,
-) -> HttpResponse<Json<crate::commons::pagination::PagedResponse<UserJson>>> {
+) -> HttpResponse<Json<PagedResponse<UserJson>>> {
     use business::commons::entity_mapper::EntityMapper;
     use business::domain::user::UserEntityMapper;
     use business::sea_orm::{

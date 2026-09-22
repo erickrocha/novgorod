@@ -1,6 +1,5 @@
 import apiClient from '../api/client';
 import type { Product, ProductCategory, PaginatedResult } from '../types';
-import { MOCK_PRODUCTS, MOCK_CATEGORIES, MOCK_COUPONS } from './mockData';
 
 export interface GetProductsParams {
   category?: string;
@@ -17,74 +16,39 @@ export const catalogService = {
    * Fetch paginated products with filters and search
    */
   async getProducts(params?: GetProductsParams): Promise<PaginatedResult<Product>> {
-    try {
-      const response = await apiClient.get<PaginatedResult<Product>>('/catalog/products', { params });
-      if (response.data && response.data.items) {
-        return response.data;
-      }
-    } catch {
-      // Fallback to local mock catalog data
-    }
-
-    // Filter mock data locally
-    let filtered = [...MOCK_PRODUCTS];
-
-    if (params?.category && params.category !== 'all') {
-      filtered = filtered.filter(p => p.categorySlug === params.category);
-    }
-
-    if (params?.query && params.query.trim() !== '') {
-      const q = params.query.toLowerCase().trim();
-      filtered = filtered.filter(p => 
-        p.name.toLowerCase().includes(q) || 
-        p.description.toLowerCase().includes(q) ||
-        p.category.toLowerCase().includes(q) ||
-        p.tags?.some(tag => tag.toLowerCase().includes(q))
-      );
-    }
-
-    if (params?.minPrice !== undefined) {
-      filtered = filtered.filter(p => p.price >= params.minPrice!);
-    }
-
-    if (params?.maxPrice !== undefined) {
-      filtered = filtered.filter(p => p.price <= params.maxPrice!);
-    }
-
-    // Sorting
-    if (params?.sortBy) {
-      switch (params.sortBy) {
-        case 'price-asc':
-          filtered.sort((a, b) => a.price - b.price);
-          break;
-        case 'price-desc':
-          filtered.sort((a, b) => b.price - a.price);
-          break;
-        case 'rating':
-          filtered.sort((a, b) => b.rating - a.rating);
-          break;
-        case 'newest':
-          filtered.sort((a, b) => (b.isNew ? 1 : 0) - (a.isNew ? 1 : 0));
-          break;
-        default:
-          // featured
-          filtered.sort((a, b) => (b.isFeatured ? 1 : 0) - (a.isFeatured ? 1 : 0));
-      }
-    }
-
     const page = params?.page || 1;
-    const pageSize = params?.pageSize || 12;
-    const total = filtered.length;
-    const totalPages = Math.ceil(total / pageSize);
-    const paginatedItems = filtered.slice((page - 1) * pageSize, page * pageSize);
+    const pageSize = params?.pageSize || 25; // Default to 25 items as requested
 
-    return {
-      items: paginatedItems,
-      total,
+    // Translate frontend params to backend expected params
+    const queryParams: Record<string, any> = {
       page,
-      pageSize,
-      totalPages,
+      page_size: pageSize,
     };
+
+    if (params?.query) {
+      queryParams.q = params.query;
+    }
+
+    // Note: If you need to filter by category, brand, etc., add them here based on backend support.
+    // Assuming backend takes sort_by and sort_dir
+    if (params?.sortBy) {
+      if (params.sortBy === 'price-asc') {
+        queryParams.sort_by = 'price';
+        queryParams.sort_dir = 'asc';
+      } else if (params.sortBy === 'price-desc') {
+        queryParams.sort_by = 'price';
+        queryParams.sort_dir = 'desc';
+      } else if (params.sortBy === 'rating') {
+        queryParams.sort_by = 'rating';
+        queryParams.sort_dir = 'desc';
+      } else if (params.sortBy === 'newest') {
+        queryParams.sort_by = 'created_at';
+        queryParams.sort_dir = 'desc';
+      }
+    }
+
+    const response = await apiClient.get<PaginatedResult<Product>>('/api/public/products/paged', { params: queryParams });
+    return response.data;
   },
 
   /**
@@ -92,57 +56,38 @@ export const catalogService = {
    */
   async getProductBySlug(slug: string): Promise<Product | null> {
     try {
-      const response = await apiClient.get<Product>(`/catalog/products/${slug}`);
-      if (response.data) return response.data;
+      const response = await apiClient.get<PaginatedResult<Product>>(`/api/public/products/paged`, { params: { q: slug, page_size: 1 } });
+      return response.data.items?.[0] || null;
     } catch {
-      // Fallback
+      return null;
     }
-
-    const found = MOCK_PRODUCTS.find(p => p.slug === slug || p.id === slug);
-    return found || null;
   },
 
   /**
    * Fetch all categories
    */
   async getCategories(): Promise<ProductCategory[]> {
-    try {
-      const response = await apiClient.get<ProductCategory[]>('/catalog/categories');
-      if (response.data && Array.isArray(response.data)) return response.data;
-    } catch {
-      // Fallback
-    }
-
-    return MOCK_CATEGORIES;
+    const response = await apiClient.get<ProductCategory[]>('/api/public/categories');
+    return response.data;
   },
 
   /**
    * Fetch featured showcase products for vitrine
    */
   async getFeaturedProducts(): Promise<Product[]> {
-    try {
-      const response = await apiClient.get<Product[]>('/catalog/featured');
-      if (response.data && Array.isArray(response.data)) return response.data;
-    } catch {
-      // Fallback
-    }
-
-    return MOCK_PRODUCTS.filter(p => p.isFeatured);
+    // Calling the paged products with a small page_size and default sorting (or a specific featured filter if supported)
+    const response = await apiClient.get<PaginatedResult<Product>>('/api/public/products/paged', {
+      params: { page: 1, page_size: 10 }
+    });
+    return response.data.items || [];
   },
 
   /**
    * Validate discount coupon code
    */
   async validateCoupon(code: string) {
-    try {
-      const response = await apiClient.post('/marketing/coupons/validate', { code });
-      return response.data;
-    } catch {
-      // Fallback check against mock coupons
-      const match = MOCK_COUPONS.find(c => c.code.toUpperCase() === code.trim().toUpperCase());
-      if (match) return match;
-      throw new Error('Cupom inválido ou expirado');
-    }
+    const response = await apiClient.post('/marketing/coupons/validate', { code });
+    return response.data;
   }
 };
 

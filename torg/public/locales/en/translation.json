@@ -1,0 +1,24 @@
+{
+  "app": {
+    "title": "Torg"
+  },
+  "nav": {
+    "home": "Home",
+    "catalog": "Catalog",
+    "categories": "Categories",
+    "cart": "Cart",
+    "login": "Login"
+  },
+  "catalog": {
+    "products": "Products",
+    "featured": "Featured Products",
+    "noProducts": "No products found.",
+    "searchPlaceholder": "Search products...",
+    "addToCart": "Add to Cart",
+    "price": "Price"
+  },
+  "common": {
+    "loading": "Loading...",
+    "error": "An error occurred."
+  }
+}

@@ -20,11 +20,16 @@ impl ProductUseCase {
         Ok(ProductEntityMapper::from_active_model(entity))
     }
 
-    pub async fn find_all(&self) -> Result<Vec<Product>, BusinessError> {
-        let entities = self.gateway.find_all().await.map_err(|e| {
-            BusinessError::new(format!("Database error: {}", e))
-        })?;
-        Ok(ProductEntityMapper::from_models(entities))
+    pub async fn find_all(&self) -> Vec<Product> {
+        log::info!("[ProductUseCase::find_all] Executing find all products]");
+        let entities = self.gateway.find_all().await;
+        match entities {
+            Ok(entities) => ProductEntityMapper::from_models(entities),
+            Err(e) => {
+                log::error!("[ProductUseCase::find_all] Failed to fetch products: {:?}", e.to_string());
+                Vec::new()
+            }
+        }
     }
 
     pub async fn find_by_id(&self, id: i64) -> Result<Product, BusinessError> {

@@ -15,6 +15,7 @@ use crate::routes::resource_routes::resources_routes;
 use crate::routes::shipping_tax_routes::shipping_tax_routes;
 use crate::routes::tenant_routes::tenant_routes;
 use crate::routes::user_routes::user_routes;
+use crate::routes::web_store_routes::web_store_routes;
 use axum::Router;
 use axum::http::{Method, header};
 use axum::routing::get;
@@ -373,6 +374,7 @@ async fn start() -> anyhow::Result<()> {
         .merge(shipping_tax_routes(state.clone()))
         .nest("/tenant", tenant_routes(state.clone()))
         .nest("/user", user_routes(state.clone()))
+        .nest("/api/public", web_store_routes())
         .layer(cors)
         .with_state(state);
 

@@ -31,3 +31,4 @@ pub mod tax_rule_endpoint;
 pub mod tenant_endpoint;
 pub mod user_endpoint;
 pub mod welcome_endpoint;
+pub mod web_store_endpoint;

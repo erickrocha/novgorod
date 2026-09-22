@@ -57,10 +57,7 @@ const PERSON_SORT_FIELDS: &[&str] = &[
     ),
     security(("bearer_auth" = []))
 )]
-pub async fn list_all(
-    State(state): State<AppState>,
-    Extension(current_user): Extension<User>,
-) -> Json<Vec<PersonJson>> {
+pub async fn list_all(State(state): State<AppState>,Extension(current_user): Extension<User>) -> Json<Vec<PersonJson>> {
     let mut query = person_entity::Entity::find();
     if current_user.role != Role::SysAdmin {
         if let Some(id) = current_user.tenant_id {

@@ -1,0 +1,24 @@
+{
+  "app": {
+    "title": "Torg"
+  },
+  "nav": {
+    "home": "Início",
+    "catalog": "Catálogo",
+    "categories": "Categorias",
+    "cart": "Carrinho",
+    "login": "Entrar"
+  },
+  "catalog": {
+    "products": "Produtos",
+    "featured": "Produtos em Destaque",
+    "noProducts": "Nenhum produto encontrado.",
+    "searchPlaceholder": "Buscar produtos...",
+    "addToCart": "Adicionar",
+    "price": "Preço"
+  },
+  "common": {
+    "loading": "Carregando...",
+    "error": "Ocorreu um erro."
+  }
+}

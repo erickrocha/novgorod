@@ -12,14 +12,22 @@ import {
   User,
   Heart,
   ChevronRight,
+  Globe,
 } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 
 export const Header: React.FC = () => {
+  const { t, i18n } = useTranslation();
   const dispatch = useAppDispatch();
   const navigate = useNavigate();
   const cartSummary = useAppSelector(selectCartSummary);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [searchInput, setSearchInput] = useState('');
+
+  const toggleLanguage = () => {
+    const nextLng = i18n.language === 'en' ? 'pt' : 'en';
+    i18n.changeLanguage(nextLng);
+  };
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -101,10 +109,10 @@ export const Header: React.FC = () => {
           {/* Navigation Links */}
           <nav className="hidden lg:flex items-center gap-6 text-sm font-semibold text-slate-700">
             <Link to="/" className="hover:text-amber-600 transition-colors">
-              Início
+              {t('nav.home')}
             </Link>
             <Link to="/catalogo" className="hover:text-amber-600 transition-colors">
-              Catálogo & Vitrine
+              {t('nav.catalog')}
             </Link>
             <Link to="/catalogo?cat=vinhos-tintos" className="hover:text-amber-600 transition-colors">
               Vinhos
@@ -116,6 +124,15 @@ export const Header: React.FC = () => {
 
           {/* User & Cart Actions */}
           <div className="flex items-center gap-2 sm:gap-3">
+            <button
+              onClick={toggleLanguage}
+              className="flex items-center gap-1 p-2 text-slate-600 hover:text-slate-900 rounded-full hover:bg-slate-100 transition-colors uppercase font-bold text-xs"
+              title="Change Language"
+            >
+              <Globe className="w-5 h-5" />
+              <span>{i18n.language === 'en' ? 'EN' : 'PT'}</span>
+            </button>
+
             <Link
               to="/catalogo"
               className="p-2.5 text-slate-600 hover:text-slate-900 rounded-full hover:bg-slate-100 transition-colors"
@@ -139,7 +156,7 @@ export const Header: React.FC = () => {
               aria-label="Abrir carrinho"
             >
               <ShoppingBag className="w-4 h-4 text-amber-400 group-hover:scale-110 transition-transform" />
-              <span className="hidden sm:inline">Carrinho</span>
+              <span className="hidden sm:inline">{t('nav.cart')}</span>
               <span className="bg-amber-500 text-slate-950 font-black text-xs px-2 py-0.5 rounded-full">
                 {cartSummary.totalItems}
               </span>

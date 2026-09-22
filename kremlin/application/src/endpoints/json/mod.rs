@@ -20,3 +20,4 @@ pub mod sku_stock_json;
 pub mod tax_rule_json;
 pub mod tenant_json;
 pub mod user_json;
+mod page_params;

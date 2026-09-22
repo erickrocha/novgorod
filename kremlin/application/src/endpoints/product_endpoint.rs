@@ -10,11 +10,14 @@ use axum::{
 };
 use business::domain::enums::Role;
 use business::domain::user::User;
+use business::gateway::product_gateway::ProductGateway;
 use business::sea_orm::{
     ActiveModelTrait, ColumnTrait, Condition, EntityTrait, IntoActiveModel, NotSet,
     PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Set,
 };
+use business::use_cases::product_use_case::ProductUseCase;
 use entity::product_entity;
+use crate::infrastructure::mapper::{Mapper, ProductMapper};
 
 fn tenant_for_write(user: &User, requested: Option<i64>) -> Option<i64> {
     match user.role {
@@ -36,40 +39,10 @@ fn can_read_tenant(user: &User, tenant_id: Option<i64>) -> bool {
     ),
     security(("bearer_auth" = []))
 )]
-pub async fn products(
-    State(state): State<AppState>,
-    Extension(current_user): Extension<User>,
-) -> Json<Vec<ProductJson>> {
-    let mut query = product_entity::Entity::find();
-    if current_user.role != Role::SysAdmin {
-        if let Some(id) = current_user.tenant_id {
-            query = query.filter(product_entity::Column::TenantId.eq(id));
-        } else {
-            return Json(Vec::new());
-        }
-    }
-    let r = query
-        .order_by_asc(product_entity::Column::Name)
-        .all(state.conn.as_ref())
-        .await
-        .unwrap_or_default();
-    Json(
-        r.into_iter()
-            .map(|x| ProductJson {
-                id: x.id,
-                uuid: x.uuid.to_string(),
-                tenant_id: x.tenant_id,
-                name: x.name,
-                slug: x.slug,
-                description: x.description,
-                brand: x.brand,
-                active: x.active,
-                ncm: x.ncm,
-                cest: x.cest,
-                origem_mercadoria: x.origem_mercadoria,
-            })
-            .collect(),
-    )
+pub async fn products(State(state): State<AppState>) -> Json<Vec<ProductJson>> {
+    let use_case = ProductUseCase::new(ProductGateway::new(state.conn.as_ref().clone()));
+    let products = use_case.find_all().await;
+    Json(ProductMapper::json_vec(products))
 }
 
 #[derive(Debug, Clone, serde::Deserialize, utoipa::IntoParams)]
@@ -121,10 +94,7 @@ const PRODUCT_SORT_FIELDS: &[&str] = &[
     ),
     security(("bearer_auth" = []))
 )]
-pub async fn products_paged(
-    State(state): State<AppState>,
-    Extension(current_user): Extension<User>,
-    Query(params): Query<ProductPageQuery>,
+pub async fn products_paged(State(state): State<AppState>,Extension(current_user): Extension<User>,Query(params): Query<ProductPageQuery>,
 ) -> Json<PagedResponse<ProductJson>> {
     let norm = NormalizedPagination::new(&params.to_page_query(), PRODUCT_SORT_FIELDS, "name");
     let mut query = product_entity::Entity::find();
