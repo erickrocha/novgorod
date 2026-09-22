@@ -17,10 +17,11 @@ use business::commons::entity_mapper::EntityMapper;
 use business::domain::customer::CustomerEntityMapper;
 use business::domain::enums::Role;
 use business::domain::user::User;
+use business::gateway::customer_gateway::CustomerGateway;
 use business::sea_orm::{
-    ActiveModelTrait, ColumnTrait, Condition, EntityTrait, IntoActiveModel, NotSet,
-    PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Set,
+    ColumnTrait, Condition, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect,
 };
+use business::use_cases::customer_use_case::CustomerUseCase;
 use entity::customer_entity;
 
 fn tenant_for_write(user: &User, requested: Option<i64>) -> Option<i64> {
@@ -57,23 +58,11 @@ const CUSTOMER_SORT_FIELDS: &[&str] = &[
 )]
 pub async fn list_all(
     State(state): State<AppState>,
-    Extension(current_user): Extension<User>,
+    Extension(_current_user): Extension<User>,
 ) -> Json<Vec<CustomerJson>> {
-    let mut query = customer_entity::Entity::find();
-    if current_user.role != Role::SysAdmin {
-        if let Some(id) = current_user.tenant_id {
-            query = query.filter(customer_entity::Column::TenantId.eq(id));
-        } else {
-            return Json(Vec::new());
-        }
-    }
-    let r = query
-        .order_by_asc(customer_entity::Column::Name)
-        .all(state.conn.as_ref())
-        .await
-        .unwrap_or_default();
-    let domains = CustomerEntityMapper::from_models(r);
-    Json(CustomerMapper::json_vec(domains))
+    let usecase = CustomerUseCase::new(CustomerGateway::new(state.conn.as_ref().clone()));
+    let items = usecase.find_all().await;
+    Json(CustomerMapper::json_vec(items))
 }
 
 #[utoipa::path(
@@ -171,14 +160,11 @@ pub async fn get_by_id(
     Extension(current_user): Extension<User>,
     Path(id): Path<i64>,
 ) -> HttpResponse<Json<CustomerJson>> {
-    let item = customer_entity::Entity::find_by_id(id)
-        .one(state.conn.as_ref())
-        .await
-        .map_err(|_| ExceptionResponse::NotFound(locale, ErrorKey::InvalidParameterValue))?
-        .ok_or(ExceptionResponse::NotFound(
-            locale,
-            ErrorKey::InvalidParameterValue,
-        ))?;
+    let usecase = CustomerUseCase::new(CustomerGateway::new(state.conn.as_ref().clone()));
+    let item = usecase.find_by_id(id).await.ok_or(ExceptionResponse::NotFound(
+        locale,
+        ErrorKey::InvalidParameterValue,
+    ))?;
 
     if !can_read_tenant(&current_user, item.tenant_id) {
         return Err(ExceptionResponse::NotFound(
@@ -187,8 +173,7 @@ pub async fn get_by_id(
         ));
     }
 
-    let domain = CustomerEntityMapper::from_model(item);
-    Ok(Json(CustomerMapper::json(domain)))
+    Ok(Json(CustomerMapper::json(item)))
 }
 
 #[utoipa::path(
@@ -222,33 +207,33 @@ pub async fn add(
         ));
     }
 
-    let password_hash = input.password.as_deref().unwrap_or_default().to_string();
+    let mut customer = CustomerMapper::domain(CustomerJson {
+        id: 0,
+        uuid: String::new(),
+        tenant_id: Some(tenant_id),
+        name: input.name.trim().to_string(),
+        email: input.email.trim().to_lowercase(),
+        cpf: input.cpf,
+        phone: input.phone,
+        marketing_consent: input.marketing_consent.unwrap_or(false),
+        active: input.active.unwrap_or(true),
+        created_at: None,
+        updated_at: None,
+    });
+    if let Some(pwd) = input.password {
+        customer.password_hash = pwd;
+    }
 
-    let model = customer_entity::ActiveModel {
-        id: NotSet,
-        uuid: NotSet,
-        tenant_id: Set(Some(tenant_id)),
-        name: Set(input.name.trim().to_string()),
-        email: Set(input.email.trim().to_lowercase()),
-        password_hash: Set(password_hash),
-        cpf: Set(input.cpf),
-        phone: Set(input.phone),
-        marketing_consent: Set(input.marketing_consent.unwrap_or(false)),
-        consent_at: Set(None),
-        active: Set(input.active.unwrap_or(true)),
-        created_at: NotSet,
-        created_by: NotSet,
-        updated_at: NotSet,
-        updated_by: NotSet,
-    };
-
-    let saved = model
-        .insert(state.conn.as_ref())
+    let usecase = CustomerUseCase::new(CustomerGateway::new(state.conn.as_ref().clone()));
+    let saved = usecase
+        .create(customer)
         .await
-        .map_err(|_| ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
+        .ok_or(ExceptionResponse::BadRequest(
+            locale,
+            ErrorKey::InvalidParameterValue,
+        ))?;
 
-    let domain = CustomerEntityMapper::from_model(saved);
-    Ok((StatusCode::CREATED, Json(CustomerMapper::json(domain))))
+    Ok((StatusCode::CREATED, Json(CustomerMapper::json(saved))))
 }
 
 #[utoipa::path(
@@ -274,10 +259,10 @@ pub async fn update(
     Path(id): Path<i64>,
     Json(input): Json<CustomerInputJson>,
 ) -> HttpResponse<Json<CustomerJson>> {
-    let existing = customer_entity::Entity::find_by_id(id)
-        .one(state.conn.as_ref())
+    let usecase = CustomerUseCase::new(CustomerGateway::new(state.conn.as_ref().clone()));
+    let existing = usecase
+        .find_by_id(id)
         .await
-        .map_err(|_| ExceptionResponse::NotFound(locale, ErrorKey::InvalidParameterValue))?
         .ok_or(ExceptionResponse::NotFound(
             locale,
             ErrorKey::InvalidParameterValue,
@@ -299,27 +284,28 @@ pub async fn update(
         ));
     }
 
-    let mut model = existing.into_active_model();
-    model.name = Set(input.name.trim().to_string());
-    model.email = Set(input.email.trim().to_lowercase());
-    if let Some(cpf) = input.cpf {
-        model.cpf = Set(Some(cpf));
-    }
-    if let Some(phone) = input.phone {
-        model.phone = Set(Some(phone));
-    }
-    if let Some(active) = input.active {
-        model.active = Set(active);
-    }
-    if let Some(marketing) = input.marketing_consent {
-        model.marketing_consent = Set(marketing);
-    }
+    let mut customer = CustomerMapper::domain(CustomerJson {
+        id,
+        uuid: existing.uuid.unwrap_or_default(),
+        tenant_id: existing.tenant_id,
+        name: input.name.trim().to_string(),
+        email: input.email.trim().to_lowercase(),
+        cpf: input.cpf.or(existing.cpf),
+        phone: input.phone.or(existing.phone),
+        marketing_consent: input.marketing_consent.unwrap_or(existing.marketing_consent),
+        active: input.active.unwrap_or(existing.active),
+        created_at: existing.created_at,
+        updated_at: existing.updated_at,
+    });
+    customer.password_hash = existing.password_hash;
 
-    let saved = model
-        .update(state.conn.as_ref())
+    let saved = usecase
+        .update(id, customer)
         .await
-        .map_err(|_| ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
+        .ok_or(ExceptionResponse::BadRequest(
+            locale,
+            ErrorKey::InvalidParameterValue,
+        ))?;
 
-    let domain = CustomerEntityMapper::from_model(saved);
-    Ok(Json(CustomerMapper::json(domain)))
+    Ok(Json(CustomerMapper::json(saved)))
 }

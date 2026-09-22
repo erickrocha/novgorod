@@ -17,10 +17,11 @@ use business::commons::entity_mapper::EntityMapper;
 use business::domain::enums::Role;
 use business::domain::product_category::ProductCategoryEntityMapper;
 use business::domain::user::User;
+use business::gateway::product_category_gateway::ProductCategoryGateway;
 use business::sea_orm::{
-    ActiveModelTrait, ColumnTrait, EntityTrait, IntoActiveModel, NotSet, PaginatorTrait,
-    QueryFilter, QueryOrder, QuerySelect, Set,
+    ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect,
 };
+use business::use_cases::product_category_use_case::ProductCategoryUseCase;
 use entity::product_category_entity;
 
 fn tenant_for_write(user: &User, requested: Option<i64>) -> Option<i64> {
@@ -60,23 +61,11 @@ const PRODUCT_CATEGORY_SORT_FIELDS: &[&str] = &[
 )]
 pub async fn list_all(
     State(state): State<AppState>,
-    Extension(current_user): Extension<User>,
+    Extension(_current_user): Extension<User>,
 ) -> Json<Vec<ProductCategoryJson>> {
-    let mut query = product_category_entity::Entity::find();
-    if current_user.role != Role::SysAdmin {
-        if let Some(id) = current_user.tenant_id {
-            query = query.filter(product_category_entity::Column::TenantId.eq(id));
-        } else {
-            return Json(Vec::new());
-        }
-    }
-    let r = query
-        .order_by_asc(product_category_entity::Column::Id)
-        .all(state.conn.as_ref())
-        .await
-        .unwrap_or_default();
-    let domains = ProductCategoryEntityMapper::from_models(r);
-    Json(ProductCategoryMapper::json_vec(domains))
+    let usecase = ProductCategoryUseCase::new(ProductCategoryGateway::new(state.conn.as_ref().clone()));
+    let items = usecase.find_all().await;
+    Json(ProductCategoryMapper::json_vec(items))
 }
 
 #[utoipa::path(
@@ -172,14 +161,11 @@ pub async fn get_by_id(
     Extension(current_user): Extension<User>,
     Path(id): Path<i64>,
 ) -> HttpResponse<Json<ProductCategoryJson>> {
-    let item = product_category_entity::Entity::find_by_id(id)
-        .one(state.conn.as_ref())
-        .await
-        .map_err(|_| ExceptionResponse::NotFound(locale, ErrorKey::InvalidParameterValue))?
-        .ok_or(ExceptionResponse::NotFound(
-            locale,
-            ErrorKey::InvalidParameterValue,
-        ))?;
+    let usecase = ProductCategoryUseCase::new(ProductCategoryGateway::new(state.conn.as_ref().clone()));
+    let item = usecase.find_by_id(id).await.ok_or(ExceptionResponse::NotFound(
+        locale,
+        ErrorKey::InvalidParameterValue,
+    ))?;
 
     if !can_read_tenant(&current_user, item.tenant_id) {
         return Err(ExceptionResponse::NotFound(
@@ -188,8 +174,7 @@ pub async fn get_by_id(
         ));
     }
 
-    let domain = ProductCategoryEntityMapper::from_model(item);
-    Ok(Json(ProductCategoryMapper::json(domain)))
+    Ok(Json(ProductCategoryMapper::json(item)))
 }
 
 #[utoipa::path(
@@ -207,25 +192,12 @@ pub async fn get_by_id(
 )]
 pub async fn by_product(
     State(state): State<AppState>,
-    Extension(current_user): Extension<User>,
+    Extension(_current_user): Extension<User>,
     Path(product_id): Path<i64>,
 ) -> Json<Vec<ProductCategoryJson>> {
-    let mut query = product_category_entity::Entity::find()
-        .filter(product_category_entity::Column::ProductId.eq(product_id));
-    if current_user.role != Role::SysAdmin {
-        if let Some(id) = current_user.tenant_id {
-            query = query.filter(product_category_entity::Column::TenantId.eq(id));
-        } else {
-            return Json(Vec::new());
-        }
-    }
-    let r = query
-        .order_by_desc(product_category_entity::Column::IsPrimary)
-        .all(state.conn.as_ref())
-        .await
-        .unwrap_or_default();
-    let domains = ProductCategoryEntityMapper::from_models(r);
-    Json(ProductCategoryMapper::json_vec(domains))
+    let usecase = ProductCategoryUseCase::new(ProductCategoryGateway::new(state.conn.as_ref().clone()));
+    let items = usecase.find_by_product_id(product_id).await;
+    Json(ProductCategoryMapper::json_vec(items))
 }
 
 #[utoipa::path(
@@ -243,25 +215,12 @@ pub async fn by_product(
 )]
 pub async fn by_category(
     State(state): State<AppState>,
-    Extension(current_user): Extension<User>,
+    Extension(_current_user): Extension<User>,
     Path(category_id): Path<i64>,
 ) -> Json<Vec<ProductCategoryJson>> {
-    let mut query = product_category_entity::Entity::find()
-        .filter(product_category_entity::Column::CategoryId.eq(category_id));
-    if current_user.role != Role::SysAdmin {
-        if let Some(id) = current_user.tenant_id {
-            query = query.filter(product_category_entity::Column::TenantId.eq(id));
-        } else {
-            return Json(Vec::new());
-        }
-    }
-    let r = query
-        .order_by_asc(product_category_entity::Column::Id)
-        .all(state.conn.as_ref())
-        .await
-        .unwrap_or_default();
-    let domains = ProductCategoryEntityMapper::from_models(r);
-    Json(ProductCategoryMapper::json_vec(domains))
+    let usecase = ProductCategoryUseCase::new(ProductCategoryGateway::new(state.conn.as_ref().clone()));
+    let items = usecase.find_by_category_id(category_id).await;
+    Json(ProductCategoryMapper::json_vec(items))
 }
 
 #[utoipa::path(
@@ -295,24 +254,27 @@ pub async fn add(
         ));
     }
 
-    let model = product_category_entity::ActiveModel {
-        id: NotSet,
-        uuid: NotSet,
-        tenant_id: Set(Some(tenant_id)),
-        product_id: Set(input.product_id),
-        category_id: Set(input.category_id),
-        is_primary: Set(input.is_primary),
-        created_at: NotSet,
-        created_by: NotSet,
-    };
+    let pc = ProductCategoryMapper::domain(ProductCategoryJson {
+        id: 0,
+        uuid: String::new(),
+        tenant_id: Some(tenant_id),
+        product_id: input.product_id,
+        category_id: input.category_id,
+        is_primary: input.is_primary,
+        created_at: None,
+        created_by: None,
+    });
 
-    let saved = model
-        .insert(state.conn.as_ref())
+    let usecase = ProductCategoryUseCase::new(ProductCategoryGateway::new(state.conn.as_ref().clone()));
+    let saved = usecase
+        .create(pc)
         .await
-        .map_err(|_| ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
+        .ok_or(ExceptionResponse::BadRequest(
+            locale,
+            ErrorKey::InvalidParameterValue,
+        ))?;
 
-    let domain = ProductCategoryEntityMapper::from_model(saved);
-    Ok((StatusCode::CREATED, Json(ProductCategoryMapper::json(domain))))
+    Ok((StatusCode::CREATED, Json(ProductCategoryMapper::json(saved))))
 }
 
 #[utoipa::path(
@@ -338,10 +300,10 @@ pub async fn update(
     Path(id): Path<i64>,
     Json(input): Json<ProductCategoryInputJson>,
 ) -> HttpResponse<Json<ProductCategoryJson>> {
-    let existing = product_category_entity::Entity::find_by_id(id)
-        .one(state.conn.as_ref())
+    let usecase = ProductCategoryUseCase::new(ProductCategoryGateway::new(state.conn.as_ref().clone()));
+    let existing = usecase
+        .find_by_id(id)
         .await
-        .map_err(|_| ExceptionResponse::NotFound(locale, ErrorKey::InvalidParameterValue))?
         .ok_or(ExceptionResponse::NotFound(
             locale,
             ErrorKey::InvalidParameterValue,
@@ -358,18 +320,26 @@ pub async fn update(
         ));
     }
 
-    let mut model = existing.into_active_model();
-    model.product_id = Set(input.product_id);
-    model.category_id = Set(input.category_id);
-    model.is_primary = Set(input.is_primary);
+    let pc = ProductCategoryMapper::domain(ProductCategoryJson {
+        id,
+        uuid: existing.uuid.unwrap_or_default(),
+        tenant_id: existing.tenant_id,
+        product_id: input.product_id,
+        category_id: input.category_id,
+        is_primary: input.is_primary,
+        created_at: existing.created_at,
+        created_by: existing.created_by,
+    });
 
-    let saved = model
-        .update(state.conn.as_ref())
+    let saved = usecase
+        .update(id, pc)
         .await
-        .map_err(|_| ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
+        .ok_or(ExceptionResponse::BadRequest(
+            locale,
+            ErrorKey::InvalidParameterValue,
+        ))?;
 
-    let domain = ProductCategoryEntityMapper::from_model(saved);
-    Ok(Json(ProductCategoryMapper::json(domain)))
+    Ok(Json(ProductCategoryMapper::json(saved)))
 }
 
 #[utoipa::path(
@@ -392,10 +362,10 @@ pub async fn delete(
     Extension(user): Extension<User>,
     Path(id): Path<i64>,
 ) -> HttpResponse<StatusCode> {
-    let existing = product_category_entity::Entity::find_by_id(id)
-        .one(state.conn.as_ref())
+    let usecase = ProductCategoryUseCase::new(ProductCategoryGateway::new(state.conn.as_ref().clone()));
+    let existing = usecase
+        .find_by_id(id)
         .await
-        .map_err(|_| ExceptionResponse::NotFound(locale, ErrorKey::InvalidParameterValue))?
         .ok_or(ExceptionResponse::NotFound(
             locale,
             ErrorKey::InvalidParameterValue,
@@ -410,10 +380,13 @@ pub async fn delete(
         ));
     }
 
-    product_category_entity::Entity::delete_by_id(id)
-        .exec(state.conn.as_ref())
+    usecase
+        .delete_by_id(id)
         .await
-        .map_err(|_| ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
+        .ok_or(ExceptionResponse::BadRequest(
+            locale,
+            ErrorKey::InvalidParameterValue,
+        ))?;
 
     Ok(StatusCode::NO_CONTENT)
 }

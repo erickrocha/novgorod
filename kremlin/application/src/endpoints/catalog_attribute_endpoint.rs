@@ -1,15 +1,24 @@
 use crate::AppState;
 use crate::commons::pagination::{NormalizedPagination, PageQuery, PagedResponse};
 use crate::endpoints::json::catalog_json::*;
+use crate::infrastructure::mapper::{
+    CatalogAttributeMapper, CatalogAttributeValueMapper, Mapper, ProductAttributeMapper,
+};
 use axum::{
     Json,
     extract::{Extension, Query, State},
 };
 use business::domain::enums::Role;
 use business::domain::user::User;
+use business::gateway::catalog_attribute_gateway::CatalogAttributeGateway;
+use business::gateway::catalog_attribute_value_gateway::CatalogAttributeValueGateway;
+use business::gateway::product_attribute_gateway::ProductAttributeGateway;
 use business::sea_orm::{
     ColumnTrait, Condition, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect,
 };
+use business::use_cases::catalog_attribute_use_case::CatalogAttributeUseCase;
+use business::use_cases::catalog_attribute_value_use_case::CatalogAttributeValueUseCase;
+use business::use_cases::product_attribute_use_case::ProductAttributeUseCase;
 use entity::{catalog_attribute_entity, catalog_attribute_value_entity, product_attribute_entity};
 
 #[utoipa::path(
@@ -23,28 +32,11 @@ use entity::{catalog_attribute_entity, catalog_attribute_value_entity, product_a
 )]
 pub async fn attributes(
     State(state): State<AppState>,
-    Extension(current_user): Extension<User>,
+    Extension(_current_user): Extension<User>,
 ) -> Json<Vec<CatalogAttributeJson>> {
-    let mut query = catalog_attribute_entity::Entity::find();
-    if current_user.role != Role::SysAdmin {
-        if let Some(id) = current_user.tenant_id {
-            query = query.filter(catalog_attribute_entity::Column::TenantId.eq(id));
-        } else {
-            return Json(Vec::new());
-        }
-    }
-    let r = query.all(state.conn.as_ref()).await.unwrap_or_default();
-    Json(
-        r.into_iter()
-            .map(|x| CatalogAttributeJson {
-                id: x.id,
-                uuid: x.uuid.to_string(),
-                tenant_id: x.tenant_id,
-                name: x.name,
-                display_type: x.display_type,
-            })
-            .collect(),
-    )
+    let usecase = CatalogAttributeUseCase::new(CatalogAttributeGateway::new(state.conn.as_ref().clone()));
+    let items = usecase.find_all().await;
+    Json(CatalogAttributeMapper::json_vec(items))
 }
 
 #[utoipa::path(
@@ -58,28 +50,11 @@ pub async fn attributes(
 )]
 pub async fn attribute_values(
     State(state): State<AppState>,
-    Extension(current_user): Extension<User>,
+    Extension(_current_user): Extension<User>,
 ) -> Json<Vec<CatalogAttributeValueJson>> {
-    let mut query = catalog_attribute_value_entity::Entity::find();
-    if current_user.role != Role::SysAdmin {
-        if let Some(id) = current_user.tenant_id {
-            query = query.filter(catalog_attribute_value_entity::Column::TenantId.eq(id));
-        } else {
-            return Json(Vec::new());
-        }
-    }
-    let r = query.all(state.conn.as_ref()).await.unwrap_or_default();
-    Json(
-        r.into_iter()
-            .map(|x| CatalogAttributeValueJson {
-                id: x.id,
-                uuid: x.uuid.to_string(),
-                tenant_id: x.tenant_id,
-                attribute_id: x.attribute_id,
-                value: x.value,
-            })
-            .collect(),
-    )
+    let usecase = CatalogAttributeValueUseCase::new(CatalogAttributeValueGateway::new(state.conn.as_ref().clone()));
+    let items = usecase.find_all().await;
+    Json(CatalogAttributeValueMapper::json_vec(items))
 }
 
 #[utoipa::path(
@@ -93,30 +68,11 @@ pub async fn attribute_values(
 )]
 pub async fn product_attributes(
     State(state): State<AppState>,
-    Extension(current_user): Extension<User>,
+    Extension(_current_user): Extension<User>,
 ) -> Json<Vec<ProductAttributeJson>> {
-    let mut query = product_attribute_entity::Entity::find();
-    if current_user.role != Role::SysAdmin {
-        if let Some(id) = current_user.tenant_id {
-            query = query.filter(product_attribute_entity::Column::TenantId.eq(id));
-        } else {
-            return Json(Vec::new());
-        }
-    }
-    let r = query.all(state.conn.as_ref()).await.unwrap_or_default();
-    Json(
-        r.into_iter()
-            .map(|x| ProductAttributeJson {
-                id: x.id,
-                uuid: x.uuid.to_string(),
-                tenant_id: x.tenant_id,
-                product_id: x.product_id,
-                attribute_id: x.attribute_id,
-                required: x.required,
-                sort_order: x.sort_order,
-            })
-            .collect(),
-    )
+    let usecase = ProductAttributeUseCase::new(ProductAttributeGateway::new(state.conn.as_ref().clone()));
+    let items = usecase.find_all().await;
+    Json(ProductAttributeMapper::json_vec(items))
 }
 
 #[derive(Debug, Clone, serde::Deserialize, utoipa::IntoParams)]

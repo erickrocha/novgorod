@@ -15,12 +15,13 @@ use axum::{
 };
 use business::commons::entity_mapper::EntityMapper;
 use business::domain::enums::Role;
-use business::domain::person_address::PersonAddressEntityMapper;
+use business::domain::person_address::{PersonAddress, PersonAddressEntityMapper};
 use business::domain::user::User;
+use business::gateway::person_address_gateway::PersonAddressGateway;
 use business::sea_orm::{
-    ActiveModelTrait, ColumnTrait, Condition, EntityTrait, IntoActiveModel, NotSet,
-    PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Set,
+    ColumnTrait, Condition, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect,
 };
+use business::use_cases::person_address_use_case::PersonAddressUseCase;
 use entity::person_address_entity;
 
 fn tenant_for_write(user: &User, requested: Option<i64>) -> Option<i64> {
@@ -61,19 +62,11 @@ const PERSON_ADDRESS_SORT_FIELDS: &[&str] = &[
 )]
 pub async fn list_all(
     State(state): State<AppState>,
-    Extension(current_user): Extension<User>,
+    Extension(_current_user): Extension<User>,
 ) -> Json<Vec<PersonAddressJson>> {
-    let mut query = person_address_entity::Entity::find();
-    if current_user.role != Role::SysAdmin {
-        if let Some(id) = current_user.tenant_id {
-            query = query.filter(person_address_entity::Column::TenantId.eq(id));
-        } else {
-            return Json(Vec::new());
-        }
-    }
-    let r = query.all(state.conn.as_ref()).await.unwrap_or_default();
-    let domains = PersonAddressEntityMapper::from_models(r);
-    Json(PersonAddressMapper::json_vec(domains))
+    let usecase = PersonAddressUseCase::new(PersonAddressGateway::new(state.conn.as_ref().clone()));
+    let items = usecase.find_all().await;
+    Json(PersonAddressMapper::json_vec(items))
 }
 
 #[utoipa::path(
@@ -185,10 +178,10 @@ pub async fn get_by_id(
     Extension(current_user): Extension<User>,
     Path(id): Path<i64>,
 ) -> HttpResponse<Json<PersonAddressJson>> {
-    let item = person_address_entity::Entity::find_by_id(id)
-        .one(state.conn.as_ref())
+    let usecase = PersonAddressUseCase::new(PersonAddressGateway::new(state.conn.as_ref().clone()));
+    let item = usecase
+        .find_by_id(id)
         .await
-        .map_err(|_| ExceptionResponse::NotFound(locale, ErrorKey::InvalidParameterValue))?
         .ok_or(ExceptionResponse::NotFound(
             locale,
             ErrorKey::InvalidParameterValue,
@@ -201,8 +194,7 @@ pub async fn get_by_id(
         ));
     }
 
-    let domain = PersonAddressEntityMapper::from_model(item);
-    Ok(Json(PersonAddressMapper::json(domain)))
+    Ok(Json(PersonAddressMapper::json(item)))
 }
 
 #[utoipa::path(
@@ -223,20 +215,18 @@ pub async fn by_person(
     Extension(current_user): Extension<User>,
     Path(person_id): Path<i64>,
 ) -> Json<Vec<PersonAddressJson>> {
-    let mut query = person_address_entity::Entity::find()
-        .filter(person_address_entity::Column::PersonId.eq(person_id));
-
-    if current_user.role != Role::SysAdmin {
+    let usecase = PersonAddressUseCase::new(PersonAddressGateway::new(state.conn.as_ref().clone()));
+    let items = usecase.find_by_person_id(person_id).await;
+    let filtered = if current_user.role != Role::SysAdmin {
         if let Some(id) = current_user.tenant_id {
-            query = query.filter(person_address_entity::Column::TenantId.eq(id));
+            items.into_iter().filter(|a| a.tenant_id == Some(id)).collect()
         } else {
-            return Json(Vec::new());
+            Vec::new()
         }
-    }
-
-    let r = query.all(state.conn.as_ref()).await.unwrap_or_default();
-    let domains = PersonAddressEntityMapper::from_models(r);
-    Json(PersonAddressMapper::json_vec(domains))
+    } else {
+        items
+    };
+    Json(PersonAddressMapper::json_vec(filtered))
 }
 
 #[utoipa::path(
@@ -263,32 +253,32 @@ pub async fn add(
         ExceptionResponse::Forbidden(locale, ErrorKey::InvalidParameterValue),
     )?;
 
-    let model = person_address_entity::ActiveModel {
-        id: NotSet,
-        uuid: NotSet,
-        tenant_id: Set(Some(tenant_id)),
-        person_id: Set(input.person_id),
-        address_line1: Set(input.address_line1),
-        address_line2: Set(input.address_line2),
-        locality: Set(input.locality),
-        administrative_area: Set(input.administrative_area),
-        postal_code: Set(input.postal_code),
-        country_code: Set(input.country_code),
-        created_at: NotSet,
-        created_by: NotSet,
-        updated_at: NotSet,
-        updated_by: NotSet,
+    let domain = PersonAddress {
+        id: None,
+        uuid: None,
+        tenant_id: Some(tenant_id),
+        person_id: input.person_id,
+        address_line1: input.address_line1,
+        address_line2: input.address_line2,
+        locality: input.locality,
+        administrative_area: input.administrative_area,
+        postal_code: input.postal_code,
+        country_code: input.country_code,
+        created_at: None,
+        created_by: None,
+        updated_at: None,
+        updated_by: None,
     };
 
-    let saved = model
-        .insert(state.conn.as_ref())
+    let usecase = PersonAddressUseCase::new(PersonAddressGateway::new(state.conn.as_ref().clone()));
+    let saved = usecase
+        .create(domain)
         .await
-        .map_err(|_| ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
+        .ok_or(ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
 
-    let domain = PersonAddressEntityMapper::from_model(saved);
     Ok((
         StatusCode::CREATED,
-        Json(PersonAddressMapper::json(domain)),
+        Json(PersonAddressMapper::json(saved)),
     ))
 }
 
@@ -315,10 +305,10 @@ pub async fn update(
     Path(id): Path<i64>,
     Json(input): Json<PersonAddressInputJson>,
 ) -> HttpResponse<Json<PersonAddressJson>> {
-    let existing = person_address_entity::Entity::find_by_id(id)
-        .one(state.conn.as_ref())
+    let usecase = PersonAddressUseCase::new(PersonAddressGateway::new(state.conn.as_ref().clone()));
+    let existing = usecase
+        .find_by_id(id)
         .await
-        .map_err(|_| ExceptionResponse::NotFound(locale, ErrorKey::InvalidParameterValue))?
         .ok_or(ExceptionResponse::NotFound(
             locale,
             ErrorKey::InvalidParameterValue,
@@ -333,22 +323,21 @@ pub async fn update(
         ));
     }
 
-    let mut model = existing.into_active_model();
-    model.person_id = Set(input.person_id);
-    model.address_line1 = Set(input.address_line1);
-    model.address_line2 = Set(input.address_line2);
-    model.locality = Set(input.locality);
-    model.administrative_area = Set(input.administrative_area);
-    model.postal_code = Set(input.postal_code);
-    model.country_code = Set(input.country_code);
+    let mut updated = existing;
+    updated.person_id = input.person_id;
+    updated.address_line1 = input.address_line1;
+    updated.address_line2 = input.address_line2;
+    updated.locality = input.locality;
+    updated.administrative_area = input.administrative_area;
+    updated.postal_code = input.postal_code;
+    updated.country_code = input.country_code;
 
-    let saved = model
-        .update(state.conn.as_ref())
+    let saved = usecase
+        .update(id, updated)
         .await
-        .map_err(|_| ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
+        .ok_or(ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
 
-    let domain = PersonAddressEntityMapper::from_model(saved);
-    Ok(Json(PersonAddressMapper::json(domain)))
+    Ok(Json(PersonAddressMapper::json(saved)))
 }
 
 #[utoipa::path(
@@ -371,10 +360,10 @@ pub async fn delete(
     Extension(user): Extension<User>,
     Path(id): Path<i64>,
 ) -> HttpResponse<StatusCode> {
-    let existing = person_address_entity::Entity::find_by_id(id)
-        .one(state.conn.as_ref())
+    let usecase = PersonAddressUseCase::new(PersonAddressGateway::new(state.conn.as_ref().clone()));
+    let existing = usecase
+        .find_by_id(id)
         .await
-        .map_err(|_| ExceptionResponse::NotFound(locale, ErrorKey::InvalidParameterValue))?
         .ok_or(ExceptionResponse::NotFound(
             locale,
             ErrorKey::InvalidParameterValue,
@@ -389,10 +378,10 @@ pub async fn delete(
         ));
     }
 
-    person_address_entity::Entity::delete_by_id(id)
-        .exec(state.conn.as_ref())
+    usecase
+        .delete_by_id(id)
         .await
-        .map_err(|_| ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
+        .ok_or(ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
 
     Ok(StatusCode::NO_CONTENT)
 }

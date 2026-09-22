@@ -10,13 +10,12 @@ use axum::http::StatusCode;
 use axum::{Extension, Json};
 use business::domain::enums::Role;
 use business::domain::user::User;
+use business::gateway::product_gateway::ProductGateway;
 use business::gateway::product_image_gateway::ProductImageGateway;
 use business::use_cases::product_image_use_case::{
     CreateImageUploadRequest, ProductImageUseCase,
 };
-use business::sea_orm::EntityTrait;
-use entity::product_entity;
-
+use business::use_cases::product_use_case::ProductUseCase;
 
 fn can_read_tenant(user: &User, tenant_id: Option<i64>) -> bool {
     user.role == Role::SysAdmin || (user.tenant_id.is_some() && user.tenant_id == tenant_id)
@@ -50,10 +49,10 @@ pub async fn presign(
     Path(id): Path<i64>,
     Json(body): Json<ProductImagePresignBatchRequest>,
 ) -> HttpResponse<(StatusCode, Json<Vec<ProductImagePresignItemResponse>>)> {
-    let product = product_entity::Entity::find_by_id(id)
-        .one(state.conn.as_ref())
+    let product_usecase = ProductUseCase::new(ProductGateway::new(state.conn.as_ref().clone()));
+    let product = product_usecase
+        .find_by_id(id)
         .await
-        .map_err(|_| ExceptionResponse::NotFound(locale, ErrorKey::InvalidParameterValue))?
         .ok_or(ExceptionResponse::NotFound(locale, ErrorKey::InvalidParameterValue))?;
 
     let tenant_id = tenant_for_write(&user, product.tenant_id)
@@ -88,7 +87,7 @@ pub async fn presign(
     let results = use_case
         .request_batch_presigned_upload(id, Some(tenant_id), requests)
         .await
-        .map_err(|_| ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
+        .ok_or(ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
 
     let response_items = results
         .into_iter()
@@ -121,10 +120,10 @@ pub async fn list(
     Extension(user): Extension<User>,
     Path(id): Path<i64>,
 ) -> HttpResponse<Json<Vec<ProductImageJson>>> {
-    let product = product_entity::Entity::find_by_id(id)
-        .one(state.conn.as_ref())
+    let product_usecase = ProductUseCase::new(ProductGateway::new(state.conn.as_ref().clone()));
+    let product = product_usecase
+        .find_by_id(id)
         .await
-        .map_err(|_| ExceptionResponse::NotFound(locale, ErrorKey::InvalidParameterValue))?
         .ok_or(ExceptionResponse::NotFound(locale, ErrorKey::InvalidParameterValue))?;
 
     if !can_read_tenant(&user, product.tenant_id) {
@@ -136,10 +135,7 @@ pub async fn list(
         (*state.storage).clone(),
     );
 
-    let images = use_case
-        .list_by_product(id)
-        .await
-        .map_err(|_| ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
+    let images = use_case.list_by_product(id).await;
 
     Ok(Json(ProductImageMapper::json_vec(images)))
 }
@@ -165,10 +161,10 @@ pub async fn delete(
     Extension(user): Extension<User>,
     Path((id, image_id)): Path<(i64, i64)>,
 ) -> HttpResponse<StatusCode> {
-    let product = product_entity::Entity::find_by_id(id)
-        .one(state.conn.as_ref())
+    let product_usecase = ProductUseCase::new(ProductGateway::new(state.conn.as_ref().clone()));
+    let product = product_usecase
+        .find_by_id(id)
         .await
-        .map_err(|_| ExceptionResponse::NotFound(locale, ErrorKey::InvalidParameterValue))?
         .ok_or(ExceptionResponse::NotFound(locale, ErrorKey::InvalidParameterValue))?;
 
     let _ = tenant_for_write(&user, product.tenant_id)
@@ -182,7 +178,7 @@ pub async fn delete(
     use_case
         .delete_image(id, image_id)
         .await
-        .map_err(|_| ExceptionResponse::NotFound(locale, ErrorKey::InvalidParameterValue))?;
+        .ok_or(ExceptionResponse::NotFound(locale, ErrorKey::InvalidParameterValue))?;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -208,10 +204,10 @@ pub async fn set_primary(
     Extension(user): Extension<User>,
     Path((id, image_id)): Path<(i64, i64)>,
 ) -> HttpResponse<StatusCode> {
-    let product = product_entity::Entity::find_by_id(id)
-        .one(state.conn.as_ref())
+    let product_usecase = ProductUseCase::new(ProductGateway::new(state.conn.as_ref().clone()));
+    let product = product_usecase
+        .find_by_id(id)
         .await
-        .map_err(|_| ExceptionResponse::NotFound(locale, ErrorKey::InvalidParameterValue))?
         .ok_or(ExceptionResponse::NotFound(locale, ErrorKey::InvalidParameterValue))?;
 
     let _ = tenant_for_write(&user, product.tenant_id)
@@ -225,7 +221,7 @@ pub async fn set_primary(
     use_case
         .set_primary(id, image_id)
         .await
-        .map_err(|_| ExceptionResponse::NotFound(locale, ErrorKey::InvalidParameterValue))?;
+        .ok_or(ExceptionResponse::NotFound(locale, ErrorKey::InvalidParameterValue))?;
 
     Ok(StatusCode::OK)
 }

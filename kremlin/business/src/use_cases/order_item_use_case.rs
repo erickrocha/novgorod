@@ -1,6 +1,5 @@
 use crate::commons::entity_mapper::EntityMapper;
 use crate::commons::gateway::Gateway;
-use crate::domain::business_error::BusinessError;
 use crate::domain::order_item::{OrderItem, OrderItemEntityMapper};
 use crate::gateway::order_item_gateway::OrderItemGateway;
 
@@ -13,61 +12,58 @@ impl OrderItemUseCase {
         Self { gateway }
     }
 
-    pub async fn create(&self, item: OrderItem) -> Result<OrderItem, BusinessError> {
+    pub async fn create(&self, item: OrderItem) -> Option<OrderItem> {
         let entity = self.gateway.persist(item).await.map_err(|e| {
-            BusinessError::new(format!("Failed to persist order item: {}", e))
-        })?;
-        Ok(OrderItemEntityMapper::from_active_model(entity))
+            log::error!("Failed to persist order item: {}", e);
+        }).ok()?;
+        Some(OrderItemEntityMapper::from_active_model(entity))
     }
 
-    pub async fn find_all(&self) -> Result<Vec<OrderItem>, BusinessError> {
+    pub async fn find_all(&self) -> Vec<OrderItem> {
         let entities = self.gateway.find_all().await.map_err(|e| {
-            BusinessError::new(format!("Database error: {}", e))
-        })?;
-        Ok(OrderItemEntityMapper::from_models(entities))
+            log::error!("Database error: {}", e);
+        }).unwrap_or_default();
+        OrderItemEntityMapper::from_models(entities)
     }
 
-    pub async fn find_by_id(&self, id: i64) -> Result<OrderItem, BusinessError> {
+    pub async fn find_by_id(&self, id: i64) -> Option<OrderItem> {
         let entity = self.gateway.find_by_id(id).await.map_err(|e| {
-            BusinessError::new(format!("Database error: {}", e))
-        })?;
-        match entity {
-            Some(value) => Ok(OrderItemEntityMapper::from_model(value)),
-            None => Err(BusinessError::new("Order item not found".to_string())),
-        }
+            log::error!("Database error: {}", e);
+        }).ok()??;
+        Some(OrderItemEntityMapper::from_model(entity))
     }
 
-    pub async fn find_by_uuid(&self, uuid: String) -> Result<OrderItem, BusinessError> {
+    pub async fn find_by_uuid(&self, uuid: String) -> Option<OrderItem> {
         let entity = self.gateway.find_by_uuid(uuid).await.map_err(|e| {
-            BusinessError::new(format!("Database error: {}", e))
-        })?;
-        match entity {
-            Some(value) => Ok(OrderItemEntityMapper::from_model(value)),
-            None => Err(BusinessError::new("Order item not found".to_string())),
-        }
+            log::error!("Database error: {}", e);
+        }).ok()??;
+        Some(OrderItemEntityMapper::from_model(entity))
     }
 
-    pub async fn find_by_order_id(&self, order_id: i64) -> Result<Vec<OrderItem>, BusinessError> {
+    pub async fn find_by_order_id(&self, order_id: i64) -> Vec<OrderItem> {
         let entities = self
             .gateway
             .find_by_order_id(order_id)
             .await
-            .map_err(|e| BusinessError::new(format!("Database error: {}", e)))?;
-        Ok(OrderItemEntityMapper::from_models(entities))
+            .map_err(|e| {
+                log::error!("Database error: {}", e);
+            })
+            .unwrap_or_default();
+        OrderItemEntityMapper::from_models(entities)
     }
 
-    pub async fn update(&self, id: i64, mut item: OrderItem) -> Result<OrderItem, BusinessError> {
+    pub async fn update(&self, id: i64, mut item: OrderItem) -> Option<OrderItem> {
         item.id = Some(id);
         let entity = self.gateway.persist(item).await.map_err(|e| {
-            BusinessError::new(format!("Failed to update order item: {}", e))
-        })?;
-        Ok(OrderItemEntityMapper::from_active_model(entity))
+            log::error!("Failed to update order item: {}", e);
+        }).ok()?;
+        Some(OrderItemEntityMapper::from_active_model(entity))
     }
 
-    pub async fn delete_by_id(&self, id: i64) -> Result<(), BusinessError> {
+    pub async fn delete_by_id(&self, id: i64) -> Option<()> {
         self.gateway.delete_by_id(id).await.map_err(|e| {
-            BusinessError::new(format!("Failed to delete order item: {}", e))
-        })?;
-        Ok(())
+            log::error!("Failed to delete order item: {}", e);
+        }).ok()?;
+        Some(())
     }
 }

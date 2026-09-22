@@ -15,12 +15,13 @@ use axum::{
 };
 use business::commons::entity_mapper::EntityMapper;
 use business::domain::enums::Role;
-use business::domain::order_status_history::OrderStatusHistoryEntityMapper;
+use business::domain::order_status_history::{OrderStatusHistory, OrderStatusHistoryEntityMapper};
 use business::domain::user::User;
+use business::gateway::order_status_history_gateway::OrderStatusHistoryGateway;
 use business::sea_orm::{
-    ActiveModelTrait, ColumnTrait, EntityTrait, NotSet, PaginatorTrait, QueryFilter, QueryOrder,
-    QuerySelect, Set,
+    ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect,
 };
+use business::use_cases::order_status_history_use_case::OrderStatusHistoryUseCase;
 use entity::order_status_history_entity;
 
 fn tenant_for_write(user: &User, requested: Option<i64>) -> Option<i64> {
@@ -60,19 +61,11 @@ const ORDER_STATUS_HISTORY_SORT_FIELDS: &[&str] = &[
 )]
 pub async fn list_all(
     State(state): State<AppState>,
-    Extension(current_user): Extension<User>,
+    Extension(_current_user): Extension<User>,
 ) -> Json<Vec<OrderStatusHistoryJson>> {
-    let mut query = order_status_history_entity::Entity::find();
-    if current_user.role != Role::SysAdmin {
-        if let Some(id) = current_user.tenant_id {
-            query = query.filter(order_status_history_entity::Column::TenantId.eq(id));
-        } else {
-            return Json(Vec::new());
-        }
-    }
-    let r = query.all(state.conn.as_ref()).await.unwrap_or_default();
-    let domains = OrderStatusHistoryEntityMapper::from_models(r);
-    Json(OrderStatusHistoryMapper::json_vec(domains))
+    let usecase = OrderStatusHistoryUseCase::new(OrderStatusHistoryGateway::new(state.conn.as_ref().clone()));
+    let items = usecase.find_all().await;
+    Json(OrderStatusHistoryMapper::json_vec(items))
 }
 
 #[utoipa::path(
@@ -165,10 +158,10 @@ pub async fn get_by_id(
     Extension(current_user): Extension<User>,
     Path(id): Path<i64>,
 ) -> HttpResponse<Json<OrderStatusHistoryJson>> {
-    let item = order_status_history_entity::Entity::find_by_id(id)
-        .one(state.conn.as_ref())
+    let usecase = OrderStatusHistoryUseCase::new(OrderStatusHistoryGateway::new(state.conn.as_ref().clone()));
+    let item = usecase
+        .find_by_id(id)
         .await
-        .map_err(|_| ExceptionResponse::NotFound(locale, ErrorKey::InvalidParameterValue))?
         .ok_or(ExceptionResponse::NotFound(
             locale,
             ErrorKey::InvalidParameterValue,
@@ -181,8 +174,7 @@ pub async fn get_by_id(
         ));
     }
 
-    let domain = OrderStatusHistoryEntityMapper::from_model(item);
-    Ok(Json(OrderStatusHistoryMapper::json(domain)))
+    Ok(Json(OrderStatusHistoryMapper::json(item)))
 }
 
 #[utoipa::path(
@@ -216,28 +208,28 @@ pub async fn add(
         ));
     }
 
-    let model = order_status_history_entity::ActiveModel {
-        id: NotSet,
-        uuid: NotSet,
-        tenant_id: Set(Some(tenant_id)),
-        order_id: Set(input.order_id),
-        from_status: Set(input.from_status),
-        to_status: Set(input.to_status.trim().to_string()),
-        actor_type: Set(input.actor_type.trim().to_string()),
-        actor_id: Set(input.actor_id),
-        note: Set(input.note),
-        created_at: NotSet,
-        created_by: NotSet,
+    let domain = OrderStatusHistory {
+        id: None,
+        uuid: None,
+        tenant_id: Some(tenant_id),
+        order_id: input.order_id,
+        from_status: input.from_status,
+        to_status: input.to_status.trim().to_string(),
+        actor_type: input.actor_type.trim().to_string(),
+        actor_id: input.actor_id,
+        note: input.note,
+        created_at: None,
+        created_by: None,
     };
 
-    let saved = model
-        .insert(state.conn.as_ref())
+    let usecase = OrderStatusHistoryUseCase::new(OrderStatusHistoryGateway::new(state.conn.as_ref().clone()));
+    let saved = usecase
+        .create(domain)
         .await
-        .map_err(|_| ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
+        .ok_or(ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
 
-    let domain = OrderStatusHistoryEntityMapper::from_model(saved);
     Ok((
         StatusCode::CREATED,
-        Json(OrderStatusHistoryMapper::json(domain)),
+        Json(OrderStatusHistoryMapper::json(saved)),
     ))
 }

@@ -85,12 +85,12 @@ mod tests {
             .collect();
         let unique: HashSet<&str> = names.iter().copied().collect();
 
-        assert_eq!(names.len(), 28);
+        assert_eq!(names.len(), 30);
         assert_eq!(unique.len(), names.len());
         assert!(names.windows(2).all(|pair| pair[0] < pair[1]));
         assert_eq!(
             names.last().copied(),
-            Some("m20260919_000014_create_table_coupon_redemption")
+            Some("m20260921_000002_create_person_address_table")
         );
     }
 }

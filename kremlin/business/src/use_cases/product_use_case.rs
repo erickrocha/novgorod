@@ -1,6 +1,5 @@
 use crate::commons::entity_mapper::EntityMapper;
 use crate::commons::gateway::Gateway;
-use crate::domain::business_error::BusinessError;
 use crate::domain::product::{Product, ProductEntityMapper};
 use crate::gateway::product_gateway::ProductGateway;
 
@@ -13,11 +12,11 @@ impl ProductUseCase {
         Self { gateway }
     }
 
-    pub async fn create(&self, product: Product) -> Result<Product, BusinessError> {
+    pub async fn create(&self, product: Product) -> Option<Product> {
         let entity = self.gateway.persist(product).await.map_err(|e| {
-            BusinessError::new(format!("Failed to persist product: {}", e))
-        })?;
-        Ok(ProductEntityMapper::from_active_model(entity))
+            log::error!("Failed to persist product: {}", e);
+        }).ok()?;
+        Some(ProductEntityMapper::from_active_model(entity))
     }
 
     pub async fn find_all(&self) -> Vec<Product> {
@@ -32,7 +31,7 @@ impl ProductUseCase {
         }
     }
 
-    pub async fn find_paged_by_cursor(&self,query: crate::domain::product::ProductSearchQuery) -> (Vec<Product>, Option<i64>) {
+    pub async fn find_paged_by_cursor(&self, query: crate::domain::product::ProductSearchQuery) -> (Vec<Product>, Option<i64>) {
         log::info!("[ProductUseCase::find_paged_by_cursor] Executing find all paged products]");
         let result = self.gateway.find_paged_by_cursor(query).await;
 
@@ -44,43 +43,37 @@ impl ProductUseCase {
             }
             Err(e) => {
                 log::error!("[ProductUseCase::find_all] Failed to fetch products: {:?}", e.to_string());
-                (Vec::new(),None)
+                (Vec::new(), None)
             }
         }
     }
 
-    pub async fn find_by_id(&self, id: i64) -> Result<Product, BusinessError> {
+    pub async fn find_by_id(&self, id: i64) -> Option<Product> {
         let entity = self.gateway.find_by_id(id).await.map_err(|e| {
-            BusinessError::new(format!("Database error: {}", e))
-        })?;
-        match entity {
-            Some(value) => Ok(ProductEntityMapper::from_model(value)),
-            None => Err(BusinessError::new("Product not found".to_string())),
-        }
+            log::error!("Database error: {}", e);
+        }).ok()??;
+        Some(ProductEntityMapper::from_model(entity))
     }
 
-    pub async fn find_by_uuid(&self, uuid: String) -> Result<Product, BusinessError> {
+    pub async fn find_by_uuid(&self, uuid: String) -> Option<Product> {
         let entity = self.gateway.find_by_uuid(uuid).await.map_err(|e| {
-            BusinessError::new(format!("Database error: {}", e))
-        })?;
-        match entity {
-            Some(value) => Ok(ProductEntityMapper::from_model(value)),
-            None => Err(BusinessError::new("Product not found".to_string())),
-        }
+            log::error!("Database error: {}", e);
+        }).ok()??;
+        Some(ProductEntityMapper::from_model(entity))
     }
 
-    pub async fn update(&self, id: i64, mut product: Product) -> Result<Product, BusinessError> {
+    pub async fn update(&self, id: i64, mut product: Product) -> Option<Product> {
         product.id = Some(id);
         let entity = self.gateway.persist(product).await.map_err(|e| {
-            BusinessError::new(format!("Failed to update product: {}", e))
-        })?;
-        Ok(ProductEntityMapper::from_active_model(entity))
+            log::error!("Failed to update product: {}", e);
+        }).ok()?;
+        Some(ProductEntityMapper::from_active_model(entity))
     }
 
-    pub async fn delete_by_id(&self, id: i64) -> Result<(), BusinessError> {
+    pub async fn delete_by_id(&self, id: i64) -> Option<()> {
         self.gateway.delete_by_id(id).await.map_err(|e| {
-            BusinessError::new(format!("Failed to delete product: {}", e))
-        })?;
-        Ok(())
+            log::error!("Failed to delete product: {}", e);
+        }).ok()?;
+        Some(())
     }
 }

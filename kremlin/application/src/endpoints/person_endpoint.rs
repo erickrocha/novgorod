@@ -15,12 +15,13 @@ use axum::{
 };
 use business::commons::entity_mapper::EntityMapper;
 use business::domain::enums::Role;
-use business::domain::person::PersonEntityMapper;
+use business::domain::person::{Person, PersonEntityMapper};
 use business::domain::user::User;
+use business::gateway::person_gateway::PersonGateway;
 use business::sea_orm::{
-    ActiveModelTrait, ColumnTrait, Condition, EntityTrait, IntoActiveModel, NotSet,
-    PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Set,
+    ColumnTrait, Condition, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect,
 };
+use business::use_cases::person_use_case::PersonUseCase;
 use entity::person_entity;
 
 fn tenant_for_write(user: &User, requested: Option<i64>) -> Option<i64> {
@@ -57,23 +58,13 @@ const PERSON_SORT_FIELDS: &[&str] = &[
     ),
     security(("bearer_auth" = []))
 )]
-pub async fn list_all(State(state): State<AppState>,Extension(current_user): Extension<User>) -> Json<Vec<PersonJson>> {
-    let mut query = person_entity::Entity::find();
-    if current_user.role != Role::SysAdmin {
-        if let Some(id) = current_user.tenant_id {
-            query = query.filter(person_entity::Column::TenantId.eq(id));
-        } else {
-            return Json(Vec::new());
-        }
-    }
-    let r = query
-        .order_by_asc(person_entity::Column::Surname)
-        .order_by_asc(person_entity::Column::FirstName)
-        .all(state.conn.as_ref())
-        .await
-        .unwrap_or_default();
-    let domains = PersonEntityMapper::from_models(r);
-    Json(PersonMapper::json_vec(domains))
+pub async fn list_all(
+    State(state): State<AppState>,
+    Extension(_current_user): Extension<User>,
+) -> Json<Vec<PersonJson>> {
+    let usecase = PersonUseCase::new(PersonGateway::new(state.conn.as_ref().clone()));
+    let items = usecase.find_all().await;
+    Json(PersonMapper::json_vec(items))
 }
 
 #[utoipa::path(
@@ -178,10 +169,10 @@ pub async fn get_by_id(
     Extension(current_user): Extension<User>,
     Path(id): Path<i64>,
 ) -> HttpResponse<Json<PersonJson>> {
-    let item = person_entity::Entity::find_by_id(id)
-        .one(state.conn.as_ref())
+    let usecase = PersonUseCase::new(PersonGateway::new(state.conn.as_ref().clone()));
+    let item = usecase
+        .find_by_id(id)
         .await
-        .map_err(|_| ExceptionResponse::NotFound(locale, ErrorKey::InvalidParameterValue))?
         .ok_or(ExceptionResponse::NotFound(
             locale,
             ErrorKey::InvalidParameterValue,
@@ -194,8 +185,7 @@ pub async fn get_by_id(
         ));
     }
 
-    let domain = PersonEntityMapper::from_model(item);
-    Ok(Json(PersonMapper::json(domain)))
+    Ok(Json(PersonMapper::json(item)))
 }
 
 #[utoipa::path(
@@ -229,31 +219,31 @@ pub async fn add(
         ));
     }
 
-    let model = person_entity::ActiveModel {
-        id: NotSet,
-        uuid: NotSet,
-        tenant_id: Set(Some(tenant_id)),
-        user_id: Set(input.user_id),
-        first_name: Set(input.first_name.trim().to_string()),
-        surname: Set(input.surname.map(|s| s.trim().to_string()).filter(|s| !s.is_empty())),
-        date_of_birth: Set(input.date_of_birth),
-        gender: Set(input.gender.map(|g| g.trim().to_string()).filter(|g| !g.is_empty())),
-        avatar: Set(input.avatar),
-        phone: Set(input.phone),
-        email: Set(input.email.map(|e| e.trim().to_lowercase()).filter(|e| !e.is_empty())),
-        created_at: NotSet,
-        created_by: NotSet,
-        updated_at: NotSet,
-        updated_by: NotSet,
+    let domain = Person {
+        id: None,
+        uuid: None,
+        tenant_id: Some(tenant_id),
+        user_id: input.user_id,
+        first_name: input.first_name.trim().to_string(),
+        surname: input.surname.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
+        date_of_birth: input.date_of_birth,
+        gender: input.gender.map(|g| g.trim().to_string()).filter(|g| !g.is_empty()),
+        avatar: input.avatar,
+        phone: input.phone,
+        email: input.email.map(|e| e.trim().to_lowercase()).filter(|e| !e.is_empty()),
+        created_at: None,
+        created_by: None,
+        updated_at: None,
+        updated_by: None,
     };
 
-    let saved = model
-        .insert(state.conn.as_ref())
+    let usecase = PersonUseCase::new(PersonGateway::new(state.conn.as_ref().clone()));
+    let saved = usecase
+        .create(domain)
         .await
-        .map_err(|_| ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
+        .ok_or(ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
 
-    let domain = PersonEntityMapper::from_model(saved);
-    Ok((StatusCode::CREATED, Json(PersonMapper::json(domain))))
+    Ok((StatusCode::CREATED, Json(PersonMapper::json(saved))))
 }
 
 #[utoipa::path(
@@ -279,10 +269,10 @@ pub async fn update(
     Path(id): Path<i64>,
     Json(input): Json<PersonInputJson>,
 ) -> HttpResponse<Json<PersonJson>> {
-    let existing = person_entity::Entity::find_by_id(id)
-        .one(state.conn.as_ref())
+    let usecase = PersonUseCase::new(PersonGateway::new(state.conn.as_ref().clone()));
+    let existing = usecase
+        .find_by_id(id)
         .await
-        .map_err(|_| ExceptionResponse::NotFound(locale, ErrorKey::InvalidParameterValue))?
         .ok_or(ExceptionResponse::NotFound(
             locale,
             ErrorKey::InvalidParameterValue,
@@ -304,29 +294,28 @@ pub async fn update(
         ));
     }
 
-    let mut model = existing.into_active_model();
-    model.user_id = Set(input.user_id);
-    model.first_name = Set(input.first_name.trim().to_string());
-    model.surname = Set(input.surname.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()));
-    model.date_of_birth = Set(input.date_of_birth);
-    model.gender = Set(input.gender.map(|g| g.trim().to_string()).filter(|g| !g.is_empty()));
+    let mut updated = existing;
+    updated.user_id = input.user_id;
+    updated.first_name = input.first_name.trim().to_string();
+    updated.surname = input.surname.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    updated.date_of_birth = input.date_of_birth;
+    updated.gender = input.gender.map(|g| g.trim().to_string()).filter(|g| !g.is_empty());
     if let Some(avatar) = input.avatar {
-        model.avatar = Set(Some(avatar));
+        updated.avatar = Some(avatar);
     }
     if let Some(phone) = input.phone {
-        model.phone = Set(Some(phone));
+        updated.phone = Some(phone);
     }
     if let Some(email) = input.email {
-        model.email = Set(Some(email.trim().to_lowercase()));
+        updated.email = Some(email.trim().to_lowercase());
     }
 
-    let saved = model
-        .update(state.conn.as_ref())
+    let saved = usecase
+        .update(id, updated)
         .await
-        .map_err(|_| ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
+        .ok_or(ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
 
-    let domain = PersonEntityMapper::from_model(saved);
-    Ok(Json(PersonMapper::json(domain)))
+    Ok(Json(PersonMapper::json(saved)))
 }
 
 #[utoipa::path(
@@ -349,10 +338,10 @@ pub async fn delete(
     Extension(user): Extension<User>,
     Path(id): Path<i64>,
 ) -> HttpResponse<StatusCode> {
-    let existing = person_entity::Entity::find_by_id(id)
-        .one(state.conn.as_ref())
+    let usecase = PersonUseCase::new(PersonGateway::new(state.conn.as_ref().clone()));
+    let existing = usecase
+        .find_by_id(id)
         .await
-        .map_err(|_| ExceptionResponse::NotFound(locale, ErrorKey::InvalidParameterValue))?
         .ok_or(ExceptionResponse::NotFound(
             locale,
             ErrorKey::InvalidParameterValue,
@@ -367,10 +356,10 @@ pub async fn delete(
         ));
     }
 
-    person_entity::Entity::delete_by_id(id)
-        .exec(state.conn.as_ref())
+    usecase
+        .delete_by_id(id)
         .await
-        .map_err(|_| ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
+        .ok_or(ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
 
     Ok(StatusCode::NO_CONTENT)
 }

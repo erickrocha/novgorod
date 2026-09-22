@@ -14,13 +14,14 @@ use axum::{
     extract::{Extension, Path, Query, State},
 };
 use business::commons::entity_mapper::EntityMapper;
-use business::domain::coupon_redemption::CouponRedemptionEntityMapper;
+use business::domain::coupon_redemption::{CouponRedemption, CouponRedemptionEntityMapper};
 use business::domain::enums::Role;
 use business::domain::user::User;
+use business::gateway::coupon_redemption_gateway::CouponRedemptionGateway;
 use business::sea_orm::{
-    ActiveModelTrait, ColumnTrait, EntityTrait, NotSet, PaginatorTrait, QueryFilter, QueryOrder,
-    QuerySelect, Set,
+    ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect,
 };
+use business::use_cases::coupon_redemption_use_case::CouponRedemptionUseCase;
 use entity::coupon_redemption_entity;
 
 fn tenant_for_write(user: &User, requested: Option<i64>) -> Option<i64> {
@@ -60,19 +61,11 @@ const COUPON_REDEMPTION_SORT_FIELDS: &[&str] = &[
 )]
 pub async fn list_all(
     State(state): State<AppState>,
-    Extension(current_user): Extension<User>,
+    Extension(_current_user): Extension<User>,
 ) -> Json<Vec<CouponRedemptionJson>> {
-    let mut query = coupon_redemption_entity::Entity::find();
-    if current_user.role != Role::SysAdmin {
-        if let Some(id) = current_user.tenant_id {
-            query = query.filter(coupon_redemption_entity::Column::TenantId.eq(id));
-        } else {
-            return Json(Vec::new());
-        }
-    }
-    let r = query.all(state.conn.as_ref()).await.unwrap_or_default();
-    let domains = CouponRedemptionEntityMapper::from_models(r);
-    Json(CouponRedemptionMapper::json_vec(domains))
+    let usecase = CouponRedemptionUseCase::new(CouponRedemptionGateway::new(state.conn.as_ref().clone()));
+    let items = usecase.find_all().await;
+    Json(CouponRedemptionMapper::json_vec(items))
 }
 
 #[utoipa::path(
@@ -170,10 +163,10 @@ pub async fn get_by_id(
     Extension(current_user): Extension<User>,
     Path(id): Path<i64>,
 ) -> HttpResponse<Json<CouponRedemptionJson>> {
-    let item = coupon_redemption_entity::Entity::find_by_id(id)
-        .one(state.conn.as_ref())
+    let usecase = CouponRedemptionUseCase::new(CouponRedemptionGateway::new(state.conn.as_ref().clone()));
+    let item = usecase
+        .find_by_id(id)
         .await
-        .map_err(|_| ExceptionResponse::NotFound(locale, ErrorKey::InvalidParameterValue))?
         .ok_or(ExceptionResponse::NotFound(
             locale,
             ErrorKey::InvalidParameterValue,
@@ -186,8 +179,7 @@ pub async fn get_by_id(
         ));
     }
 
-    let domain = CouponRedemptionEntityMapper::from_model(item);
-    Ok(Json(CouponRedemptionMapper::json(domain)))
+    Ok(Json(CouponRedemptionMapper::json(item)))
 }
 
 #[utoipa::path(
@@ -214,25 +206,25 @@ pub async fn add(
         ExceptionResponse::Forbidden(locale, ErrorKey::InvalidParameterValue),
     )?;
 
-    let model = coupon_redemption_entity::ActiveModel {
-        id: NotSet,
-        uuid: NotSet,
-        tenant_id: Set(Some(tenant_id)),
-        coupon_id: Set(input.coupon_id),
-        order_id: Set(input.order_id),
-        customer_id: Set(input.customer_id),
-        created_at: NotSet,
-        created_by: NotSet,
+    let domain = CouponRedemption {
+        id: None,
+        uuid: None,
+        tenant_id: Some(tenant_id),
+        coupon_id: input.coupon_id,
+        order_id: input.order_id,
+        customer_id: input.customer_id,
+        created_at: None,
+        created_by: None,
     };
 
-    let saved = model
-        .insert(state.conn.as_ref())
+    let usecase = CouponRedemptionUseCase::new(CouponRedemptionGateway::new(state.conn.as_ref().clone()));
+    let saved = usecase
+        .create(domain)
         .await
-        .map_err(|_| ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
+        .ok_or(ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
 
-    let domain = CouponRedemptionEntityMapper::from_model(saved);
     Ok((
         StatusCode::CREATED,
-        Json(CouponRedemptionMapper::json(domain)),
+        Json(CouponRedemptionMapper::json(saved)),
     ))
 }

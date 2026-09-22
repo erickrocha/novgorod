@@ -15,12 +15,13 @@ use axum::{
 };
 use business::commons::entity_mapper::EntityMapper;
 use business::domain::enums::Role;
-use business::domain::tax_rule::TaxRuleEntityMapper;
+use business::domain::tax_rule::{TaxRule, TaxRuleEntityMapper};
 use business::domain::user::User;
+use business::gateway::tax_rule_gateway::TaxRuleGateway;
 use business::sea_orm::{
-    ActiveModelTrait, ColumnTrait, Condition, EntityTrait, IntoActiveModel, NotSet,
-    PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Set,
+    ColumnTrait, Condition, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect,
 };
+use business::use_cases::tax_rule_use_case::TaxRuleUseCase;
 use entity::tax_rule_entity;
 
 fn tenant_for_write(user: &User, requested: Option<i64>) -> Option<i64> {
@@ -60,19 +61,11 @@ const TAX_RULE_SORT_FIELDS: &[&str] = &[
 )]
 pub async fn list_all(
     State(state): State<AppState>,
-    Extension(current_user): Extension<User>,
+    Extension(_current_user): Extension<User>,
 ) -> Json<Vec<TaxRuleJson>> {
-    let mut query = tax_rule_entity::Entity::find();
-    if current_user.role != Role::SysAdmin {
-        if let Some(id) = current_user.tenant_id {
-            query = query.filter(tax_rule_entity::Column::TenantId.eq(id));
-        } else {
-            return Json(Vec::new());
-        }
-    }
-    let r = query.all(state.conn.as_ref()).await.unwrap_or_default();
-    let domains = TaxRuleEntityMapper::from_models(r);
-    Json(TaxRuleMapper::json_vec(domains))
+    let usecase = TaxRuleUseCase::new(TaxRuleGateway::new(state.conn.as_ref().clone()));
+    let items = usecase.find_all().await;
+    Json(TaxRuleMapper::json_vec(items))
 }
 
 #[utoipa::path(
@@ -181,10 +174,10 @@ pub async fn get_by_id(
     Extension(current_user): Extension<User>,
     Path(id): Path<i64>,
 ) -> HttpResponse<Json<TaxRuleJson>> {
-    let item = tax_rule_entity::Entity::find_by_id(id)
-        .one(state.conn.as_ref())
+    let usecase = TaxRuleUseCase::new(TaxRuleGateway::new(state.conn.as_ref().clone()));
+    let item = usecase
+        .find_by_id(id)
         .await
-        .map_err(|_| ExceptionResponse::NotFound(locale, ErrorKey::InvalidParameterValue))?
         .ok_or(ExceptionResponse::NotFound(
             locale,
             ErrorKey::InvalidParameterValue,
@@ -197,8 +190,7 @@ pub async fn get_by_id(
         ));
     }
 
-    let domain = TaxRuleEntityMapper::from_model(item);
-    Ok(Json(TaxRuleMapper::json(domain)))
+    Ok(Json(TaxRuleMapper::json(item)))
 }
 
 #[utoipa::path(
@@ -236,31 +228,31 @@ pub async fn add(
         ));
     }
 
-    let model = tax_rule_entity::ActiveModel {
-        id: NotSet,
-        uuid: NotSet,
-        tenant_id: Set(Some(tenant_id)),
-        uf_origem: Set(input.uf_origem.trim().to_uppercase()),
-        uf_destino: Set(input.uf_destino.trim().to_uppercase()),
-        ncm_prefix: Set(input.ncm_prefix),
-        regime: Set(input.regime),
-        csosn: Set(input.csosn),
-        cfop: Set(input.cfop),
-        icms_rate_bp: Set(input.icms_rate_bp),
-        active: Set(input.active.unwrap_or(true)),
-        created_at: NotSet,
-        created_by: NotSet,
-        updated_at: NotSet,
-        updated_by: NotSet,
+    let domain = TaxRule {
+        id: None,
+        uuid: None,
+        tenant_id: Some(tenant_id),
+        uf_origem: input.uf_origem.trim().to_uppercase(),
+        uf_destino: input.uf_destino.trim().to_uppercase(),
+        ncm_prefix: input.ncm_prefix,
+        regime: input.regime,
+        csosn: input.csosn,
+        cfop: input.cfop,
+        icms_rate_bp: input.icms_rate_bp,
+        active: input.active.unwrap_or(true),
+        created_at: None,
+        created_by: None,
+        updated_at: None,
+        updated_by: None,
     };
 
-    let saved = model
-        .insert(state.conn.as_ref())
+    let usecase = TaxRuleUseCase::new(TaxRuleGateway::new(state.conn.as_ref().clone()));
+    let saved = usecase
+        .create(domain)
         .await
-        .map_err(|_| ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
+        .ok_or(ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
 
-    let domain = TaxRuleEntityMapper::from_model(saved);
-    Ok((StatusCode::CREATED, Json(TaxRuleMapper::json(domain))))
+    Ok((StatusCode::CREATED, Json(TaxRuleMapper::json(saved))))
 }
 
 #[utoipa::path(
@@ -286,10 +278,10 @@ pub async fn update(
     Path(id): Path<i64>,
     Json(input): Json<TaxRuleInputJson>,
 ) -> HttpResponse<Json<TaxRuleJson>> {
-    let existing = tax_rule_entity::Entity::find_by_id(id)
-        .one(state.conn.as_ref())
+    let usecase = TaxRuleUseCase::new(TaxRuleGateway::new(state.conn.as_ref().clone()));
+    let existing = usecase
+        .find_by_id(id)
         .await
-        .map_err(|_| ExceptionResponse::NotFound(locale, ErrorKey::InvalidParameterValue))?
         .ok_or(ExceptionResponse::NotFound(
             locale,
             ErrorKey::InvalidParameterValue,
@@ -304,23 +296,22 @@ pub async fn update(
         ));
     }
 
-    let mut model = existing.into_active_model();
-    model.uf_origem = Set(input.uf_origem.trim().to_uppercase());
-    model.uf_destino = Set(input.uf_destino.trim().to_uppercase());
-    model.ncm_prefix = Set(input.ncm_prefix);
-    model.regime = Set(input.regime);
-    model.csosn = Set(input.csosn);
-    model.cfop = Set(input.cfop);
-    model.icms_rate_bp = Set(input.icms_rate_bp);
+    let mut updated = existing;
+    updated.uf_origem = input.uf_origem.trim().to_uppercase();
+    updated.uf_destino = input.uf_destino.trim().to_uppercase();
+    updated.ncm_prefix = input.ncm_prefix;
+    updated.regime = input.regime;
+    updated.csosn = input.csosn;
+    updated.cfop = input.cfop;
+    updated.icms_rate_bp = input.icms_rate_bp;
     if let Some(act) = input.active {
-        model.active = Set(act);
+        updated.active = act;
     }
 
-    let saved = model
-        .update(state.conn.as_ref())
+    let saved = usecase
+        .update(id, updated)
         .await
-        .map_err(|_| ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
+        .ok_or(ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
 
-    let domain = TaxRuleEntityMapper::from_model(saved);
-    Ok(Json(TaxRuleMapper::json(domain)))
+    Ok(Json(TaxRuleMapper::json(saved)))
 }

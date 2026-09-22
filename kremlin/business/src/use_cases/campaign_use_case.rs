@@ -1,6 +1,5 @@
 use crate::commons::entity_mapper::EntityMapper;
 use crate::commons::gateway::Gateway;
-use crate::domain::business_error::BusinessError;
 use crate::domain::campaign::{Campaign, CampaignEntityMapper};
 use crate::gateway::campaign_gateway::CampaignGateway;
 
@@ -13,52 +12,66 @@ impl CampaignUseCase {
         Self { gateway }
     }
 
-    pub async fn create(&self, campaign: Campaign) -> Result<Campaign, BusinessError> {
-        let entity = self.gateway.persist(campaign).await.map_err(|e| {
-            BusinessError::new(format!("Failed to persist campaign: {}", e))
-        })?;
-        Ok(CampaignEntityMapper::from_active_model(entity))
-    }
-
-    pub async fn find_all(&self) -> Result<Vec<Campaign>, BusinessError> {
-        let entities = self.gateway.find_all().await.map_err(|e| {
-            BusinessError::new(format!("Database error: {}", e))
-        })?;
-        Ok(CampaignEntityMapper::from_models(entities))
-    }
-
-    pub async fn find_by_id(&self, id: i64) -> Result<Campaign, BusinessError> {
-        let entity = self.gateway.find_by_id(id).await.map_err(|e| {
-            BusinessError::new(format!("Database error: {}", e))
-        })?;
-        match entity {
-            Some(value) => Ok(CampaignEntityMapper::from_model(value)),
-            None => Err(BusinessError::new("Campaign not found".to_string())),
+    pub async fn create(&self, campaign: Campaign) -> Option<Campaign> {
+        match self.gateway.persist(campaign).await {
+            Ok(entity) => Some(CampaignEntityMapper::from_active_model(entity)),
+            Err(e) => {
+                log::error!("Failed to persist campaign: {}", e);
+                None
+            }
         }
     }
 
-    pub async fn find_by_uuid(&self, uuid: String) -> Result<Campaign, BusinessError> {
-        let entity = self.gateway.find_by_uuid(uuid).await.map_err(|e| {
-            BusinessError::new(format!("Database error: {}", e))
-        })?;
-        match entity {
-            Some(value) => Ok(CampaignEntityMapper::from_model(value)),
-            None => Err(BusinessError::new("Campaign not found".to_string())),
+    pub async fn find_all(&self) -> Vec<Campaign> {
+        match self.gateway.find_all().await {
+            Ok(entities) => CampaignEntityMapper::from_models(entities),
+            Err(e) => {
+                log::error!("Database error: {}", e);
+                Vec::new()
+            }
         }
     }
 
-    pub async fn update(&self, id: i64, mut campaign: Campaign) -> Result<Campaign, BusinessError> {
+    pub async fn find_by_id(&self, id: i64) -> Option<Campaign> {
+        match self.gateway.find_by_id(id).await {
+            Ok(Some(value)) => Some(CampaignEntityMapper::from_model(value)),
+            Ok(None) => None,
+            Err(e) => {
+                log::error!("Database error: {}", e);
+                None
+            }
+        }
+    }
+
+    pub async fn find_by_uuid(&self, uuid: String) -> Option<Campaign> {
+        match self.gateway.find_by_uuid(uuid).await {
+            Ok(Some(value)) => Some(CampaignEntityMapper::from_model(value)),
+            Ok(None) => None,
+            Err(e) => {
+                log::error!("Database error: {}", e);
+                None
+            }
+        }
+    }
+
+    pub async fn update(&self, id: i64, mut campaign: Campaign) -> Option<Campaign> {
         campaign.id = Some(id);
-        let entity = self.gateway.persist(campaign).await.map_err(|e| {
-            BusinessError::new(format!("Failed to update campaign: {}", e))
-        })?;
-        Ok(CampaignEntityMapper::from_active_model(entity))
+        match self.gateway.persist(campaign).await {
+            Ok(entity) => Some(CampaignEntityMapper::from_active_model(entity)),
+            Err(e) => {
+                log::error!("Failed to update campaign: {}", e);
+                None
+            }
+        }
     }
 
-    pub async fn delete_by_id(&self, id: i64) -> Result<(), BusinessError> {
-        self.gateway.delete_by_id(id).await.map_err(|e| {
-            BusinessError::new(format!("Failed to delete campaign: {}", e))
-        })?;
-        Ok(())
+    pub async fn delete_by_id(&self, id: i64) -> Option<()> {
+        match self.gateway.delete_by_id(id).await {
+            Ok(_) => Some(()),
+            Err(e) => {
+                log::error!("Failed to delete campaign: {}", e);
+                None
+            }
+        }
     }
 }

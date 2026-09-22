@@ -12,8 +12,7 @@ use business::domain::enums::Role;
 use business::domain::user::User;
 use business::gateway::product_gateway::ProductGateway;
 use business::sea_orm::{
-    ActiveModelTrait, ColumnTrait, Condition, EntityTrait, IntoActiveModel, NotSet,
-    PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Set,
+    ColumnTrait, Condition, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect,
 };
 use business::use_cases::product_use_case::ProductUseCase;
 use entity::product_entity;
@@ -203,43 +202,28 @@ pub async fn add_product(
             ErrorKey::InvalidParameterValue,
         ));
     }
-    let model = product_entity::ActiveModel {
-        id: NotSet,
-        uuid: NotSet,
-        tenant_id: Set(Some(tenant_id)),
-        name: Set(input.name),
-        slug: Set(input.slug),
-        description: Set(input.description),
-        brand: Set(input.brand),
-        active: Set(input.active),
-        ncm: Set(input.ncm),
-        cest: Set(input.cest),
-        origem_mercadoria: Set(input.origem_mercadoria),
-        created_at: NotSet,
-        created_by: NotSet,
-        updated_at: NotSet,
-        updated_by: NotSet,
-    };
-    let saved = model
-        .insert(state.conn.as_ref())
+    let product = ProductMapper::domain(ProductJson {
+        id: 0,
+        uuid: String::new(),
+        tenant_id: Some(tenant_id),
+        name: input.name,
+        slug: input.slug,
+        description: input.description,
+        brand: input.brand,
+        active: input.active,
+        ncm: input.ncm,
+        cest: input.cest,
+        origem_mercadoria: input.origem_mercadoria,
+    });
+    let usecase = ProductUseCase::new(ProductGateway::new(state.conn.as_ref().clone()));
+    let saved = usecase
+        .create(product)
         .await
-        .map_err(|_| ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
-    Ok((
-        StatusCode::CREATED,
-        Json(ProductJson {
-            id: saved.id,
-            uuid: saved.uuid.to_string(),
-            tenant_id: saved.tenant_id,
-            name: saved.name,
-            slug: saved.slug,
-            description: saved.description,
-            brand: saved.brand,
-            active: saved.active,
-            ncm: saved.ncm,
-            cest: saved.cest,
-            origem_mercadoria: saved.origem_mercadoria,
-        }),
-    ))
+        .ok_or(ExceptionResponse::BadRequest(
+            locale,
+            ErrorKey::InvalidParameterValue,
+        ))?;
+    Ok((StatusCode::CREATED, Json(ProductMapper::json(saved))))
 }
 
 #[utoipa::path(
@@ -260,10 +244,10 @@ pub async fn update_product(
     Path(id): Path<i64>,
     Json(input): Json<ProductInputJson>,
 ) -> HttpResponse<Json<ProductJson>> {
-    let existing = product_entity::Entity::find_by_id(id)
-        .one(state.conn.as_ref())
+    let usecase = ProductUseCase::new(ProductGateway::new(state.conn.as_ref().clone()));
+    let existing = usecase
+        .find_by_id(id)
         .await
-        .map_err(|_| ExceptionResponse::NotFound(locale, ErrorKey::InvalidParameterValue))?
         .ok_or(ExceptionResponse::NotFound(
             locale,
             ErrorKey::InvalidParameterValue,
@@ -282,30 +266,25 @@ pub async fn update_product(
             ErrorKey::InvalidParameterValue,
         ));
     }
-    let mut model = existing.into_active_model();
-    model.name = Set(input.name);
-    model.slug = Set(input.slug);
-    model.description = Set(input.description);
-    model.brand = Set(input.brand);
-    model.active = Set(input.active);
-    model.ncm = Set(input.ncm);
-    model.cest = Set(input.cest);
-    model.origem_mercadoria = Set(input.origem_mercadoria);
-    let saved = model
-        .update(state.conn.as_ref())
+    let product = ProductMapper::domain(ProductJson {
+        id,
+        uuid: existing.uuid.unwrap_or_default(),
+        tenant_id: existing.tenant_id,
+        name: input.name,
+        slug: input.slug,
+        description: input.description,
+        brand: input.brand,
+        active: input.active,
+        ncm: input.ncm,
+        cest: input.cest,
+        origem_mercadoria: input.origem_mercadoria,
+    });
+    let saved = usecase
+        .update(id, product)
         .await
-        .map_err(|_| ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
-    Ok(Json(ProductJson {
-        id: saved.id,
-        uuid: saved.uuid.to_string(),
-        tenant_id: saved.tenant_id,
-        name: saved.name,
-        slug: saved.slug,
-        description: saved.description,
-        brand: saved.brand,
-        active: saved.active,
-        ncm: saved.ncm,
-        cest: saved.cest,
-        origem_mercadoria: saved.origem_mercadoria,
-    }))
+        .ok_or(ExceptionResponse::BadRequest(
+            locale,
+            ErrorKey::InvalidParameterValue,
+        ))?;
+    Ok(Json(ProductMapper::json(saved)))
 }

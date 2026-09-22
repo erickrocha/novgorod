@@ -14,13 +14,14 @@ use axum::{
     extract::{Extension, Path, Query, State},
 };
 use business::commons::entity_mapper::EntityMapper;
-use business::domain::cart_item::CartItemEntityMapper;
+use business::domain::cart_item::{CartItem, CartItemEntityMapper};
 use business::domain::enums::Role;
 use business::domain::user::User;
+use business::gateway::cart_item_gateway::CartItemGateway;
 use business::sea_orm::{
-    ActiveModelTrait, ColumnTrait, EntityTrait, IntoActiveModel, NotSet, PaginatorTrait,
-    QueryFilter, QueryOrder, QuerySelect, Set,
+    ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect,
 };
+use business::use_cases::cart_item_use_case::CartItemUseCase;
 use entity::cart_item_entity;
 
 fn tenant_for_write(user: &User, requested: Option<i64>) -> Option<i64> {
@@ -59,19 +60,11 @@ const CART_ITEM_SORT_FIELDS: &[&str] = &[
 )]
 pub async fn list_all(
     State(state): State<AppState>,
-    Extension(current_user): Extension<User>,
+    Extension(_current_user): Extension<User>,
 ) -> Json<Vec<CartItemJson>> {
-    let mut query = cart_item_entity::Entity::find();
-    if current_user.role != Role::SysAdmin {
-        if let Some(id) = current_user.tenant_id {
-            query = query.filter(cart_item_entity::Column::TenantId.eq(id));
-        } else {
-            return Json(Vec::new());
-        }
-    }
-    let r = query.all(state.conn.as_ref()).await.unwrap_or_default();
-    let domains = CartItemEntityMapper::from_models(r);
-    Json(CartItemMapper::json_vec(domains))
+    let usecase = CartItemUseCase::new(CartItemGateway::new(state.conn.as_ref().clone()));
+    let items = usecase.find_all().await;
+    Json(CartItemMapper::json_vec(items))
 }
 
 #[utoipa::path(
@@ -164,10 +157,10 @@ pub async fn get_by_id(
     Extension(current_user): Extension<User>,
     Path(id): Path<i64>,
 ) -> HttpResponse<Json<CartItemJson>> {
-    let item = cart_item_entity::Entity::find_by_id(id)
-        .one(state.conn.as_ref())
+    let usecase = CartItemUseCase::new(CartItemGateway::new(state.conn.as_ref().clone()));
+    let item = usecase
+        .find_by_id(id)
         .await
-        .map_err(|_| ExceptionResponse::NotFound(locale, ErrorKey::InvalidParameterValue))?
         .ok_or(ExceptionResponse::NotFound(
             locale,
             ErrorKey::InvalidParameterValue,
@@ -180,8 +173,7 @@ pub async fn get_by_id(
         ));
     }
 
-    let domain = CartItemEntityMapper::from_model(item);
-    Ok(Json(CartItemMapper::json(domain)))
+    Ok(Json(CartItemMapper::json(item)))
 }
 
 #[utoipa::path(
@@ -215,27 +207,27 @@ pub async fn add(
         ));
     }
 
-    let model = cart_item_entity::ActiveModel {
-        id: NotSet,
-        uuid: NotSet,
-        tenant_id: Set(Some(tenant_id)),
-        cart_id: Set(input.cart_id),
-        sku_id: Set(input.sku_id),
-        quantity: Set(input.quantity),
-        unit_price_cents: Set(input.unit_price_cents),
-        created_at: NotSet,
-        created_by: NotSet,
-        updated_at: NotSet,
-        updated_by: NotSet,
+    let domain = CartItem {
+        id: None,
+        uuid: None,
+        tenant_id: Some(tenant_id),
+        cart_id: input.cart_id,
+        sku_id: input.sku_id,
+        quantity: input.quantity,
+        unit_price_cents: input.unit_price_cents,
+        created_at: None,
+        created_by: None,
+        updated_at: None,
+        updated_by: None,
     };
 
-    let saved = model
-        .insert(state.conn.as_ref())
+    let usecase = CartItemUseCase::new(CartItemGateway::new(state.conn.as_ref().clone()));
+    let saved = usecase
+        .create(domain)
         .await
-        .map_err(|_| ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
+        .ok_or(ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
 
-    let domain = CartItemEntityMapper::from_model(saved);
-    Ok((StatusCode::CREATED, Json(CartItemMapper::json(domain))))
+    Ok((StatusCode::CREATED, Json(CartItemMapper::json(saved))))
 }
 
 #[utoipa::path(
@@ -261,10 +253,10 @@ pub async fn update(
     Path(id): Path<i64>,
     Json(input): Json<CartItemInputJson>,
 ) -> HttpResponse<Json<CartItemJson>> {
-    let existing = cart_item_entity::Entity::find_by_id(id)
-        .one(state.conn.as_ref())
+    let usecase = CartItemUseCase::new(CartItemGateway::new(state.conn.as_ref().clone()));
+    let existing = usecase
+        .find_by_id(id)
         .await
-        .map_err(|_| ExceptionResponse::NotFound(locale, ErrorKey::InvalidParameterValue))?
         .ok_or(ExceptionResponse::NotFound(
             locale,
             ErrorKey::InvalidParameterValue,
@@ -281,15 +273,14 @@ pub async fn update(
         ));
     }
 
-    let mut model = existing.into_active_model();
-    model.quantity = Set(input.quantity);
-    model.unit_price_cents = Set(input.unit_price_cents);
+    let mut updated = existing;
+    updated.quantity = input.quantity;
+    updated.unit_price_cents = input.unit_price_cents;
 
-    let saved = model
-        .update(state.conn.as_ref())
+    let saved = usecase
+        .update(id, updated)
         .await
-        .map_err(|_| ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
+        .ok_or(ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
 
-    let domain = CartItemEntityMapper::from_model(saved);
-    Ok(Json(CartItemMapper::json(domain)))
+    Ok(Json(CartItemMapper::json(saved)))
 }

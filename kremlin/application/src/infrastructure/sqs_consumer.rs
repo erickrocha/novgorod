@@ -111,14 +111,13 @@ pub fn spawn_sqs_consumer(db: DatabaseConnection, storage: Arc<StorageGateway>) 
                                             object_key
                                         );
 
-                                        if let Err(e) = use_case
+                                        if !use_case
                                             .handle_s3_upload_notification(&bucket, &object_key, etag, size)
                                             .await
                                         {
-                                            log::error!(
-                                                "Error handling S3 notification for key {}: {}",
-                                                object_key,
-                                                e
+                                            log::warn!(
+                                                "Failed handling S3 notification for key {}",
+                                                object_key
                                             );
                                         }
                                     }

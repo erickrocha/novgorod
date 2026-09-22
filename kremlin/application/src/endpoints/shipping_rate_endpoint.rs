@@ -15,12 +15,13 @@ use axum::{
 };
 use business::commons::entity_mapper::EntityMapper;
 use business::domain::enums::Role;
-use business::domain::shipping_rate::ShippingRateEntityMapper;
+use business::domain::shipping_rate::{ShippingRate, ShippingRateEntityMapper};
 use business::domain::user::User;
+use business::gateway::shipping_rate_gateway::ShippingRateGateway;
 use business::sea_orm::{
-    ActiveModelTrait, ColumnTrait, Condition, EntityTrait, IntoActiveModel, NotSet,
-    PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Set,
+    ColumnTrait, Condition, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect,
 };
+use business::use_cases::shipping_rate_use_case::ShippingRateUseCase;
 use entity::shipping_rate_entity;
 
 fn tenant_for_write(user: &User, requested: Option<i64>) -> Option<i64> {
@@ -57,23 +58,11 @@ const SHIPPING_RATE_SORT_FIELDS: &[&str] = &[
 )]
 pub async fn list_all(
     State(state): State<AppState>,
-    Extension(current_user): Extension<User>,
+    Extension(_current_user): Extension<User>,
 ) -> Json<Vec<ShippingRateJson>> {
-    let mut query = shipping_rate_entity::Entity::find();
-    if current_user.role != Role::SysAdmin {
-        if let Some(id) = current_user.tenant_id {
-            query = query.filter(shipping_rate_entity::Column::TenantId.eq(id));
-        } else {
-            return Json(Vec::new());
-        }
-    }
-    let r = query
-        .order_by_asc(shipping_rate_entity::Column::Uf)
-        .all(state.conn.as_ref())
-        .await
-        .unwrap_or_default();
-    let domains = ShippingRateEntityMapper::from_models(r);
-    Json(ShippingRateMapper::json_vec(domains))
+    let usecase = ShippingRateUseCase::new(ShippingRateGateway::new(state.conn.as_ref().clone()));
+    let items = usecase.find_all().await;
+    Json(ShippingRateMapper::json_vec(items))
 }
 
 #[utoipa::path(
@@ -169,10 +158,10 @@ pub async fn get_by_id(
     Extension(current_user): Extension<User>,
     Path(id): Path<i64>,
 ) -> HttpResponse<Json<ShippingRateJson>> {
-    let item = shipping_rate_entity::Entity::find_by_id(id)
-        .one(state.conn.as_ref())
+    let usecase = ShippingRateUseCase::new(ShippingRateGateway::new(state.conn.as_ref().clone()));
+    let item = usecase
+        .find_by_id(id)
         .await
-        .map_err(|_| ExceptionResponse::NotFound(locale, ErrorKey::InvalidParameterValue))?
         .ok_or(ExceptionResponse::NotFound(
             locale,
             ErrorKey::InvalidParameterValue,
@@ -185,8 +174,7 @@ pub async fn get_by_id(
         ));
     }
 
-    let domain = ShippingRateEntityMapper::from_model(item);
-    Ok(Json(ShippingRateMapper::json(domain)))
+    Ok(Json(ShippingRateMapper::json(item)))
 }
 
 #[utoipa::path(
@@ -220,25 +208,25 @@ pub async fn add(
         ));
     }
 
-    let model = shipping_rate_entity::ActiveModel {
-        id: NotSet,
-        uuid: NotSet,
-        tenant_id: Set(Some(tenant_id)),
-        uf: Set(input.uf.trim().to_uppercase()),
-        price_cents: Set(input.price_cents),
-        created_at: NotSet,
-        created_by: NotSet,
-        updated_at: NotSet,
-        updated_by: NotSet,
+    let domain = ShippingRate {
+        id: None,
+        uuid: None,
+        tenant_id: Some(tenant_id),
+        uf: input.uf.trim().to_uppercase(),
+        price_cents: input.price_cents,
+        created_at: None,
+        created_by: None,
+        updated_at: None,
+        updated_by: None,
     };
 
-    let saved = model
-        .insert(state.conn.as_ref())
+    let usecase = ShippingRateUseCase::new(ShippingRateGateway::new(state.conn.as_ref().clone()));
+    let saved = usecase
+        .create(domain)
         .await
-        .map_err(|_| ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
+        .ok_or(ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
 
-    let domain = ShippingRateEntityMapper::from_model(saved);
-    Ok((StatusCode::CREATED, Json(ShippingRateMapper::json(domain))))
+    Ok((StatusCode::CREATED, Json(ShippingRateMapper::json(saved))))
 }
 
 #[utoipa::path(
@@ -264,10 +252,10 @@ pub async fn update(
     Path(id): Path<i64>,
     Json(input): Json<ShippingRateInputJson>,
 ) -> HttpResponse<Json<ShippingRateJson>> {
-    let existing = shipping_rate_entity::Entity::find_by_id(id)
-        .one(state.conn.as_ref())
+    let usecase = ShippingRateUseCase::new(ShippingRateGateway::new(state.conn.as_ref().clone()));
+    let existing = usecase
+        .find_by_id(id)
         .await
-        .map_err(|_| ExceptionResponse::NotFound(locale, ErrorKey::InvalidParameterValue))?
         .ok_or(ExceptionResponse::NotFound(
             locale,
             ErrorKey::InvalidParameterValue,
@@ -290,15 +278,14 @@ pub async fn update(
         ));
     }
 
-    let mut model = existing.into_active_model();
-    model.uf = Set(input.uf.trim().to_uppercase());
-    model.price_cents = Set(input.price_cents);
+    let mut updated = existing;
+    updated.uf = input.uf.trim().to_uppercase();
+    updated.price_cents = input.price_cents;
 
-    let saved = model
-        .update(state.conn.as_ref())
+    let saved = usecase
+        .update(id, updated)
         .await
-        .map_err(|_| ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
+        .ok_or(ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
 
-    let domain = ShippingRateEntityMapper::from_model(saved);
-    Ok(Json(ShippingRateMapper::json(domain)))
+    Ok(Json(ShippingRateMapper::json(saved)))
 }

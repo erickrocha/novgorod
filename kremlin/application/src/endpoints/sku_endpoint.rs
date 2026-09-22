@@ -3,6 +3,7 @@ use crate::commons::exception_response::{ExceptionResponse, HttpResponse};
 use crate::commons::i18n::{ErrorKey, Locale};
 use crate::commons::pagination::{NormalizedPagination, PageQuery, PagedResponse};
 use crate::endpoints::json::catalog_json::*;
+use crate::infrastructure::mapper::{Mapper, SkuMapper};
 use axum::http::StatusCode;
 use axum::{
     Json,
@@ -10,11 +11,14 @@ use axum::{
 };
 use business::domain::enums::Role;
 use business::domain::user::User;
+use business::gateway::product_gateway::ProductGateway;
+use business::gateway::sku_gateway::SkuGateway;
 use business::sea_orm::{
-    ActiveModelTrait, ColumnTrait, Condition, EntityTrait, IntoActiveModel, NotSet,
-    PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Set,
+    ColumnTrait, Condition, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect,
 };
-use entity::{product_entity, sku_entity};
+use business::use_cases::product_use_case::ProductUseCase;
+use business::use_cases::sku_use_case::SkuUseCase;
+use entity::sku_entity;
 
 fn tenant_for_write(user: &User, requested: Option<i64>) -> Option<i64> {
     match user.role {
@@ -38,40 +42,11 @@ fn can_read_tenant(user: &User, tenant_id: Option<i64>) -> bool {
 )]
 pub async fn skus(
     State(state): State<AppState>,
-    Extension(current_user): Extension<User>,
+    Extension(_current_user): Extension<User>,
 ) -> Json<Vec<SkuJson>> {
-    let mut query = sku_entity::Entity::find();
-    if current_user.role != Role::SysAdmin {
-        if let Some(id) = current_user.tenant_id {
-            query = query.filter(sku_entity::Column::TenantId.eq(id));
-        } else {
-            return Json(Vec::new());
-        }
-    }
-    let r = query
-        .order_by_asc(sku_entity::Column::Code)
-        .all(state.conn.as_ref())
-        .await
-        .unwrap_or_default();
-    Json(
-        r.into_iter()
-            .map(|x| SkuJson {
-                id: x.id,
-                uuid: x.uuid.to_string(),
-                tenant_id: x.tenant_id,
-                product_id: x.product_id,
-                code: x.code,
-                variant_key: x.variant_key,
-                price_cents: x.price_cents,
-                compare_at_price_cents: x.compare_at_price_cents,
-                weight_g: x.weight_g,
-                width_mm: x.width_mm,
-                height_mm: x.height_mm,
-                length_mm: x.length_mm,
-                active: x.active,
-            })
-            .collect(),
-    )
+    let usecase = SkuUseCase::new(SkuGateway::new(state.conn.as_ref().clone()));
+    let items = usecase.find_all().await;
+    Json(SkuMapper::json_vec(items))
 }
 
 #[derive(Debug, Clone, serde::Deserialize, utoipa::IntoParams)]
@@ -236,57 +211,44 @@ pub async fn add_sku(
             ErrorKey::InvalidParameterValue,
         ));
     }
-    let product = product_entity::Entity::find_by_id(input.product_id)
-        .one(state.conn.as_ref())
+    let product_usecase = ProductUseCase::new(ProductGateway::new(state.conn.as_ref().clone()));
+    let product = product_usecase
+        .find_by_id(input.product_id)
         .await
-        .map_err(|_| ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
-    if product.as_ref().map(|p| p.tenant_id) != Some(Some(tenant_id)) {
+        .ok_or(ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
+    if product.tenant_id != Some(tenant_id) {
         return Err(ExceptionResponse::BadRequest(
             locale,
             ErrorKey::InvalidParameterValue,
         ));
     }
-    let model = sku_entity::ActiveModel {
-        id: NotSet,
-        uuid: NotSet,
-        tenant_id: Set(Some(tenant_id)),
-        product_id: Set(input.product_id),
-        code: Set(input.code),
-        variant_key: Set(input.variant_key),
-        price_cents: Set(input.price_cents),
-        compare_at_price_cents: Set(input.compare_at_price_cents),
-        weight_g: Set(input.weight_g),
-        width_mm: Set(input.width_mm),
-        height_mm: Set(input.height_mm),
-        length_mm: Set(input.length_mm),
-        active: Set(input.active),
-        created_at: NotSet,
-        created_by: NotSet,
-        updated_at: NotSet,
-        updated_by: NotSet,
-    };
-    let saved = model
-        .insert(state.conn.as_ref())
+
+    let sku = SkuMapper::domain(SkuJson {
+        id: 0,
+        uuid: String::new(),
+        tenant_id: Some(tenant_id),
+        product_id: input.product_id,
+        code: input.code,
+        variant_key: input.variant_key,
+        price_cents: input.price_cents,
+        compare_at_price_cents: input.compare_at_price_cents,
+        weight_g: input.weight_g,
+        width_mm: input.width_mm,
+        height_mm: input.height_mm,
+        length_mm: input.length_mm,
+        active: input.active,
+    });
+
+    let usecase = SkuUseCase::new(SkuGateway::new(state.conn.as_ref().clone()));
+    let saved = usecase
+        .create(sku)
         .await
-        .map_err(|_| ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
-    Ok((
-        StatusCode::CREATED,
-        Json(SkuJson {
-            id: saved.id,
-            uuid: saved.uuid.to_string(),
-            tenant_id: saved.tenant_id,
-            product_id: saved.product_id,
-            code: saved.code,
-            variant_key: saved.variant_key,
-            price_cents: saved.price_cents,
-            compare_at_price_cents: saved.compare_at_price_cents,
-            weight_g: saved.weight_g,
-            width_mm: saved.width_mm,
-            height_mm: saved.height_mm,
-            length_mm: saved.length_mm,
-            active: saved.active,
-        }),
-    ))
+        .ok_or(ExceptionResponse::BadRequest(
+            locale,
+            ErrorKey::InvalidParameterValue,
+        ))?;
+
+    Ok((StatusCode::CREATED, Json(SkuMapper::json(saved))))
 }
 
 #[utoipa::path(
@@ -307,10 +269,10 @@ pub async fn update_sku(
     Path(id): Path<i64>,
     Json(input): Json<SkuInputJson>,
 ) -> HttpResponse<Json<SkuJson>> {
-    let existing = sku_entity::Entity::find_by_id(id)
-        .one(state.conn.as_ref())
+    let usecase = SkuUseCase::new(SkuGateway::new(state.conn.as_ref().clone()));
+    let existing = usecase
+        .find_by_id(id)
         .await
-        .map_err(|_| ExceptionResponse::NotFound(locale, ErrorKey::InvalidParameterValue))?
         .ok_or(ExceptionResponse::NotFound(
             locale,
             ErrorKey::InvalidParameterValue,
@@ -319,49 +281,46 @@ pub async fn update_sku(
         || tenant_for_write(&user, input.tenant_id.or(existing.tenant_id)) != existing.tenant_id
         || input.price_cents < 0
     {
+        return Err(ExceptionResponse::Forbidden(
+            locale,
+            ErrorKey::InvalidParameterValue,
+        ));
+    }
+    let product_usecase = ProductUseCase::new(ProductGateway::new(state.conn.as_ref().clone()));
+    let product = product_usecase
+        .find_by_id(input.product_id)
+        .await
+        .ok_or(ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
+    if product.tenant_id != existing.tenant_id {
         return Err(ExceptionResponse::BadRequest(
             locale,
             ErrorKey::InvalidParameterValue,
         ));
     }
-    let product = product_entity::Entity::find_by_id(input.product_id)
-        .one(state.conn.as_ref())
+
+    let sku = SkuMapper::domain(SkuJson {
+        id,
+        uuid: existing.uuid.unwrap_or_default(),
+        tenant_id: existing.tenant_id,
+        product_id: input.product_id,
+        code: input.code,
+        variant_key: input.variant_key,
+        price_cents: input.price_cents,
+        compare_at_price_cents: input.compare_at_price_cents,
+        weight_g: input.weight_g,
+        width_mm: input.width_mm,
+        height_mm: input.height_mm,
+        length_mm: input.length_mm,
+        active: input.active,
+    });
+
+    let saved = usecase
+        .update(id, sku)
         .await
-        .map_err(|_| ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
-    if product.as_ref().map(|p| p.tenant_id) != Some(existing.tenant_id) {
-        return Err(ExceptionResponse::BadRequest(
+        .ok_or(ExceptionResponse::BadRequest(
             locale,
             ErrorKey::InvalidParameterValue,
-        ));
-    }
-    let mut model = existing.into_active_model();
-    model.product_id = Set(input.product_id);
-    model.code = Set(input.code);
-    model.variant_key = Set(input.variant_key);
-    model.price_cents = Set(input.price_cents);
-    model.compare_at_price_cents = Set(input.compare_at_price_cents);
-    model.weight_g = Set(input.weight_g);
-    model.width_mm = Set(input.width_mm);
-    model.height_mm = Set(input.height_mm);
-    model.length_mm = Set(input.length_mm);
-    model.active = Set(input.active);
-    let saved = model
-        .update(state.conn.as_ref())
-        .await
-        .map_err(|_| ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
-    Ok(Json(SkuJson {
-        id: saved.id,
-        uuid: saved.uuid.to_string(),
-        tenant_id: saved.tenant_id,
-        product_id: saved.product_id,
-        code: saved.code,
-        variant_key: saved.variant_key,
-        price_cents: saved.price_cents,
-        compare_at_price_cents: saved.compare_at_price_cents,
-        weight_g: saved.weight_g,
-        width_mm: saved.width_mm,
-        height_mm: saved.height_mm,
-        length_mm: saved.length_mm,
-        active: saved.active,
-    }))
+        ))?;
+
+    Ok(Json(SkuMapper::json(saved)))
 }

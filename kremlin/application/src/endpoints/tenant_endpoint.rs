@@ -35,7 +35,7 @@ fn can_access_tenant(user: &User, tenant_id: i64) -> bool {
     security(("bearer_auth" = []))
 )]
 pub async fn add(
-    state: State<AppState>,
+    State(state): State<AppState>,
     Extension(locale): Extension<Locale>,
     Extension(current_user): Extension<User>,
     Json(payload): Json<TenantJson>,
@@ -48,13 +48,11 @@ pub async fn add(
     }
     let domain = TenantMapper::domain(payload);
     let use_case = TenantUseCase::new(TenantGateway::new(state.conn.as_ref().clone()));
-    match use_case.create(domain).await {
-        Ok(tenant) => Ok((StatusCode::CREATED, Json(TenantMapper::json(tenant)))),
-        Err(_) => Err(ExceptionResponse::BadRequest(
-            locale,
-            ErrorKey::TenantCreatedFailed,
-        )),
-    }
+    let tenant = use_case.create(domain).await.ok_or(ExceptionResponse::BadRequest(
+        locale,
+        ErrorKey::TenantCreatedFailed,
+    ))?;
+    Ok((StatusCode::CREATED, Json(TenantMapper::json(tenant))))
 }
 
 #[utoipa::path(
@@ -74,7 +72,7 @@ pub async fn add(
     security(("bearer_auth" = []))
 )]
 pub async fn get_by_id(
-    state: State<AppState>,
+    State(state): State<AppState>,
     Extension(locale): Extension<Locale>,
     Extension(current_user): Extension<User>,
     Path(id): Path<i64>,
@@ -86,13 +84,11 @@ pub async fn get_by_id(
         ));
     }
     let use_case = TenantUseCase::new(TenantGateway::new(state.conn.as_ref().clone()));
-    match use_case.find_by_id(id).await {
-        Ok(tenant) => Ok(Json(TenantMapper::json(tenant))),
-        Err(_) => Err(ExceptionResponse::NotFound(
-            locale,
-            ErrorKey::TenantNotFound,
-        )),
-    }
+    let tenant = use_case.find_by_id(id).await.ok_or(ExceptionResponse::NotFound(
+        locale,
+        ErrorKey::TenantNotFound,
+    ))?;
+    Ok(Json(TenantMapper::json(tenant)))
 }
 
 #[utoipa::path(
@@ -112,25 +108,23 @@ pub async fn get_by_id(
     security(("bearer_auth" = []))
 )]
 pub async fn get_by_uuid(
-    state: State<AppState>,
+    State(state): State<AppState>,
     Extension(locale): Extension<Locale>,
     Extension(current_user): Extension<User>,
     Path(uuid): Path<String>,
 ) -> HttpResponse<Json<TenantJson>> {
     let use_case = TenantUseCase::new(TenantGateway::new(state.conn.as_ref().clone()));
-    match use_case.find_by_uuid(uuid).await {
-        Ok(tenant) if can_access_tenant(&current_user, tenant.id.unwrap_or_default()) => {
-            Ok(Json(TenantMapper::json(tenant)))
-        }
-        Ok(_) => Err(ExceptionResponse::NotFound(
+    let tenant = use_case.find_by_uuid(uuid).await.ok_or(ExceptionResponse::NotFound(
+        locale,
+        ErrorKey::TenantNotFound,
+    ))?;
+    if !can_access_tenant(&current_user, tenant.id.unwrap_or_default()) {
+        return Err(ExceptionResponse::NotFound(
             locale,
             ErrorKey::TenantNotFound,
-        )),
-        Err(_) => Err(ExceptionResponse::NotFound(
-            locale,
-            ErrorKey::TenantNotFound,
-        )),
+        ));
     }
+    Ok(Json(TenantMapper::json(tenant)))
 }
 
 #[utoipa::path(
@@ -146,23 +140,21 @@ pub async fn get_by_uuid(
     security(("bearer_auth" = []))
 )]
 pub async fn list_all(
-    state: State<AppState>,
+    State(state): State<AppState>,
     Extension(current_user): Extension<User>,
 ) -> HttpResponse<Json<Vec<TenantJson>>> {
     let use_case = TenantUseCase::new(TenantGateway::new(state.conn.as_ref().clone()));
     if let Some(tenant_id) = current_user.tenant_id {
         return match use_case.find_by_id(tenant_id).await {
-            Ok(tenant) => Ok(Json(vec![TenantMapper::json(tenant)])),
-            Err(_) => Ok(Json(Vec::new())),
+            Some(tenant) => Ok(Json(vec![TenantMapper::json(tenant)])),
+            None => Ok(Json(Vec::new())),
         };
     }
     if current_user.role != Role::SysAdmin {
         return Ok(Json(Vec::new()));
     }
-    match use_case.find_all().await {
-        Ok(tenants) => Ok(Json(TenantMapper::json_vec(tenants))),
-        Err(_) => Ok(Json(Vec::new())),
-    }
+    let tenants = use_case.find_all().await;
+    Ok(Json(TenantMapper::json_vec(tenants)))
 }
 
 #[derive(Debug, Clone, serde::Deserialize, utoipa::IntoParams)]
@@ -221,7 +213,7 @@ const TENANT_SORT_FIELDS: &[&str] = &[
     security(("bearer_auth" = []))
 )]
 pub async fn paged(
-    state: State<AppState>,
+    State(state): State<AppState>,
     Extension(current_user): Extension<User>,
     Query(params): Query<TenantPageQuery>,
 ) -> HttpResponse<Json<crate::commons::pagination::PagedResponse<TenantJson>>> {
@@ -325,7 +317,7 @@ pub async fn paged(
     security(("bearer_auth" = []))
 )]
 pub async fn update(
-    state: State<AppState>,
+    State(state): State<AppState>,
     Extension(locale): Extension<Locale>,
     Extension(current_user): Extension<User>,
     Path(id): Path<i64>,
@@ -339,20 +331,9 @@ pub async fn update(
     }
     let domain = TenantMapper::domain(payload);
     let use_case = TenantUseCase::new(TenantGateway::new(state.conn.as_ref().clone()));
-    match use_case.update(id, domain).await {
-        Ok(tenant) => Ok(Json(TenantMapper::json(tenant))),
-        Err(err) => {
-            if err.message.contains("not found") {
-                Err(ExceptionResponse::NotFound(
-                    locale,
-                    ErrorKey::TenantNotFound,
-                ))
-            } else {
-                Err(ExceptionResponse::BadRequest(
-                    locale,
-                    ErrorKey::TenantUpdateFailed,
-                ))
-            }
-        }
-    }
+    let tenant = use_case.update(id, domain).await.ok_or(ExceptionResponse::BadRequest(
+        locale,
+        ErrorKey::TenantUpdateFailed,
+    ))?;
+    Ok(Json(TenantMapper::json(tenant)))
 }

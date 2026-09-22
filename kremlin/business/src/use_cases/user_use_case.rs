@@ -1,6 +1,5 @@
 use crate::commons::entity_mapper::EntityMapper;
 use crate::commons::gateway::Gateway;
-use crate::domain::business_error::BusinessError;
 use crate::domain::enums::Role;
 use crate::domain::person::Person;
 use crate::domain::user::{User, UserEntityMapper};
@@ -31,56 +30,56 @@ impl UserUseCase {
         }
     }
 
-    pub async fn create(&self, user: User) -> Result<User, BusinessError> {
+    pub async fn create(&self, user: User) -> Option<User> {
         log::info!(
             "[UserUseCase::create] Executing for user email: {}",
             user.email
         );
 
         if user.email.trim().is_empty() {
-            let msg = "User email is required".to_string();
-            log::error!("[UserUseCase::create] {}", msg);
-            return Err(BusinessError::new(msg));
+            log::error!("[UserUseCase::create] User email is required");
+            return None;
         }
         if user.password.trim().is_empty() {
-            let msg = "User password is required".to_string();
-            log::error!("[UserUseCase::create] {}", msg);
-            return Err(BusinessError::new(msg));
+            log::error!("[UserUseCase::create] User password is required");
+            return None;
         }
 
-        let encrypted_password =
-            bcrypt::hash(&user.password, bcrypt::DEFAULT_COST).map_err(|e| {
-                let msg = format!("Password encryption error: {}", e);
-                log::error!("[UserUseCase::create] {}", msg);
-                BusinessError::new(msg)
-            })?;
+        let encrypted_password = match bcrypt::hash(&user.password, bcrypt::DEFAULT_COST) {
+            Ok(p) => p,
+            Err(e) => {
+                log::error!("[UserUseCase::create] Password encryption error: {}", e);
+                return None;
+            }
+        };
 
         let user_to_save = User {
             password: encrypted_password,
             ..user
         };
 
-        let entity = self.gateway.persist(user_to_save).await.map_err(|e| {
-            let msg = format!("Failed to persist user: {}", e);
-            log::error!("[UserUseCase::create] {}", msg);
-            BusinessError::new(msg)
-        })?;
+        let entity = match self.gateway.persist(user_to_save).await {
+            Ok(e) => e,
+            Err(e) => {
+                log::error!("[UserUseCase::create] Failed to persist user: {}", e);
+                return None;
+            }
+        };
 
         let saved_user = UserEntityMapper::from_active_model(entity);
 
         if let Some(person) = Self::build_person_for_user(&saved_user) {
             let user_id = person.user_id;
             if let Err(e) = self.person_gateway.persist(person).await {
-                let msg = format!("Failed to create person for user {}: {}", user_id, e);
-                log::error!("[UserUseCase::create] {}", msg);
-                return Err(BusinessError::new(msg));
+                log::error!("[UserUseCase::create] Failed to create person for user {}: {}", user_id, e);
+                return None;
             }
         }
 
-        Ok(saved_user)
+        Some(saved_user)
     }
 
-    pub async fn update(&self, id: i64, user: User) -> Result<User, BusinessError> {
+    pub async fn update(&self, id: i64, user: User) -> Option<User> {
         log::info!(
             "[UserUseCase::update] Executing for user id {}: {}",
             id,
@@ -88,25 +87,26 @@ impl UserUseCase {
         );
 
         let existing = match self.find_by_id(id).await {
-            Ok(u) => u,
-            Err(e) => {
+            Some(u) => u,
+            None => {
                 log::error!(
-                    "[UserUseCase::update] Failed to find existing user with id {}: {}",
-                    id,
-                    e
+                    "[UserUseCase::update] Failed to find existing user with id {}",
+                    id
                 );
-                return Err(e);
+                return None;
             }
         };
 
         let password = if user.password.trim().is_empty() {
             existing.password
         } else {
-            bcrypt::hash(&user.password, bcrypt::DEFAULT_COST).map_err(|e| {
-                let msg = format!("Password encryption error: {}", e);
-                log::error!("[UserUseCase::update] {}", msg);
-                BusinessError::new(msg)
-            })?
+            match bcrypt::hash(&user.password, bcrypt::DEFAULT_COST) {
+                Ok(p) => p,
+                Err(e) => {
+                    log::error!("[UserUseCase::update] Password encryption error: {}", e);
+                    return None;
+                }
+            }
         };
 
         let updated_user = User {
@@ -129,13 +129,15 @@ impl UserUseCase {
             updated_by: user.updated_by,
         };
 
-        let entity = self.gateway.persist(updated_user).await.map_err(|e| {
-            let msg = format!("Failed to update user: {}", e);
-            log::error!("[UserUseCase::update] {}", msg);
-            BusinessError::new(msg)
-        })?;
+        let entity = match self.gateway.persist(updated_user).await {
+            Ok(e) => e,
+            Err(e) => {
+                log::error!("[UserUseCase::update] Failed to update user: {}", e);
+                return None;
+            }
+        };
 
-        Ok(UserEntityMapper::from_active_model(entity))
+        Some(UserEntityMapper::from_active_model(entity))
     }
 
     pub async fn change_password(
@@ -143,32 +145,31 @@ impl UserUseCase {
         id: i64,
         current_password: String,
         new_password: String,
-    ) -> Result<User, BusinessError> {
+    ) -> Option<User> {
         log::info!(
             "[UserUseCase::change_password] Executing for user id {}",
             id
         );
 
         if new_password.trim().is_empty() {
-            let msg = "New password is required".to_string();
-            log::error!("[UserUseCase::change_password] {}", msg);
-            return Err(BusinessError::new(msg));
+            log::error!("[UserUseCase::change_password] New password is required");
+            return None;
         }
 
         let existing = self.find_by_id(id).await?;
 
         if !bcrypt::verify(&current_password, existing.password.as_str()).unwrap_or(false) {
-            let msg = "Current password is incorrect".to_string();
-            log::error!("[UserUseCase::change_password] {}", msg);
-            return Err(BusinessError::new(msg));
+            log::error!("[UserUseCase::change_password] Current password is incorrect");
+            return None;
         }
 
-        let encrypted_password =
-            bcrypt::hash(&new_password, bcrypt::DEFAULT_COST).map_err(|e| {
-                let msg = format!("Password encryption error: {}", e);
-                log::error!("[UserUseCase::change_password] {}", msg);
-                BusinessError::new(msg)
-            })?;
+        let encrypted_password = match bcrypt::hash(&new_password, bcrypt::DEFAULT_COST) {
+            Ok(p) => p,
+            Err(e) => {
+                log::error!("[UserUseCase::change_password] Password encryption error: {}", e);
+                return None;
+            }
+        };
 
         let updated_user = User {
             password: encrypted_password,
@@ -177,63 +178,58 @@ impl UserUseCase {
             ..existing
         };
 
-        let entity = self.gateway.persist(updated_user).await.map_err(|e| {
-            let msg = format!("Failed to update password: {}", e);
-            log::error!("[UserUseCase::change_password] {}", msg);
-            BusinessError::new(msg)
-        })?;
+        let entity = match self.gateway.persist(updated_user).await {
+            Ok(e) => e,
+            Err(e) => {
+                log::error!("[UserUseCase::change_password] Failed to update password: {}", e);
+                return None;
+            }
+        };
 
-        Ok(UserEntityMapper::from_active_model(entity))
+        Some(UserEntityMapper::from_active_model(entity))
     }
 
-    pub async fn find_by_id(&self, id: i64) -> Result<User, BusinessError> {
+    pub async fn find_by_id(&self, id: i64) -> Option<User> {
         log::info!("[UserUseCase::find_by_id] Executing for id: {}", id);
 
-        let entity = self.gateway.find_by_id(id).await.map_err(|e| {
-            let msg = format!("Database error: {}", e);
-            log::error!("[UserUseCase::find_by_id] {}", msg);
-            BusinessError::new(msg)
-        })?;
-
-        match entity {
-            Some(model) => Ok(UserEntityMapper::from_model(model)),
-            None => {
-                let msg = format!("User not found with id: {}", id);
-                log::error!("[UserUseCase::find_by_id] {}", msg);
-                Err(BusinessError::new("User not found".to_string()))
+        match self.gateway.find_by_id(id).await {
+            Ok(Some(model)) => Some(UserEntityMapper::from_model(model)),
+            Ok(None) => {
+                log::error!("[UserUseCase::find_by_id] User not found with id: {}", id);
+                None
+            }
+            Err(e) => {
+                log::error!("[UserUseCase::find_by_id] Database error: {}", e);
+                None
             }
         }
     }
 
-    pub async fn find_all(&self) -> Result<Vec<User>, BusinessError> {
+    pub async fn find_all(&self) -> Vec<User> {
         log::info!("[UserUseCase::find_all] Executing find_all users");
 
-        let entities = self.gateway.find_all().await.map_err(|e| {
-            let msg = format!("Database error: {}", e);
-            log::error!("[UserUseCase::find_all] {}", msg);
-            BusinessError::new(msg)
-        })?;
-
-        Ok(UserEntityMapper::from_models(entities))
+        match self.gateway.find_all().await {
+            Ok(entities) => UserEntityMapper::from_models(entities),
+            Err(e) => {
+                log::error!("[UserUseCase::find_all] Database error: {}", e);
+                Vec::new()
+            }
+        }
     }
 
-    pub async fn find_all_by_tenant_id(&self, tenant_id: i64) -> Result<Vec<User>, BusinessError> {
+    pub async fn find_all_by_tenant_id(&self, tenant_id: i64) -> Vec<User> {
         log::info!(
             "[UserUseCase::find_all_by_tenant_id] Executing for tenant_id: {}",
             tenant_id
         );
 
-        let entities = self
-            .gateway
-            .find_all_by_tenant_id(tenant_id)
-            .await
-            .map_err(|e| {
-                let msg = format!("Database error: {}", e);
-                log::error!("[UserUseCase::find_all_by_tenant_id] {}", msg);
-                BusinessError::new(msg)
-            })?;
-
-        Ok(UserEntityMapper::from_models(entities))
+        match self.gateway.find_all_by_tenant_id(tenant_id).await {
+            Ok(entities) => UserEntityMapper::from_models(entities),
+            Err(e) => {
+                log::error!("[UserUseCase::find_all_by_tenant_id] Database error: {}", e);
+                Vec::new()
+            }
+        }
     }
 
     pub async fn persist(db: DbConn, user: User) -> Option<User> {

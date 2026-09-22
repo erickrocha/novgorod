@@ -16,7 +16,9 @@ use business::domain::city::City;
 use business::domain::enums::Role;
 use business::domain::user::User;
 use business::gateway::city_gateway::CityGateway;
+use business::gateway::province_gateway::ProvinceGateway;
 use business::use_cases::city_use_case::CityUseCase;
+use business::use_cases::province_use_case::ProvinceUseCase;
 use serde::Serialize;
 use std::collections::HashMap;
 
@@ -34,10 +36,8 @@ use std::collections::HashMap;
 )]
 pub async fn list_all(state: State<AppState>) -> HttpResponse<Json<Vec<CityJson>>> {
     let use_case = CityUseCase::new(CityGateway::new(state.conn.as_ref().clone()));
-    match use_case.find_all().await {
-        Ok(list) => Ok(Json(CityMapper::json_vec(list))),
-        Err(_) => Ok(Json(Vec::new())),
-    }
+    let list = use_case.find_all().await;
+    Ok(Json(CityMapper::json_vec(list)))
 }
 
 #[derive(Debug, Clone, serde::Deserialize, utoipa::IntoParams)]
@@ -177,10 +177,8 @@ pub async fn get_by_province(
     Path(province_id): Path<i32>,
 ) -> HttpResponse<Json<Vec<CityJson>>> {
     let use_case = CityUseCase::new(CityGateway::new(state.conn.as_ref().clone()));
-    match use_case.find_by_province_id(province_id).await {
-        Ok(list) => Ok(Json(CityMapper::json_vec(list))),
-        Err(_) => Ok(Json(Vec::new())),
-    }
+    let list = use_case.find_by_province_id(province_id).await;
+    Ok(Json(CityMapper::json_vec(list)))
 }
 
 #[utoipa::path(
@@ -205,13 +203,11 @@ pub async fn get_by_id(
     Path(id): Path<i64>,
 ) -> HttpResponse<Json<CityJson>> {
     let use_case = CityUseCase::new(CityGateway::new(state.conn.as_ref().clone()));
-    match use_case.find_by_id(id).await {
-        Ok(res) => Ok(Json(CityMapper::json(res))),
-        Err(_) => Err(ExceptionResponse::NotFound(
-            locale,
-            ErrorKey::RequiredParameterMissing,
-        )),
-    }
+    let res = use_case.find_by_id(id).await.ok_or(ExceptionResponse::NotFound(
+        locale,
+        ErrorKey::RequiredParameterMissing,
+    ))?;
+    Ok(Json(CityMapper::json(res)))
 }
 
 #[utoipa::path(post, tag = "City", path = "/city", request_body = CityJson, responses((status = 201, body = CityJson)))]
@@ -228,11 +224,11 @@ pub async fn add(
         ));
     }
     let use_case = CityUseCase::new(CityGateway::new(state.conn.as_ref().clone()));
-    use_case
+    let saved = use_case
         .save(CityMapper::domain(payload))
         .await
-        .map(|value| (StatusCode::CREATED, Json(CityMapper::json(value))))
-        .map_err(|_| ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))
+        .ok_or(ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
+    Ok((StatusCode::CREATED, Json(CityMapper::json(saved))))
 }
 
 #[utoipa::path(put, tag = "City", path = "/city/{id}", params(("id" = i64, Path)), request_body = CityJson, responses((status = 200, body = CityJson)))]
@@ -251,11 +247,11 @@ pub async fn update(
     }
     payload.id = Some(id);
     let use_case = CityUseCase::new(CityGateway::new(state.conn.as_ref().clone()));
-    use_case
+    let saved = use_case
         .save(CityMapper::domain(payload))
         .await
-        .map(|value| Json(CityMapper::json(value)))
-        .map_err(|_| ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))
+        .ok_or(ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
+    Ok(Json(CityMapper::json(saved)))
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -305,21 +301,17 @@ pub async fn import_csv(
         ));
     };
     let mut reader = csv::Reader::from_reader(bytes.as_ref());
-    let province_use_case = business::use_cases::province_use_case::ProvinceUseCase::new(
-        business::gateway::province_gateway::ProvinceGateway::new(state.conn.as_ref().clone()),
-    );
+    let province_use_case = ProvinceUseCase::new(ProvinceGateway::new(state.conn.as_ref().clone()));
     let city_use_case = CityUseCase::new(CityGateway::new(state.conn.as_ref().clone()));
     let province_by_code: HashMap<String, business::domain::province::Province> = province_use_case
         .find_all()
         .await
-        .unwrap_or_default()
         .into_iter()
         .filter_map(|value| value.ibge_code.clone().map(|code| (code, value)))
         .collect();
     let mut city_by_code: HashMap<String, City> = city_use_case
         .find_all()
         .await
-        .unwrap_or_default()
         .into_iter()
         .filter_map(|value| value.ibge_code.clone().map(|code| (code, value)))
         .collect();
@@ -365,7 +357,7 @@ pub async fn import_csv(
             ibge_code: Some(row.ibge_code.trim().to_string()),
         };
         match city_use_case.save(CityMapper::domain(payload)).await {
-            Ok(value) => {
+            Some(value) => {
                 city_by_code.insert(row.ibge_code.trim().to_string(), value);
                 if is_update {
                     report.updated += 1;
@@ -373,7 +365,7 @@ pub async fn import_csv(
                     report.inserted += 1;
                 }
             }
-            Err(_) => {
+            None => {
                 report.skipped += 1;
                 report
                     .errors

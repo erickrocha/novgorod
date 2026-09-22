@@ -14,13 +14,14 @@ use axum::{
     extract::{Extension, Path, Query, State},
 };
 use business::commons::entity_mapper::EntityMapper;
-use business::domain::campaign_target::CampaignTargetEntityMapper;
+use business::domain::campaign_target::{CampaignTarget, CampaignTargetEntityMapper};
 use business::domain::enums::Role;
 use business::domain::user::User;
+use business::gateway::campaign_target_gateway::CampaignTargetGateway;
 use business::sea_orm::{
-    ActiveModelTrait, ColumnTrait, EntityTrait, IntoActiveModel, NotSet, PaginatorTrait,
-    QueryFilter, QueryOrder, QuerySelect, Set,
+    ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect,
 };
+use business::use_cases::campaign_target_use_case::CampaignTargetUseCase;
 use entity::campaign_target_entity;
 
 fn tenant_for_write(user: &User, requested: Option<i64>) -> Option<i64> {
@@ -60,19 +61,11 @@ const CAMPAIGN_TARGET_SORT_FIELDS: &[&str] = &[
 )]
 pub async fn list_all(
     State(state): State<AppState>,
-    Extension(current_user): Extension<User>,
+    Extension(_current_user): Extension<User>,
 ) -> Json<Vec<CampaignTargetJson>> {
-    let mut query = campaign_target_entity::Entity::find();
-    if current_user.role != Role::SysAdmin {
-        if let Some(id) = current_user.tenant_id {
-            query = query.filter(campaign_target_entity::Column::TenantId.eq(id));
-        } else {
-            return Json(Vec::new());
-        }
-    }
-    let r = query.all(state.conn.as_ref()).await.unwrap_or_default();
-    let domains = CampaignTargetEntityMapper::from_models(r);
-    Json(CampaignTargetMapper::json_vec(domains))
+    let usecase = CampaignTargetUseCase::new(CampaignTargetGateway::new(state.conn.as_ref().clone()));
+    let items = usecase.find_all().await;
+    Json(CampaignTargetMapper::json_vec(items))
 }
 
 #[utoipa::path(
@@ -166,10 +159,10 @@ pub async fn get_by_id(
     Extension(current_user): Extension<User>,
     Path(id): Path<i64>,
 ) -> HttpResponse<Json<CampaignTargetJson>> {
-    let item = campaign_target_entity::Entity::find_by_id(id)
-        .one(state.conn.as_ref())
+    let usecase = CampaignTargetUseCase::new(CampaignTargetGateway::new(state.conn.as_ref().clone()));
+    let item = usecase
+        .find_by_id(id)
         .await
-        .map_err(|_| ExceptionResponse::NotFound(locale, ErrorKey::InvalidParameterValue))?
         .ok_or(ExceptionResponse::NotFound(
             locale,
             ErrorKey::InvalidParameterValue,
@@ -182,8 +175,7 @@ pub async fn get_by_id(
         ));
     }
 
-    let domain = CampaignTargetEntityMapper::from_model(item);
-    Ok(Json(CampaignTargetMapper::json(domain)))
+    Ok(Json(CampaignTargetMapper::json(item)))
 }
 
 #[utoipa::path(
@@ -217,26 +209,26 @@ pub async fn add(
         ));
     }
 
-    let model = campaign_target_entity::ActiveModel {
-        id: NotSet,
-        uuid: NotSet,
-        tenant_id: Set(Some(tenant_id)),
-        campaign_id: Set(input.campaign_id),
-        target_type: Set(input.target_type.trim().to_string()),
-        target_id: Set(input.target_id),
-        created_at: NotSet,
-        created_by: NotSet,
+    let domain = CampaignTarget {
+        id: None,
+        uuid: None,
+        tenant_id: Some(tenant_id),
+        campaign_id: input.campaign_id,
+        target_type: input.target_type.trim().to_string(),
+        target_id: input.target_id,
+        created_at: None,
+        created_by: None,
     };
 
-    let saved = model
-        .insert(state.conn.as_ref())
+    let usecase = CampaignTargetUseCase::new(CampaignTargetGateway::new(state.conn.as_ref().clone()));
+    let saved = usecase
+        .create(domain)
         .await
-        .map_err(|_| ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
+        .ok_or(ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
 
-    let domain = CampaignTargetEntityMapper::from_model(saved);
     Ok((
         StatusCode::CREATED,
-        Json(CampaignTargetMapper::json(domain)),
+        Json(CampaignTargetMapper::json(saved)),
     ))
 }
 
@@ -263,10 +255,10 @@ pub async fn update(
     Path(id): Path<i64>,
     Json(input): Json<CampaignTargetInputJson>,
 ) -> HttpResponse<Json<CampaignTargetJson>> {
-    let existing = campaign_target_entity::Entity::find_by_id(id)
-        .one(state.conn.as_ref())
+    let usecase = CampaignTargetUseCase::new(CampaignTargetGateway::new(state.conn.as_ref().clone()));
+    let existing = usecase
+        .find_by_id(id)
         .await
-        .map_err(|_| ExceptionResponse::NotFound(locale, ErrorKey::InvalidParameterValue))?
         .ok_or(ExceptionResponse::NotFound(
             locale,
             ErrorKey::InvalidParameterValue,
@@ -281,16 +273,15 @@ pub async fn update(
         ));
     }
 
-    let mut model = existing.into_active_model();
-    model.campaign_id = Set(input.campaign_id);
-    model.target_type = Set(input.target_type.trim().to_string());
-    model.target_id = Set(input.target_id);
+    let mut updated = existing;
+    updated.campaign_id = input.campaign_id;
+    updated.target_type = input.target_type.trim().to_string();
+    updated.target_id = input.target_id;
 
-    let saved = model
-        .update(state.conn.as_ref())
+    let saved = usecase
+        .update(id, updated)
         .await
-        .map_err(|_| ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
+        .ok_or(ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
 
-    let domain = CampaignTargetEntityMapper::from_model(saved);
-    Ok(Json(CampaignTargetMapper::json(domain)))
+    Ok(Json(CampaignTargetMapper::json(saved)))
 }

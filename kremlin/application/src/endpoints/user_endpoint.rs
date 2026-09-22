@@ -32,7 +32,7 @@ use business::use_cases::user_use_case::UserUseCase;
     security(("bearer_auth" = []))
 )]
 pub async fn add(
-    state: State<AppState>,
+    State(state): State<AppState>,
     Extension(locale): Extension<Locale>,
     Extension(current_user): Extension<User>,
     Json(payload): Json<UserJson>,
@@ -75,13 +75,11 @@ pub async fn add(
     }
 
     let use_case = UserUseCase::new(UserGateway::new(state.conn.as_ref().clone()));
-    match use_case.create(domain).await {
-        Ok(user) => Ok((StatusCode::CREATED, Json(UserMapper::json(user)))),
-        Err(_) => Err(ExceptionResponse::BadRequest(
-            locale,
-            ErrorKey::RequiredParameterMissing,
-        )),
-    }
+    let user = use_case.create(domain).await.ok_or(ExceptionResponse::BadRequest(
+        locale,
+        ErrorKey::RequiredParameterMissing,
+    ))?;
+    Ok((StatusCode::CREATED, Json(UserMapper::json(user))))
 }
 
 #[utoipa::path(
@@ -97,27 +95,24 @@ pub async fn add(
     security(("bearer_auth" = []))
 )]
 pub async fn list_all(
-    state: State<AppState>,
+    State(state): State<AppState>,
     Extension(current_user): Extension<User>,
 ) -> HttpResponse<Json<Vec<UserJson>>> {
     let use_case = UserUseCase::new(UserGateway::new(state.conn.as_ref().clone()));
 
-    let users_result = match current_user.role {
+    let users = match current_user.role {
         Role::SysAdmin => use_case.find_all().await,
         Role::TenantOwner => {
             if let Some(tenant_id) = current_user.tenant_id {
                 use_case.find_all_by_tenant_id(tenant_id).await
             } else {
-                Ok(Vec::new())
+                Vec::new()
             }
         }
-        _ => Ok(Vec::new()),
+        _ => Vec::new(),
     };
 
-    match users_result {
-        Ok(users) => Ok(Json(UserMapper::json_vec(users))),
-        Err(_) => Ok(Json(Vec::new())),
-    }
+    Ok(Json(UserMapper::json_vec(users)))
 }
 
 #[derive(Debug, Clone, serde::Deserialize, utoipa::IntoParams)]
@@ -173,7 +168,7 @@ const USER_SORT_FIELDS: &[&str] = &[
     security(("bearer_auth" = []))
 )]
 pub async fn paged(
-    state: State<AppState>,
+    State(state): State<AppState>,
     Extension(current_user): Extension<User>,
     Query(params): Query<UserPageQuery>,
 ) -> HttpResponse<Json<PagedResponse<UserJson>>> {
@@ -288,27 +283,23 @@ pub async fn paged(
     security(("bearer_auth" = []))
 )]
 pub async fn get_by_id(
-    state: State<AppState>,
+    State(state): State<AppState>,
     Extension(locale): Extension<Locale>,
     Extension(current_user): Extension<User>,
     Path(id): Path<i64>,
 ) -> HttpResponse<Json<UserJson>> {
     let use_case = UserUseCase::new(UserGateway::new(state.conn.as_ref().clone()));
-    match use_case.find_by_id(id).await {
-        Ok(user) => {
-            if current_user.role == Role::TenantOwner && user.tenant_id != current_user.tenant_id {
-                return Err(ExceptionResponse::Forbidden(
-                    locale,
-                    ErrorKey::RequiredHeaderValueMissing,
-                ));
-            }
-            Ok(Json(UserMapper::json(user)))
-        }
-        Err(_) => Err(ExceptionResponse::NotFound(
+    let user = use_case.find_by_id(id).await.ok_or(ExceptionResponse::NotFound(
+        locale,
+        ErrorKey::RequiredParameterMissing,
+    ))?;
+    if current_user.role == Role::TenantOwner && user.tenant_id != current_user.tenant_id {
+        return Err(ExceptionResponse::Forbidden(
             locale,
-            ErrorKey::RequiredParameterMissing,
-        )),
+            ErrorKey::RequiredHeaderValueMissing,
+        ));
     }
+    Ok(Json(UserMapper::json(user)))
 }
 
 #[utoipa::path(
@@ -329,7 +320,7 @@ pub async fn get_by_id(
     security(("bearer_auth" = []))
 )]
 pub async fn update(
-    state: State<AppState>,
+    State(state): State<AppState>,
     Extension(locale): Extension<Locale>,
     Extension(current_user): Extension<User>,
     Path(id): Path<i64>,
@@ -349,9 +340,9 @@ pub async fn update(
     // Check permissions: SysAdmin or self-update allowed, otherwise TenantOwner restricted to same tenant
     if current_user.role != Role::SysAdmin && current_user.id != Some(id) {
         if current_user.role == Role::TenantOwner {
-            let existing = use_case.find_by_id(id).await.map_err(|_| {
+            let existing = use_case.find_by_id(id).await.ok_or(
                 ExceptionResponse::NotFound(locale, ErrorKey::RequiredParameterMissing)
-            })?;
+            )?;
             if existing.tenant_id != current_user.tenant_id {
                 return Err(ExceptionResponse::Forbidden(
                     locale,
@@ -382,13 +373,11 @@ pub async fn update(
         domain.role = Role::TenantOwner;
     }
 
-    match use_case.update(id, domain).await {
-        Ok(user) => Ok(Json(UserMapper::json(user))),
-        Err(_) => Err(ExceptionResponse::BadRequest(
-            locale,
-            ErrorKey::RequiredParameterMissing,
-        )),
-    }
+    let user = use_case.update(id, domain).await.ok_or(ExceptionResponse::BadRequest(
+        locale,
+        ErrorKey::RequiredParameterMissing,
+    ))?;
+    Ok(Json(UserMapper::json(user)))
 }
 
 #[utoipa::path(
@@ -404,7 +393,7 @@ pub async fn update(
     security(("bearer_auth" = []))
 )]
 pub async fn change_password(
-    state: State<AppState>,
+    State(state): State<AppState>,
     Extension(locale): Extension<Locale>,
     Extension(current_user): Extension<User>,
     Json(payload): Json<ChangePasswordRequest>,
@@ -413,17 +402,13 @@ pub async fn change_password(
 
     let user_id = current_user.id.unwrap();
 
-    match use_case
+    use_case
         .change_password(user_id, payload.current_password, payload.new_password)
         .await
-    {
-        Ok(_) => Ok(StatusCode::OK),
-        Err(e) if e.message == "Current password is incorrect" => Err(
-            ExceptionResponse::BadRequest(locale, ErrorKey::InvalidCurrentPassword),
-        ),
-        Err(_) => Err(ExceptionResponse::BadRequest(
+        .ok_or(ExceptionResponse::BadRequest(
             locale,
-            ErrorKey::RequiredParameterMissing,
-        )),
-    }
+            ErrorKey::InvalidCurrentPassword,
+        ))?;
+
+    Ok(StatusCode::OK)
 }

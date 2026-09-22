@@ -57,10 +57,8 @@ pub async fn list_all(
     )?;
 
     let use_case = ProvinceUseCase::new(ProvinceGateway::new(state.conn.as_ref().clone()));
-    match use_case.find_by_country_code(country_code).await {
-        Ok(list) => Ok(Json(ProvinceMapper::json_vec(list))),
-        Err(_) => Ok(Json(Vec::new())),
-    }
+    let list = use_case.find_by_country_code(country_code).await;
+    Ok(Json(ProvinceMapper::json_vec(list)))
 }
 
 #[derive(Debug, Clone, serde::Deserialize, utoipa::IntoParams)]
@@ -208,13 +206,11 @@ pub async fn get_by_id(
     Path(id): Path<i64>,
 ) -> HttpResponse<Json<ProvinceJson>> {
     let use_case = ProvinceUseCase::new(ProvinceGateway::new(state.conn.as_ref().clone()));
-    match use_case.find_by_id(id).await {
-        Ok(res) => Ok(Json(ProvinceMapper::json(res))),
-        Err(_) => Err(ExceptionResponse::NotFound(
-            locale,
-            ErrorKey::RequiredParameterMissing,
-        )),
-    }
+    let res = use_case.find_by_id(id).await.ok_or(ExceptionResponse::NotFound(
+        locale,
+        ErrorKey::RequiredParameterMissing,
+    ))?;
+    Ok(Json(ProvinceMapper::json(res)))
 }
 
 fn require_sysadmin(user: &User, locale: Locale) -> Result<(), ExceptionResponse> {
@@ -235,11 +231,11 @@ pub async fn add(
 ) -> HttpResponse<(StatusCode, Json<ProvinceJson>)> {
     require_sysadmin(&user, locale)?;
     let use_case = ProvinceUseCase::new(ProvinceGateway::new(state.conn.as_ref().clone()));
-    use_case
+    let saved = use_case
         .save(ProvinceMapper::domain(payload))
         .await
-        .map(|value| (StatusCode::CREATED, Json(ProvinceMapper::json(value))))
-        .map_err(|_| ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))
+        .ok_or(ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
+    Ok((StatusCode::CREATED, Json(ProvinceMapper::json(saved))))
 }
 
 #[utoipa::path(put, tag = "Province", path = "/province/{id}", params(("id" = i64, Path)), request_body = ProvinceJson, responses((status = 200, body = ProvinceJson)))]
@@ -253,11 +249,11 @@ pub async fn update(
     require_sysadmin(&user, locale)?;
     payload.id = Some(id);
     let use_case = ProvinceUseCase::new(ProvinceGateway::new(state.conn.as_ref().clone()));
-    use_case
+    let saved = use_case
         .save(ProvinceMapper::domain(payload))
         .await
-        .map(|value| Json(ProvinceMapper::json(value)))
-        .map_err(|_| ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))
+        .ok_or(ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
+    Ok(Json(ProvinceMapper::json(saved)))
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -335,7 +331,6 @@ pub async fn import_csv(
         let existing = use_case
             .find_all()
             .await
-            .map_err(|_| ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?
             .into_iter()
             .find(|value| value.ibge_code.as_deref() == Some(code.as_str()));
         let is_update = existing.is_some();
@@ -350,7 +345,7 @@ pub async fn import_csv(
         if use_case
             .save(ProvinceMapper::domain(payload))
             .await
-            .is_err()
+            .is_none()
         {
             report.skipped += 1;
             report

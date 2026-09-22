@@ -3,6 +3,7 @@ use crate::commons::exception_response::{ExceptionResponse, HttpResponse};
 use crate::commons::i18n::{ErrorKey, Locale};
 use crate::commons::pagination::{NormalizedPagination, PageQuery, PagedResponse};
 use crate::endpoints::json::catalog_json::*;
+use crate::infrastructure::mapper::{CategoryMapper, Mapper};
 use axum::http::StatusCode;
 use axum::{
     Json,
@@ -11,10 +12,11 @@ use axum::{
 use business::domain::enums::Role;
 use business::domain::user::User;
 use business::sea_orm::{
-    ActiveModelTrait, ColumnTrait, Condition, EntityTrait, IntoActiveModel, NotSet,
-    PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Set,
+    ColumnTrait, Condition, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect,
 };
 use entity::category_entity;
+use business::use_cases::category_use_case::CategoryUseCase;
+use business::gateway::category_gateway::CategoryGateway;
 
 fn tenant_for_write(user: &User, requested: Option<i64>) -> Option<i64> {
     match user.role {
@@ -38,34 +40,12 @@ fn can_read_tenant(user: &User, tenant_id: Option<i64>) -> bool {
 )]
 pub async fn categories(
     State(state): State<AppState>,
-    Extension(current_user): Extension<User>,
+    Extension(_current_user): Extension<User>,
 ) -> Json<Vec<CategoryJson>> {
-    let mut query = category_entity::Entity::find();
-    if current_user.role != Role::SysAdmin {
-        if let Some(id) = current_user.tenant_id {
-            query = query.filter(category_entity::Column::TenantId.eq(id));
-        } else {
-            return Json(Vec::new());
-        }
-    }
-    let r = query
-        .order_by_asc(category_entity::Column::Name)
-        .all(state.conn.as_ref())
-        .await
-        .unwrap_or_default();
-    Json(
-        r.into_iter()
-            .map(|x| CategoryJson {
-                id: Some(x.id),
-                uuid: x.uuid.to_string(),
-                tenant_id: x.tenant_id,
-                name: x.name,
-                slug: x.slug,
-                parent_id: x.parent_id,
-                active: x.active,
-            })
-            .collect(),
-    )
+    let usecase = CategoryUseCase::new(CategoryGateway::new(state.conn.as_ref().clone()));
+    let items = usecase.find_all().await;
+
+    Json(CategoryMapper::json_vec(items))
 }
 
 #[derive(Debug, Clone, serde::Deserialize, utoipa::IntoParams)]
@@ -98,14 +78,7 @@ impl CategoryPageQuery {
     }
 }
 
-const CATEGORY_SORT_FIELDS: &[&str] = &[
-    "id",
-    "name",
-    "slug",
-    "active",
-    "createdAt",
-    "created_at",
-];
+const CATEGORY_SORT_FIELDS: &[&str] = &["id", "name", "slug", "active", "createdAt", "created_at"];
 
 #[utoipa::path(
     get,
@@ -219,35 +192,28 @@ pub async fn add_category(
             ErrorKey::InvalidParameterValue,
         ));
     }
-    let model = category_entity::ActiveModel {
-        id: NotSet,
-        uuid: NotSet,
-        tenant_id: Set(Some(tenant_id)),
-        name: Set(input.name),
-        slug: Set(input.slug),
-        parent_id: Set(input.parent_id),
-        active: Set(input.active),
-        created_at: NotSet,
-        created_by: NotSet,
-        updated_at: NotSet,
-        updated_by: NotSet,
-    };
-    let saved = model
-        .insert(state.conn.as_ref())
+
+    let usecase = CategoryUseCase::new(CategoryGateway::new(state.conn.as_ref().clone()));
+
+    let category = CategoryMapper::domain(CategoryJson {
+        id: None,
+        uuid: String::new(),
+        tenant_id: Some(tenant_id),
+        name: input.name,
+        slug: input.slug,
+        parent_id: input.parent_id,
+        active: input.active,
+    });
+
+    let saved = usecase
+        .create(category)
         .await
-        .map_err(|_| ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
-    Ok((
-        StatusCode::CREATED,
-        Json(CategoryJson {
-            id: Some(saved.id),
-            uuid: saved.uuid.to_string(),
-            tenant_id: saved.tenant_id,
-            name: saved.name,
-            slug: saved.slug,
-            parent_id: saved.parent_id,
-            active: saved.active,
-        }),
-    ))
+        .ok_or(ExceptionResponse::BadRequest(
+            locale,
+            ErrorKey::InvalidParameterValue,
+        ))?;
+
+    Ok((StatusCode::CREATED, Json(CategoryMapper::json(saved))))
 }
 
 #[utoipa::path(
@@ -268,14 +234,16 @@ pub async fn update_category(
     Path(id): Path<i64>,
     Json(input): Json<CategoryInputJson>,
 ) -> HttpResponse<Json<CategoryJson>> {
-    let existing = category_entity::Entity::find_by_id(id)
-        .one(state.conn.as_ref())
+    let usecase = CategoryUseCase::new(CategoryGateway::new(state.conn.as_ref().clone()));
+
+    let existing = usecase
+        .find_by_id(id)
         .await
-        .map_err(|_| ExceptionResponse::NotFound(locale, ErrorKey::InvalidParameterValue))?
         .ok_or(ExceptionResponse::NotFound(
             locale,
             ErrorKey::InvalidParameterValue,
         ))?;
+
     if !can_read_tenant(&user, existing.tenant_id)
         || tenant_for_write(&user, input.tenant_id.or(existing.tenant_id)) != existing.tenant_id
     {
@@ -290,22 +258,24 @@ pub async fn update_category(
             ErrorKey::InvalidParameterValue,
         ));
     }
-    let mut model = existing.into_active_model();
-    model.name = Set(input.name);
-    model.slug = Set(input.slug);
-    model.parent_id = Set(input.parent_id);
-    model.active = Set(input.active);
-    let saved = model
-        .update(state.conn.as_ref())
+
+    let category = CategoryMapper::domain(CategoryJson {
+        id: Some(id),
+        uuid: existing.uuid.unwrap_or_default(),
+        tenant_id: existing.tenant_id,
+        name: input.name,
+        slug: input.slug,
+        parent_id: input.parent_id,
+        active: input.active,
+    });
+
+    let saved = usecase
+        .update(id, category)
         .await
-        .map_err(|_| ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
-    Ok(Json(CategoryJson {
-        id: Some(saved.id),
-        uuid: saved.uuid.to_string(),
-        tenant_id: saved.tenant_id,
-        name: saved.name,
-        slug: saved.slug,
-        parent_id: saved.parent_id,
-        active: saved.active,
-    }))
+        .ok_or(ExceptionResponse::BadRequest(
+            locale,
+            ErrorKey::InvalidParameterValue,
+        ))?;
+
+    Ok(Json(CategoryMapper::json(saved)))
 }

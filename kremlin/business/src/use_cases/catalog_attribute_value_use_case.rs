@@ -1,6 +1,5 @@
 use crate::commons::entity_mapper::EntityMapper;
 use crate::commons::gateway::Gateway;
-use crate::domain::business_error::BusinessError;
 use crate::domain::catalog_attribute_value::{
     CatalogAttributeValue, CatalogAttributeValueEntityMapper,
 };
@@ -18,72 +17,65 @@ impl CatalogAttributeValueUseCase {
     pub async fn create(
         &self,
         val: CatalogAttributeValue,
-    ) -> Result<CatalogAttributeValue, BusinessError> {
+    ) -> Option<CatalogAttributeValue> {
         let entity = self.gateway.persist(val).await.map_err(|e| {
-            BusinessError::new(format!("Failed to persist catalog attribute value: {}", e))
-        })?;
-        Ok(CatalogAttributeValueEntityMapper::from_active_model(entity))
+            log::error!("Failed to persist catalog attribute value: {}", e);
+        }).ok()?;
+        Some(CatalogAttributeValueEntityMapper::from_active_model(entity))
     }
 
-    pub async fn find_all(&self) -> Result<Vec<CatalogAttributeValue>, BusinessError> {
+    pub async fn find_all(&self) -> Vec<CatalogAttributeValue> {
         let entities = self.gateway.find_all().await.map_err(|e| {
-            BusinessError::new(format!("Database error: {}", e))
-        })?;
-        Ok(CatalogAttributeValueEntityMapper::from_models(entities))
+            log::error!("Database error: {}", e);
+        }).unwrap_or_default();
+        CatalogAttributeValueEntityMapper::from_models(entities)
     }
 
-    pub async fn find_by_id(&self, id: i64) -> Result<CatalogAttributeValue, BusinessError> {
+    pub async fn find_by_id(&self, id: i64) -> Option<CatalogAttributeValue> {
         let entity = self.gateway.find_by_id(id).await.map_err(|e| {
-            BusinessError::new(format!("Database error: {}", e))
-        })?;
-        match entity {
-            Some(value) => Ok(CatalogAttributeValueEntityMapper::from_model(value)),
-            None => Err(BusinessError::new(
-                "Catalog attribute value not found".to_string(),
-            )),
-        }
+            log::error!("Database error: {}", e);
+        }).ok()??;
+        Some(CatalogAttributeValueEntityMapper::from_model(entity))
     }
 
-    pub async fn find_by_uuid(&self, uuid: String) -> Result<CatalogAttributeValue, BusinessError> {
+    pub async fn find_by_uuid(&self, uuid: String) -> Option<CatalogAttributeValue> {
         let entity = self.gateway.find_by_uuid(uuid).await.map_err(|e| {
-            BusinessError::new(format!("Database error: {}", e))
-        })?;
-        match entity {
-            Some(value) => Ok(CatalogAttributeValueEntityMapper::from_model(value)),
-            None => Err(BusinessError::new(
-                "Catalog attribute value not found".to_string(),
-            )),
-        }
+            log::error!("Database error: {}", e);
+        }).ok()??;
+        Some(CatalogAttributeValueEntityMapper::from_model(entity))
     }
 
     pub async fn find_by_attribute_id(
         &self,
         attribute_id: i64,
-    ) -> Result<Vec<CatalogAttributeValue>, BusinessError> {
+    ) -> Vec<CatalogAttributeValue> {
         let entities = self
             .gateway
             .find_by_attribute_id(attribute_id)
             .await
-            .map_err(|e| BusinessError::new(format!("Database error: {}", e)))?;
-        Ok(CatalogAttributeValueEntityMapper::from_models(entities))
+            .map_err(|e| {
+                log::error!("Database error: {}", e);
+            })
+            .unwrap_or_default();
+        CatalogAttributeValueEntityMapper::from_models(entities)
     }
 
     pub async fn update(
         &self,
         id: i64,
         mut val: CatalogAttributeValue,
-    ) -> Result<CatalogAttributeValue, BusinessError> {
+    ) -> Option<CatalogAttributeValue> {
         val.id = Some(id);
         let entity = self.gateway.persist(val).await.map_err(|e| {
-            BusinessError::new(format!("Failed to update catalog attribute value: {}", e))
-        })?;
-        Ok(CatalogAttributeValueEntityMapper::from_active_model(entity))
+            log::error!("Failed to update catalog attribute value: {}", e);
+        }).ok()?;
+        Some(CatalogAttributeValueEntityMapper::from_active_model(entity))
     }
 
-    pub async fn delete_by_id(&self, id: i64) -> Result<(), BusinessError> {
+    pub async fn delete_by_id(&self, id: i64) -> Option<()> {
         self.gateway.delete_by_id(id).await.map_err(|e| {
-            BusinessError::new(format!("Failed to delete catalog attribute value: {}", e))
-        })?;
-        Ok(())
+            log::error!("Failed to delete catalog attribute value: {}", e);
+        }).ok()?;
+        Some(())
     }
 }

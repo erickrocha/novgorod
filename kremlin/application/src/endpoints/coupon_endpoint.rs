@@ -14,13 +14,14 @@ use axum::{
     extract::{Extension, Path, Query, State},
 };
 use business::commons::entity_mapper::EntityMapper;
-use business::domain::coupon::CouponEntityMapper;
+use business::domain::coupon::{Coupon, CouponEntityMapper};
 use business::domain::enums::Role;
 use business::domain::user::User;
+use business::gateway::coupon_gateway::CouponGateway;
 use business::sea_orm::{
-    ActiveModelTrait, ColumnTrait, Condition, EntityTrait, IntoActiveModel, NotSet,
-    PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Set,
+    ColumnTrait, Condition, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect,
 };
+use business::use_cases::coupon_use_case::CouponUseCase;
 use entity::coupon_entity;
 
 fn tenant_for_write(user: &User, requested: Option<i64>) -> Option<i64> {
@@ -59,19 +60,11 @@ const COUPON_SORT_FIELDS: &[&str] = &[
 )]
 pub async fn list_all(
     State(state): State<AppState>,
-    Extension(current_user): Extension<User>,
+    Extension(_current_user): Extension<User>,
 ) -> Json<Vec<CouponJson>> {
-    let mut query = coupon_entity::Entity::find();
-    if current_user.role != Role::SysAdmin {
-        if let Some(id) = current_user.tenant_id {
-            query = query.filter(coupon_entity::Column::TenantId.eq(id));
-        } else {
-            return Json(Vec::new());
-        }
-    }
-    let r = query.all(state.conn.as_ref()).await.unwrap_or_default();
-    let domains = CouponEntityMapper::from_models(r);
-    Json(CouponMapper::json_vec(domains))
+    let usecase = CouponUseCase::new(CouponGateway::new(state.conn.as_ref().clone()));
+    let items = usecase.find_all().await;
+    Json(CouponMapper::json_vec(items))
 }
 
 #[utoipa::path(
@@ -170,10 +163,10 @@ pub async fn get_by_id(
     Extension(current_user): Extension<User>,
     Path(id): Path<i64>,
 ) -> HttpResponse<Json<CouponJson>> {
-    let item = coupon_entity::Entity::find_by_id(id)
-        .one(state.conn.as_ref())
+    let usecase = CouponUseCase::new(CouponGateway::new(state.conn.as_ref().clone()));
+    let item = usecase
+        .find_by_id(id)
         .await
-        .map_err(|_| ExceptionResponse::NotFound(locale, ErrorKey::InvalidParameterValue))?
         .ok_or(ExceptionResponse::NotFound(
             locale,
             ErrorKey::InvalidParameterValue,
@@ -186,8 +179,7 @@ pub async fn get_by_id(
         ));
     }
 
-    let domain = CouponEntityMapper::from_model(item);
-    Ok(Json(CouponMapper::json(domain)))
+    Ok(Json(CouponMapper::json(item)))
 }
 
 #[utoipa::path(
@@ -221,33 +213,33 @@ pub async fn add(
         ));
     }
 
-    let model = coupon_entity::ActiveModel {
-        id: NotSet,
-        uuid: NotSet,
-        tenant_id: Set(Some(tenant_id)),
-        code: Set(input.code.trim().to_uppercase()),
-        campaign_id: Set(input.campaign_id),
-        coupon_type: Set(input.coupon_type.trim().to_string()),
-        value: Set(input.value),
-        min_order_cents: Set(input.min_order_cents),
-        max_uses: Set(input.max_uses),
-        max_uses_per_customer: Set(input.max_uses_per_customer),
-        starts_at: Set(input.starts_at),
-        expires_at: Set(input.expires_at),
-        active: Set(input.active.unwrap_or(true)),
-        created_at: NotSet,
-        created_by: NotSet,
-        updated_at: NotSet,
-        updated_by: NotSet,
+    let domain = Coupon {
+        id: None,
+        uuid: None,
+        tenant_id: Some(tenant_id),
+        code: input.code.trim().to_uppercase(),
+        campaign_id: input.campaign_id,
+        coupon_type: input.coupon_type.trim().to_string(),
+        value: input.value,
+        min_order_cents: input.min_order_cents,
+        max_uses: input.max_uses,
+        max_uses_per_customer: input.max_uses_per_customer,
+        starts_at: input.starts_at,
+        expires_at: input.expires_at,
+        active: input.active.unwrap_or(true),
+        created_at: None,
+        created_by: None,
+        updated_at: None,
+        updated_by: None,
     };
 
-    let saved = model
-        .insert(state.conn.as_ref())
+    let usecase = CouponUseCase::new(CouponGateway::new(state.conn.as_ref().clone()));
+    let saved = usecase
+        .create(domain)
         .await
-        .map_err(|_| ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
+        .ok_or(ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
 
-    let domain = CouponEntityMapper::from_model(saved);
-    Ok((StatusCode::CREATED, Json(CouponMapper::json(domain))))
+    Ok((StatusCode::CREATED, Json(CouponMapper::json(saved))))
 }
 
 #[utoipa::path(
@@ -273,10 +265,10 @@ pub async fn update(
     Path(id): Path<i64>,
     Json(input): Json<CouponInputJson>,
 ) -> HttpResponse<Json<CouponJson>> {
-    let existing = coupon_entity::Entity::find_by_id(id)
-        .one(state.conn.as_ref())
+    let usecase = CouponUseCase::new(CouponGateway::new(state.conn.as_ref().clone()));
+    let existing = usecase
+        .find_by_id(id)
         .await
-        .map_err(|_| ExceptionResponse::NotFound(locale, ErrorKey::InvalidParameterValue))?
         .ok_or(ExceptionResponse::NotFound(
             locale,
             ErrorKey::InvalidParameterValue,
@@ -291,25 +283,24 @@ pub async fn update(
         ));
     }
 
-    let mut model = existing.into_active_model();
-    model.code = Set(input.code.trim().to_uppercase());
-    model.campaign_id = Set(input.campaign_id);
-    model.coupon_type = Set(input.coupon_type.trim().to_string());
-    model.value = Set(input.value);
-    model.min_order_cents = Set(input.min_order_cents);
-    model.max_uses = Set(input.max_uses);
-    model.max_uses_per_customer = Set(input.max_uses_per_customer);
-    model.starts_at = Set(input.starts_at);
-    model.expires_at = Set(input.expires_at);
+    let mut updated = existing;
+    updated.code = input.code.trim().to_uppercase();
+    updated.campaign_id = input.campaign_id;
+    updated.coupon_type = input.coupon_type.trim().to_string();
+    updated.value = input.value;
+    updated.min_order_cents = input.min_order_cents;
+    updated.max_uses = input.max_uses;
+    updated.max_uses_per_customer = input.max_uses_per_customer;
+    updated.starts_at = input.starts_at;
+    updated.expires_at = input.expires_at;
     if let Some(act) = input.active {
-        model.active = Set(act);
+        updated.active = act;
     }
 
-    let saved = model
-        .update(state.conn.as_ref())
+    let saved = usecase
+        .update(id, updated)
         .await
-        .map_err(|_| ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
+        .ok_or(ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
 
-    let domain = CouponEntityMapper::from_model(saved);
-    Ok(Json(CouponMapper::json(domain)))
+    Ok(Json(CouponMapper::json(saved)))
 }

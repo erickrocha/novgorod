@@ -1,6 +1,5 @@
 use crate::commons::entity_mapper::EntityMapper;
 use crate::commons::gateway::Gateway;
-use crate::domain::business_error::BusinessError;
 use crate::domain::product_image::{
     compute_storage_identity_hash, ProductImage, ProductImageEntityMapper, STATUS_PENDING,
     STORAGE_PROVIDER_S3,
@@ -50,13 +49,16 @@ impl ProductImageUseCase {
         product_id: i64,
         tenant_id: Option<i64>,
         requests: Vec<CreateImageUploadRequest>,
-    ) -> Result<Vec<ImageUploadResult>, BusinessError> {
+    ) -> Option<Vec<ImageUploadResult>> {
         let mut results = Vec::new();
         let existing_images = self
             .gateway
             .find_by_product_id(product_id)
             .await
-            .map_err(|e| BusinessError::new(format!("Failed to query existing product images: {}", e)))?;
+            .map_err(|e| {
+                log::error!("Failed to query existing product images: {}", e);
+            })
+            .ok()?;
 
         let has_existing_images = !existing_images.is_empty();
         let mut has_primary_set = existing_images.iter().any(|img| img.is_primary);
@@ -80,7 +82,10 @@ impl ProductImageUseCase {
                     self.gateway
                         .clear_primary_for_product(product_id)
                         .await
-                        .map_err(|e| BusinessError::new(format!("Failed to clear primary flag: {}", e)))?;
+                        .map_err(|e| {
+                            log::error!("Failed to clear primary flag: {}", e);
+                        })
+                        .ok()?;
                     true
                 }
             } else if !has_existing_images && index == 0 && !has_primary_set {
@@ -126,7 +131,10 @@ impl ProductImageUseCase {
                 .gateway
                 .persist(domain.clone())
                 .await
-                .map_err(|e| BusinessError::new(format!("Failed to persist product image record: {}", e)))?;
+                .map_err(|e| {
+                    log::error!("Failed to persist product image record: {}", e);
+                })
+                .ok()?;
 
             let saved_model: Result<Model, _> = saved_active.try_into_model();
             let mut persisted_domain = match saved_model {
@@ -139,7 +147,10 @@ impl ProductImageUseCase {
                 .storage
                 .generate_presigned_upload_url(&object_key, &req.mime_type, 900)
                 .await
-                .map_err(BusinessError::new)?;
+                .map_err(|e| {
+                    log::error!("Failed to generate presigned upload url: {}", e);
+                })
+                .ok()?;
 
             results.push(ImageUploadResult {
                 image: persisted_domain,
@@ -147,15 +158,18 @@ impl ProductImageUseCase {
             });
         }
 
-        Ok(results)
+        Some(results)
     }
 
-    pub async fn list_by_product(&self, product_id: i64) -> Result<Vec<ProductImage>, BusinessError> {
+    pub async fn list_by_product(&self, product_id: i64) -> Vec<ProductImage> {
         let models = self
             .gateway
             .find_by_product_id(product_id)
             .await
-            .map_err(|e| BusinessError::new(format!("Failed to list images: {}", e)))?;
+            .map_err(|e| {
+                log::error!("Failed to list images: {}", e);
+            })
+            .unwrap_or_default();
 
         let mut list = Vec::new();
         for m in models {
@@ -164,49 +178,61 @@ impl ProductImageUseCase {
             list.push(domain);
         }
 
-        Ok(list)
+        list
     }
 
-    pub async fn delete_image(&self, product_id: i64, image_id: i64) -> Result<(), BusinessError> {
+    pub async fn delete_image(&self, product_id: i64, image_id: i64) -> Option<()> {
         let existing = self
             .gateway
             .find_by_id(image_id)
             .await
-            .map_err(|e| BusinessError::new(format!("Database error: {}", e)))?
-            .ok_or_else(|| BusinessError::new("Product image not found".to_string()))?;
+            .map_err(|e| {
+                log::error!("Database error: {}", e);
+            })
+            .ok()??;
 
         if existing.product_id != product_id {
-            return Err(BusinessError::new("Image does not belong to product".to_string()));
+            log::error!("Image {} does not belong to product {}", image_id, product_id);
+            return None;
         }
 
         self.gateway
             .soft_delete(image_id)
             .await
-            .map_err(|e| BusinessError::new(format!("Failed to delete product image: {}", e)))?;
+            .map_err(|e| {
+                log::error!("Failed to delete product image: {}", e);
+            })
+            .ok()?;
 
         let _ = self.storage.delete_object(&existing.object_key).await;
 
-        Ok(())
+        Some(())
     }
 
-    pub async fn set_primary(&self, product_id: i64, image_id: i64) -> Result<(), BusinessError> {
+    pub async fn set_primary(&self, product_id: i64, image_id: i64) -> Option<()> {
         let existing = self
             .gateway
             .find_by_id(image_id)
             .await
-            .map_err(|e| BusinessError::new(format!("Database error: {}", e)))?
-            .ok_or_else(|| BusinessError::new("Product image not found".to_string()))?;
+            .map_err(|e| {
+                log::error!("Database error: {}", e);
+            })
+            .ok()??;
 
         if existing.product_id != product_id {
-            return Err(BusinessError::new("Image does not belong to product".to_string()));
+            log::error!("Image {} does not belong to product {}", image_id, product_id);
+            return None;
         }
 
         self.gateway
             .set_primary(image_id, product_id)
             .await
-            .map_err(|e| BusinessError::new(format!("Failed to set primary image: {}", e)))?;
+            .map_err(|e| {
+                log::error!("Failed to set primary image: {}", e);
+            })
+            .ok()?;
 
-        Ok(())
+        Some(())
     }
 
     pub async fn handle_s3_upload_notification(
@@ -215,32 +241,27 @@ impl ProductImageUseCase {
         object_key: &str,
         etag: Option<String>,
         size_bytes: Option<i64>,
-    ) -> Result<bool, BusinessError> {
+    ) -> bool {
         let clean_key = object_key.replace("%2F", "/");
 
-        if let Some(existing) = self
-            .gateway
-            .find_by_bucket_and_key(bucket, &clean_key)
-            .await
-            .map_err(|e| BusinessError::new(format!("Database lookup error: {}", e)))?
-        {
-            self.gateway
-                .mark_as_available(existing.id, etag, size_bytes)
-                .await
-                .map_err(|e| BusinessError::new(format!("Failed to update image status: {}", e)))?;
+        if let Ok(Some(existing)) = self.gateway.find_by_bucket_and_key(bucket, &clean_key).await {
+            if let Err(e) = self.gateway.mark_as_available(existing.id, etag, size_bytes).await {
+                log::error!("Failed to update image status: {}", e);
+                return false;
+            }
             log::info!(
                 "Product image {} (id={}) marked as available via S3 notification",
                 clean_key,
                 existing.id
             );
-            Ok(true)
+            true
         } else {
             log::warn!(
                 "Received S3 upload notification for unmapped image: bucket={}, key={}",
                 bucket,
                 clean_key
             );
-            Ok(false)
+            false
         }
     }
 }

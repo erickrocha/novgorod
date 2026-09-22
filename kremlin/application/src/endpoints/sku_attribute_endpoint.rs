@@ -17,10 +17,11 @@ use business::commons::entity_mapper::EntityMapper;
 use business::domain::enums::Role;
 use business::domain::sku_attribute_value::SkuAttributeValueEntityMapper;
 use business::domain::user::User;
+use business::gateway::sku_attribute_value_gateway::SkuAttributeValueGateway;
 use business::sea_orm::{
-    ActiveModelTrait, ColumnTrait, EntityTrait, IntoActiveModel, NotSet, PaginatorTrait,
-    QueryFilter, QueryOrder, QuerySelect, Set,
+    ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect,
 };
+use business::use_cases::sku_attribute_value_use_case::SkuAttributeValueUseCase;
 use entity::sku_attribute_value_entity;
 
 fn tenant_for_write(user: &User, requested: Option<i64>) -> Option<i64> {
@@ -62,23 +63,11 @@ const SKU_ATTRIBUTE_SORT_FIELDS: &[&str] = &[
 )]
 pub async fn list_all(
     State(state): State<AppState>,
-    Extension(current_user): Extension<User>,
+    Extension(_current_user): Extension<User>,
 ) -> Json<Vec<SkuAttributeValueJson>> {
-    let mut query = sku_attribute_value_entity::Entity::find();
-    if current_user.role != Role::SysAdmin {
-        if let Some(id) = current_user.tenant_id {
-            query = query.filter(sku_attribute_value_entity::Column::TenantId.eq(id));
-        } else {
-            return Json(Vec::new());
-        }
-    }
-    let r = query
-        .order_by_asc(sku_attribute_value_entity::Column::Id)
-        .all(state.conn.as_ref())
-        .await
-        .unwrap_or_default();
-    let domains = SkuAttributeValueEntityMapper::from_models(r);
-    Json(SkuAttributeValueMapper::json_vec(domains))
+    let usecase = SkuAttributeValueUseCase::new(SkuAttributeValueGateway::new(state.conn.as_ref().clone()));
+    let items = usecase.find_all().await;
+    Json(SkuAttributeValueMapper::json_vec(items))
 }
 
 #[utoipa::path(
@@ -175,14 +164,11 @@ pub async fn get_by_id(
     Extension(current_user): Extension<User>,
     Path(id): Path<i64>,
 ) -> HttpResponse<Json<SkuAttributeValueJson>> {
-    let item = sku_attribute_value_entity::Entity::find_by_id(id)
-        .one(state.conn.as_ref())
-        .await
-        .map_err(|_| ExceptionResponse::NotFound(locale, ErrorKey::InvalidParameterValue))?
-        .ok_or(ExceptionResponse::NotFound(
-            locale,
-            ErrorKey::InvalidParameterValue,
-        ))?;
+    let usecase = SkuAttributeValueUseCase::new(SkuAttributeValueGateway::new(state.conn.as_ref().clone()));
+    let item = usecase.find_by_id(id).await.ok_or(ExceptionResponse::NotFound(
+        locale,
+        ErrorKey::InvalidParameterValue,
+    ))?;
 
     if !can_read_tenant(&current_user, item.tenant_id) {
         return Err(ExceptionResponse::NotFound(
@@ -191,8 +177,7 @@ pub async fn get_by_id(
         ));
     }
 
-    let domain = SkuAttributeValueEntityMapper::from_model(item);
-    Ok(Json(SkuAttributeValueMapper::json(domain)))
+    Ok(Json(SkuAttributeValueMapper::json(item)))
 }
 
 #[utoipa::path(
@@ -210,25 +195,12 @@ pub async fn get_by_id(
 )]
 pub async fn by_sku(
     State(state): State<AppState>,
-    Extension(current_user): Extension<User>,
+    Extension(_current_user): Extension<User>,
     Path(sku_id): Path<i64>,
 ) -> Json<Vec<SkuAttributeValueJson>> {
-    let mut query = sku_attribute_value_entity::Entity::find()
-        .filter(sku_attribute_value_entity::Column::SkuId.eq(sku_id));
-    if current_user.role != Role::SysAdmin {
-        if let Some(id) = current_user.tenant_id {
-            query = query.filter(sku_attribute_value_entity::Column::TenantId.eq(id));
-        } else {
-            return Json(Vec::new());
-        }
-    }
-    let r = query
-        .order_by_asc(sku_attribute_value_entity::Column::Id)
-        .all(state.conn.as_ref())
-        .await
-        .unwrap_or_default();
-    let domains = SkuAttributeValueEntityMapper::from_models(r);
-    Json(SkuAttributeValueMapper::json_vec(domains))
+    let usecase = SkuAttributeValueUseCase::new(SkuAttributeValueGateway::new(state.conn.as_ref().clone()));
+    let items = usecase.find_by_sku_id(sku_id).await;
+    Json(SkuAttributeValueMapper::json_vec(items))
 }
 
 #[utoipa::path(
@@ -246,25 +218,12 @@ pub async fn by_sku(
 )]
 pub async fn by_product(
     State(state): State<AppState>,
-    Extension(current_user): Extension<User>,
+    Extension(_current_user): Extension<User>,
     Path(product_id): Path<i64>,
 ) -> Json<Vec<SkuAttributeValueJson>> {
-    let mut query = sku_attribute_value_entity::Entity::find()
-        .filter(sku_attribute_value_entity::Column::ProductId.eq(product_id));
-    if current_user.role != Role::SysAdmin {
-        if let Some(id) = current_user.tenant_id {
-            query = query.filter(sku_attribute_value_entity::Column::TenantId.eq(id));
-        } else {
-            return Json(Vec::new());
-        }
-    }
-    let r = query
-        .order_by_asc(sku_attribute_value_entity::Column::Id)
-        .all(state.conn.as_ref())
-        .await
-        .unwrap_or_default();
-    let domains = SkuAttributeValueEntityMapper::from_models(r);
-    Json(SkuAttributeValueMapper::json_vec(domains))
+    let usecase = SkuAttributeValueUseCase::new(SkuAttributeValueGateway::new(state.conn.as_ref().clone()));
+    let items = usecase.find_by_product_id(product_id).await;
+    Json(SkuAttributeValueMapper::json_vec(items))
 }
 
 #[utoipa::path(
@@ -303,28 +262,31 @@ pub async fn add(
         ));
     }
 
-    let model = sku_attribute_value_entity::ActiveModel {
-        id: NotSet,
-        uuid: NotSet,
-        tenant_id: Set(Some(tenant_id)),
-        product_id: Set(input.product_id),
-        sku_id: Set(input.sku_id),
-        product_attribute_id: Set(input.product_attribute_id),
-        attribute_id: Set(input.attribute_id),
-        attribute_value_id: Set(input.attribute_value_id),
-        created_at: NotSet,
-        created_by: NotSet,
-        updated_at: NotSet,
-        updated_by: NotSet,
-    };
+    let sav = SkuAttributeValueMapper::domain(SkuAttributeValueJson {
+        id: 0,
+        uuid: String::new(),
+        tenant_id: Some(tenant_id),
+        product_id: input.product_id,
+        sku_id: input.sku_id,
+        product_attribute_id: input.product_attribute_id,
+        attribute_id: input.attribute_id,
+        attribute_value_id: input.attribute_value_id,
+        created_at: None,
+        created_by: None,
+        updated_at: None,
+        updated_by: None,
+    });
 
-    let saved = model
-        .insert(state.conn.as_ref())
+    let usecase = SkuAttributeValueUseCase::new(SkuAttributeValueGateway::new(state.conn.as_ref().clone()));
+    let saved = usecase
+        .create(sav)
         .await
-        .map_err(|_| ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
+        .ok_or(ExceptionResponse::BadRequest(
+            locale,
+            ErrorKey::InvalidParameterValue,
+        ))?;
 
-    let domain = SkuAttributeValueEntityMapper::from_model(saved);
-    Ok((StatusCode::CREATED, Json(SkuAttributeValueMapper::json(domain))))
+    Ok((StatusCode::CREATED, Json(SkuAttributeValueMapper::json(saved))))
 }
 
 #[utoipa::path(
@@ -350,10 +312,10 @@ pub async fn update(
     Path(id): Path<i64>,
     Json(input): Json<SkuAttributeValueInputJson>,
 ) -> HttpResponse<Json<SkuAttributeValueJson>> {
-    let existing = sku_attribute_value_entity::Entity::find_by_id(id)
-        .one(state.conn.as_ref())
+    let usecase = SkuAttributeValueUseCase::new(SkuAttributeValueGateway::new(state.conn.as_ref().clone()));
+    let existing = usecase
+        .find_by_id(id)
         .await
-        .map_err(|_| ExceptionResponse::NotFound(locale, ErrorKey::InvalidParameterValue))?
         .ok_or(ExceptionResponse::NotFound(
             locale,
             ErrorKey::InvalidParameterValue,
@@ -373,20 +335,30 @@ pub async fn update(
         ));
     }
 
-    let mut model = existing.into_active_model();
-    model.product_id = Set(input.product_id);
-    model.sku_id = Set(input.sku_id);
-    model.product_attribute_id = Set(input.product_attribute_id);
-    model.attribute_id = Set(input.attribute_id);
-    model.attribute_value_id = Set(input.attribute_value_id);
+    let sav = SkuAttributeValueMapper::domain(SkuAttributeValueJson {
+        id,
+        uuid: existing.uuid.unwrap_or_default(),
+        tenant_id: existing.tenant_id,
+        product_id: input.product_id,
+        sku_id: input.sku_id,
+        product_attribute_id: input.product_attribute_id,
+        attribute_id: input.attribute_id,
+        attribute_value_id: input.attribute_value_id,
+        created_at: existing.created_at,
+        created_by: existing.created_by,
+        updated_at: existing.updated_at,
+        updated_by: existing.updated_by,
+    });
 
-    let saved = model
-        .update(state.conn.as_ref())
+    let saved = usecase
+        .update(id, sav)
         .await
-        .map_err(|_| ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
+        .ok_or(ExceptionResponse::BadRequest(
+            locale,
+            ErrorKey::InvalidParameterValue,
+        ))?;
 
-    let domain = SkuAttributeValueEntityMapper::from_model(saved);
-    Ok(Json(SkuAttributeValueMapper::json(domain)))
+    Ok(Json(SkuAttributeValueMapper::json(saved)))
 }
 
 #[utoipa::path(
@@ -409,10 +381,10 @@ pub async fn delete(
     Extension(user): Extension<User>,
     Path(id): Path<i64>,
 ) -> HttpResponse<StatusCode> {
-    let existing = sku_attribute_value_entity::Entity::find_by_id(id)
-        .one(state.conn.as_ref())
+    let usecase = SkuAttributeValueUseCase::new(SkuAttributeValueGateway::new(state.conn.as_ref().clone()));
+    let existing = usecase
+        .find_by_id(id)
         .await
-        .map_err(|_| ExceptionResponse::NotFound(locale, ErrorKey::InvalidParameterValue))?
         .ok_or(ExceptionResponse::NotFound(
             locale,
             ErrorKey::InvalidParameterValue,
@@ -427,10 +399,13 @@ pub async fn delete(
         ));
     }
 
-    sku_attribute_value_entity::Entity::delete_by_id(id)
-        .exec(state.conn.as_ref())
+    usecase
+        .delete_by_id(id)
         .await
-        .map_err(|_| ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
+        .ok_or(ExceptionResponse::BadRequest(
+            locale,
+            ErrorKey::InvalidParameterValue,
+        ))?;
 
     Ok(StatusCode::NO_CONTENT)
 }

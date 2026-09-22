@@ -10,13 +10,13 @@ use crate::endpoints::json::person_json::{
 use crate::infrastructure::mapper::{Mapper, PersonAddressMapper, PersonMapper, UserMapper};
 use axum::extract::{Extension, State};
 use axum::Json;
-use business::commons::entity_mapper::EntityMapper;
-use business::domain::person::{Person, PersonEntityMapper};
-use business::domain::person_address::PersonAddressEntityMapper;
+use business::domain::person::Person;
 use business::domain::user::User;
-use business::sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, IntoActiveModel, NotSet, QueryFilter, Set};
+use business::gateway::person_address_gateway::PersonAddressGateway;
+use business::gateway::person_gateway::PersonGateway;
+use business::use_cases::person_address_use_case::PersonAddressUseCase;
+use business::use_cases::person_use_case::PersonUseCase;
 use business::use_cases::user_use_case::UserUseCase;
-use entity::{person_address_entity, person_entity};
 
 fn sanitize_filename(name: &str) -> String {
     name.chars()
@@ -51,14 +51,12 @@ pub async fn get_profile(
         ErrorKey::BadCredentials,
     ))?;
 
-    let existing_person = person_entity::Entity::find()
-        .filter(person_entity::Column::UserId.eq(user_id))
-        .one(state.conn.as_ref())
-        .await
-        .map_err(|_| ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
+    let person_usecase = PersonUseCase::new(PersonGateway::new(state.conn.as_ref().clone()));
+    let person_address_usecase =
+        PersonAddressUseCase::new(PersonAddressGateway::new(state.conn.as_ref().clone()));
 
-    let person_domain = match existing_person {
-        Some(model) => PersonEntityMapper::from_model(model),
+    let person_domain = match person_usecase.find_by_user_id(user_id).await {
+        Some(p) => p,
         None => {
             let person_to_save = UserUseCase::build_person_for_user(&user).unwrap_or_else(|| Person {
                 id: None,
@@ -81,24 +79,20 @@ pub async fn get_profile(
                 updated_by: None,
             });
 
-            let am = PersonEntityMapper::build_active_model(person_to_save);
-            let saved = am
-                .insert(state.conn.as_ref())
-                .await
-                .map_err(|_| ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
-            PersonEntityMapper::from_model(saved)
+            person_usecase.create(person_to_save).await.ok_or(
+                ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue),
+            )?
         }
     };
 
     let addresses = if let Some(pid) = person_domain.id {
-        let mut query = person_address_entity::Entity::find()
-            .filter(person_address_entity::Column::PersonId.eq(pid));
-        if let Some(tid) = user.tenant_id {
-            query = query.filter(person_address_entity::Column::TenantId.eq(tid));
-        }
-        let r = query.all(state.conn.as_ref()).await.unwrap_or_default();
-        let domains = PersonAddressEntityMapper::from_models(r);
-        PersonAddressMapper::json_vec(domains)
+        let addresses = person_address_usecase.find_by_person_id(pid).await;
+        let filtered = if let Some(tid) = user.tenant_id {
+            addresses.into_iter().filter(|a| a.tenant_id == Some(tid)).collect()
+        } else {
+            addresses
+        };
+        PersonAddressMapper::json_vec(filtered)
     } else {
         Vec::new()
     };
@@ -144,60 +138,54 @@ pub async fn update_profile(
         ));
     }
 
-    let existing_person = person_entity::Entity::find()
-        .filter(person_entity::Column::UserId.eq(user_id))
-        .one(state.conn.as_ref())
-        .await
-        .map_err(|_| ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
+    let person_usecase = PersonUseCase::new(PersonGateway::new(state.conn.as_ref().clone()));
 
-    let saved = match existing_person {
+    let saved = match person_usecase.find_by_user_id(user_id).await {
         Some(existing) => {
-            let mut model = existing.into_active_model();
-            model.first_name = Set(input.first_name.trim().to_string());
-            model.surname = Set(input.surname.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()));
-            model.date_of_birth = Set(input.date_of_birth);
-            model.gender = Set(input.gender.map(|g| g.trim().to_string()).filter(|g| !g.is_empty()));
+            let mut updated = existing;
+            updated.first_name = input.first_name.trim().to_string();
+            updated.surname = input.surname.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+            updated.date_of_birth = input.date_of_birth;
+            updated.gender = input.gender.map(|g| g.trim().to_string()).filter(|g| !g.is_empty());
             if let Some(avatar) = input.avatar {
-                model.avatar = Set(Some(avatar));
+                updated.avatar = Some(avatar);
             }
             if let Some(phone) = input.phone {
-                model.phone = Set(Some(phone));
+                updated.phone = Some(phone);
             }
             if let Some(email) = input.email {
-                model.email = Set(Some(email.trim().to_lowercase()));
+                updated.email = Some(email.trim().to_lowercase());
             }
-            model
-                .update(state.conn.as_ref())
-                .await
-                .map_err(|_| ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?
+            let id = updated.id.unwrap_or_default();
+            person_usecase.update(id, updated).await.ok_or(
+                ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue),
+            )?
         }
         None => {
-            let model = person_entity::ActiveModel {
-                id: NotSet,
-                uuid: NotSet,
-                tenant_id: Set(user.tenant_id),
-                user_id: Set(user_id),
-                first_name: Set(input.first_name.trim().to_string()),
-                surname: Set(input.surname.map(|s| s.trim().to_string()).filter(|s| !s.is_empty())),
-                date_of_birth: Set(input.date_of_birth),
-                gender: Set(input.gender.map(|g| g.trim().to_string()).filter(|g| !g.is_empty())),
-                avatar: Set(input.avatar),
-                phone: Set(input.phone),
-                email: Set(input.email.map(|e| e.trim().to_lowercase())),
-                created_at: NotSet,
-                created_by: Set(user.created_by.clone()),
-                updated_at: NotSet,
-                updated_by: NotSet,
+            let person_to_save = Person {
+                id: None,
+                uuid: None,
+                tenant_id: user.tenant_id,
+                user_id,
+                first_name: input.first_name.trim().to_string(),
+                surname: input.surname.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
+                date_of_birth: input.date_of_birth,
+                gender: input.gender.map(|g| g.trim().to_string()).filter(|g| !g.is_empty()),
+                avatar: input.avatar,
+                phone: input.phone,
+                email: input.email.map(|e| e.trim().to_lowercase()),
+                created_at: None,
+                created_by: user.created_by.clone(),
+                updated_at: None,
+                updated_by: None,
             };
-            model
-                .insert(state.conn.as_ref())
-                .await
-                .map_err(|_| ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?
+            person_usecase.create(person_to_save).await.ok_or(
+                ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue),
+            )?
         }
     };
 
-    let domain = PersonEntityMapper::from_model(saved);
-    Ok(Json(PersonMapper::json_with_storage(domain, &state.storage)))
+    Ok(Json(PersonMapper::json_with_storage(saved, &state.storage)))
 }
 
 #[utoipa::path(

@@ -17,10 +17,11 @@ use business::commons::entity_mapper::EntityMapper;
 use business::domain::enums::Role;
 use business::domain::sku_stock::SkuStockEntityMapper;
 use business::domain::user::User;
+use business::gateway::sku_stock_gateway::SkuStockGateway;
 use business::sea_orm::{
-    ActiveModelTrait, ColumnTrait, EntityTrait, IntoActiveModel, NotSet, PaginatorTrait,
-    QueryFilter, QueryOrder, QuerySelect, Set,
+    ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect,
 };
+use business::use_cases::sku_stock_use_case::SkuStockUseCase;
 use entity::sku_stock_entity;
 
 fn tenant_for_write(user: &User, requested: Option<i64>) -> Option<i64> {
@@ -60,23 +61,11 @@ const SKU_STOCK_SORT_FIELDS: &[&str] = &[
 )]
 pub async fn list_all(
     State(state): State<AppState>,
-    Extension(current_user): Extension<User>,
+    Extension(_current_user): Extension<User>,
 ) -> Json<Vec<SkuStockJson>> {
-    let mut query = sku_stock_entity::Entity::find();
-    if current_user.role != Role::SysAdmin {
-        if let Some(id) = current_user.tenant_id {
-            query = query.filter(sku_stock_entity::Column::TenantId.eq(id));
-        } else {
-            return Json(Vec::new());
-        }
-    }
-    let r = query
-        .order_by_asc(sku_stock_entity::Column::Id)
-        .all(state.conn.as_ref())
-        .await
-        .unwrap_or_default();
-    let domains = SkuStockEntityMapper::from_models(r);
-    Json(SkuStockMapper::json_vec(domains))
+    let usecase = SkuStockUseCase::new(SkuStockGateway::new(state.conn.as_ref().clone()));
+    let items = usecase.find_all().await;
+    Json(SkuStockMapper::json_vec(items))
 }
 
 #[utoipa::path(
@@ -167,14 +156,11 @@ pub async fn get_by_id(
     Extension(current_user): Extension<User>,
     Path(id): Path<i64>,
 ) -> HttpResponse<Json<SkuStockJson>> {
-    let item = sku_stock_entity::Entity::find_by_id(id)
-        .one(state.conn.as_ref())
-        .await
-        .map_err(|_| ExceptionResponse::NotFound(locale, ErrorKey::InvalidParameterValue))?
-        .ok_or(ExceptionResponse::NotFound(
-            locale,
-            ErrorKey::InvalidParameterValue,
-        ))?;
+    let usecase = SkuStockUseCase::new(SkuStockGateway::new(state.conn.as_ref().clone()));
+    let item = usecase.find_by_id(id).await.ok_or(ExceptionResponse::NotFound(
+        locale,
+        ErrorKey::InvalidParameterValue,
+    ))?;
 
     if !can_read_tenant(&current_user, item.tenant_id) {
         return Err(ExceptionResponse::NotFound(
@@ -183,8 +169,7 @@ pub async fn get_by_id(
         ));
     }
 
-    let domain = SkuStockEntityMapper::from_model(item);
-    Ok(Json(SkuStockMapper::json(domain)))
+    Ok(Json(SkuStockMapper::json(item)))
 }
 
 #[utoipa::path(
@@ -207,29 +192,20 @@ pub async fn by_sku(
     Extension(current_user): Extension<User>,
     Path(sku_id): Path<i64>,
 ) -> HttpResponse<Json<SkuStockJson>> {
-    let mut query = sku_stock_entity::Entity::find()
-        .filter(sku_stock_entity::Column::SkuId.eq(sku_id));
-    if current_user.role != Role::SysAdmin {
-        if let Some(id) = current_user.tenant_id {
-            query = query.filter(sku_stock_entity::Column::TenantId.eq(id));
-        } else {
-            return Err(ExceptionResponse::NotFound(
-                locale,
-                ErrorKey::InvalidParameterValue,
-            ));
-        }
-    }
-    let item = query
-        .one(state.conn.as_ref())
-        .await
-        .map_err(|_| ExceptionResponse::NotFound(locale, ErrorKey::InvalidParameterValue))?
-        .ok_or(ExceptionResponse::NotFound(
+    let usecase = SkuStockUseCase::new(SkuStockGateway::new(state.conn.as_ref().clone()));
+    let item = usecase.find_by_sku_id(sku_id).await.ok_or(ExceptionResponse::NotFound(
+        locale,
+        ErrorKey::InvalidParameterValue,
+    ))?;
+
+    if !can_read_tenant(&current_user, item.tenant_id) {
+        return Err(ExceptionResponse::NotFound(
             locale,
             ErrorKey::InvalidParameterValue,
-        ))?;
+        ));
+    }
 
-    let domain = SkuStockEntityMapper::from_model(item);
-    Ok(Json(SkuStockMapper::json(domain)))
+    Ok(Json(SkuStockMapper::json(item)))
 }
 
 #[utoipa::path(
@@ -263,26 +239,29 @@ pub async fn add(
         ));
     }
 
-    let model = sku_stock_entity::ActiveModel {
-        id: NotSet,
-        uuid: NotSet,
-        tenant_id: Set(Some(tenant_id)),
-        sku_id: Set(input.sku_id),
-        quantity: Set(input.quantity),
-        reserved: Set(input.reserved.unwrap_or(0)),
-        created_at: NotSet,
-        created_by: NotSet,
-        updated_at: NotSet,
-        updated_by: NotSet,
-    };
+    let stock = SkuStockMapper::domain(SkuStockJson {
+        id: 0,
+        uuid: String::new(),
+        tenant_id: Some(tenant_id),
+        sku_id: input.sku_id,
+        quantity: input.quantity,
+        reserved: input.reserved.unwrap_or(0),
+        created_at: None,
+        created_by: None,
+        updated_at: None,
+        updated_by: None,
+    });
 
-    let saved = model
-        .insert(state.conn.as_ref())
+    let usecase = SkuStockUseCase::new(SkuStockGateway::new(state.conn.as_ref().clone()));
+    let saved = usecase
+        .create(stock)
         .await
-        .map_err(|_| ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
+        .ok_or(ExceptionResponse::BadRequest(
+            locale,
+            ErrorKey::InvalidParameterValue,
+        ))?;
 
-    let domain = SkuStockEntityMapper::from_model(saved);
-    Ok((StatusCode::CREATED, Json(SkuStockMapper::json(domain))))
+    Ok((StatusCode::CREATED, Json(SkuStockMapper::json(saved))))
 }
 
 #[utoipa::path(
@@ -308,10 +287,10 @@ pub async fn update(
     Path(id): Path<i64>,
     Json(input): Json<SkuStockInputJson>,
 ) -> HttpResponse<Json<SkuStockJson>> {
-    let existing = sku_stock_entity::Entity::find_by_id(id)
-        .one(state.conn.as_ref())
+    let usecase = SkuStockUseCase::new(SkuStockGateway::new(state.conn.as_ref().clone()));
+    let existing = usecase
+        .find_by_id(id)
         .await
-        .map_err(|_| ExceptionResponse::NotFound(locale, ErrorKey::InvalidParameterValue))?
         .ok_or(ExceptionResponse::NotFound(
             locale,
             ErrorKey::InvalidParameterValue,
@@ -328,20 +307,28 @@ pub async fn update(
         ));
     }
 
-    let mut model = existing.into_active_model();
-    model.sku_id = Set(input.sku_id);
-    model.quantity = Set(input.quantity);
-    if let Some(r) = input.reserved {
-        model.reserved = Set(r);
-    }
+    let stock = SkuStockMapper::domain(SkuStockJson {
+        id,
+        uuid: existing.uuid.unwrap_or_default(),
+        tenant_id: existing.tenant_id,
+        sku_id: input.sku_id,
+        quantity: input.quantity,
+        reserved: input.reserved.unwrap_or(existing.reserved),
+        created_at: existing.created_at,
+        created_by: existing.created_by,
+        updated_at: existing.updated_at,
+        updated_by: existing.updated_by,
+    });
 
-    let saved = model
-        .update(state.conn.as_ref())
+    let saved = usecase
+        .update(id, stock)
         .await
-        .map_err(|_| ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
+        .ok_or(ExceptionResponse::BadRequest(
+            locale,
+            ErrorKey::InvalidParameterValue,
+        ))?;
 
-    let domain = SkuStockEntityMapper::from_model(saved);
-    Ok(Json(SkuStockMapper::json(domain)))
+    Ok(Json(SkuStockMapper::json(saved)))
 }
 
 #[utoipa::path(
@@ -364,10 +351,10 @@ pub async fn delete(
     Extension(user): Extension<User>,
     Path(id): Path<i64>,
 ) -> HttpResponse<StatusCode> {
-    let existing = sku_stock_entity::Entity::find_by_id(id)
-        .one(state.conn.as_ref())
+    let usecase = SkuStockUseCase::new(SkuStockGateway::new(state.conn.as_ref().clone()));
+    let existing = usecase
+        .find_by_id(id)
         .await
-        .map_err(|_| ExceptionResponse::NotFound(locale, ErrorKey::InvalidParameterValue))?
         .ok_or(ExceptionResponse::NotFound(
             locale,
             ErrorKey::InvalidParameterValue,
@@ -382,10 +369,13 @@ pub async fn delete(
         ));
     }
 
-    sku_stock_entity::Entity::delete_by_id(id)
-        .exec(state.conn.as_ref())
+    usecase
+        .delete_by_id(id)
         .await
-        .map_err(|_| ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
+        .ok_or(ExceptionResponse::BadRequest(
+            locale,
+            ErrorKey::InvalidParameterValue,
+        ))?;
 
     Ok(StatusCode::NO_CONTENT)
 }

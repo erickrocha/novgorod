@@ -1,6 +1,5 @@
 use crate::commons::entity_mapper::EntityMapper;
 use crate::commons::gateway::Gateway;
-use crate::domain::business_error::BusinessError;
 use crate::domain::tenant::{Tenant, TenantEntityMapper};
 use crate::gateway::tenant_gateway::TenantGateway;
 
@@ -19,83 +18,75 @@ impl TenantUseCase {
         Self { gateway }
     }
 
-    pub async fn create(&self, tenant: Tenant) -> Result<Tenant, BusinessError> {
+    pub async fn create(&self, tenant: Tenant) -> Option<Tenant> {
         log::info!(
             "[TenantUseCase::create] Executing create tenant for business name: {:?}",
             tenant.business_name
         );
 
         if tenant.business_name.is_empty() {
-            let msg = "Tenant business name is required".to_string();
-            log::error!("[TenantUseCase::create] {}", msg);
-            return Err(BusinessError::new(msg));
+            log::error!("[TenantUseCase::create] Tenant business name is required");
+            return None;
         }
         if !valid_country_code(&tenant.country_code) {
-            return Err(BusinessError::new(
-                "Country code must contain two letters".to_string(),
-            ));
+            log::error!("[TenantUseCase::create] Country code must contain two letters");
+            return None;
         }
 
-        let entity = self.gateway.persist(tenant).await.map_err(|e| {
-            let msg = format!("Failed to persist tenant: {}", e);
-            log::error!("[TenantUseCase::create] {}", msg);
-            BusinessError::new(msg)
-        })?;
-
-        Ok(TenantEntityMapper::from_active_model(entity))
+        match self.gateway.persist(tenant).await {
+            Ok(entity) => Some(TenantEntityMapper::from_active_model(entity)),
+            Err(e) => {
+                log::error!("[TenantUseCase::create] Failed to persist tenant: {}", e);
+                None
+            }
+        }
     }
 
-    pub async fn find_by_id(&self, id: i64) -> Result<Tenant, BusinessError> {
+    pub async fn find_by_id(&self, id: i64) -> Option<Tenant> {
         log::info!("[TenantUseCase::find_by_id] Executing for id: {}", id);
 
-        let entity = self.gateway.find_by_id(id).await.map_err(|e| {
-            let msg = format!("Database error: {}", e);
-            log::error!("[TenantUseCase::find_by_id] {}", msg);
-            BusinessError::new(msg)
-        })?;
-
-        match entity {
-            Some(value) => Ok(TenantEntityMapper::from_model(value)),
-            None => {
-                let msg = format!("Tenant not found with id: {}", id);
-                log::error!("[TenantUseCase::find_by_id] {}", msg);
-                Err(BusinessError::new("Tenant not found".to_string()))
+        match self.gateway.find_by_id(id).await {
+            Ok(Some(value)) => Some(TenantEntityMapper::from_model(value)),
+            Ok(None) => {
+                log::error!("[TenantUseCase::find_by_id] Tenant not found with id: {}", id);
+                None
+            }
+            Err(e) => {
+                log::error!("[TenantUseCase::find_by_id] Database error: {}", e);
+                None
             }
         }
     }
 
-    pub async fn find_by_uuid(&self, uuid: String) -> Result<Tenant, BusinessError> {
+    pub async fn find_by_uuid(&self, uuid: String) -> Option<Tenant> {
         log::info!("[TenantUseCase::find_by_uuid] Executing for uuid: {}", uuid);
 
-        let entity = self.gateway.find_by_uuid(uuid.clone()).await.map_err(|e| {
-            let msg = format!("Database error: {}", e);
-            log::error!("[TenantUseCase::find_by_uuid] {}", msg);
-            BusinessError::new(msg)
-        })?;
-
-        match entity {
-            Some(value) => Ok(TenantEntityMapper::from_model(value)),
-            None => {
-                let msg = format!("Tenant not found with uuid: {}", uuid);
-                log::error!("[TenantUseCase::find_by_uuid] {}", msg);
-                Err(BusinessError::new("Tenant not found".to_string()))
+        match self.gateway.find_by_uuid(uuid.clone()).await {
+            Ok(Some(value)) => Some(TenantEntityMapper::from_model(value)),
+            Ok(None) => {
+                log::error!("[TenantUseCase::find_by_uuid] Tenant not found with uuid: {}", uuid);
+                None
+            }
+            Err(e) => {
+                log::error!("[TenantUseCase::find_by_uuid] Database error: {}", e);
+                None
             }
         }
     }
 
-    pub async fn find_all(&self) -> Result<Vec<Tenant>, BusinessError> {
+    pub async fn find_all(&self) -> Vec<Tenant> {
         log::info!("[TenantUseCase::find_all] Executing find_all tenants");
 
-        let entities = self.gateway.find_all().await.map_err(|e| {
-            let msg = format!("Database error: {}", e);
-            log::error!("[TenantUseCase::find_all] {}", msg);
-            BusinessError::new(msg)
-        })?;
-
-        Ok(TenantEntityMapper::from_models(entities))
+        match self.gateway.find_all().await {
+            Ok(entities) => TenantEntityMapper::from_models(entities),
+            Err(e) => {
+                log::error!("[TenantUseCase::find_all] Database error: {}", e);
+                Vec::new()
+            }
+        }
     }
 
-    pub async fn update(&self, id: i64, tenant: Tenant) -> Result<Tenant, BusinessError> {
+    pub async fn update(&self, id: i64, tenant: Tenant) -> Option<Tenant> {
         log::info!(
             "[TenantUseCase::update] Executing update for id {}: {:?}",
             id,
@@ -103,14 +94,13 @@ impl TenantUseCase {
         );
 
         let existing = match self.find_by_id(id).await {
-            Ok(t) => t,
-            Err(e) => {
+            Some(t) => t,
+            None => {
                 log::error!(
-                    "[TenantUseCase::update] Tenant to update not found with id {}: {}",
-                    id,
-                    e
+                    "[TenantUseCase::update] Tenant to update not found with id {}",
+                    id
                 );
-                return Err(e);
+                return None;
             }
         };
 
@@ -119,14 +109,12 @@ impl TenantUseCase {
             .as_ref()
             .is_none_or(|n| n.trim().is_empty())
         {
-            let msg = "Tenant name is required".to_string();
-            log::error!("[TenantUseCase::update] {}", msg);
-            return Err(BusinessError::new(msg));
+            log::error!("[TenantUseCase::update] Tenant name is required");
+            return None;
         }
         if !valid_country_code(&tenant.country_code) {
-            return Err(BusinessError::new(
-                "Country code must contain two letters".to_string(),
-            ));
+            log::error!("[TenantUseCase::update] Country code must contain two letters");
+            return None;
         }
 
         let updated_tenant = Tenant {
@@ -150,13 +138,13 @@ impl TenantUseCase {
             updated_by: tenant.updated_by,
         };
 
-        let entity = self.gateway.persist(updated_tenant).await.map_err(|e| {
-            let msg = format!("Failed to update tenant: {}", e);
-            log::error!("[TenantUseCase::update] {}", msg);
-            BusinessError::new(msg)
-        })?;
-
-        Ok(TenantEntityMapper::from_active_model(entity))
+        match self.gateway.persist(updated_tenant).await {
+            Ok(entity) => Some(TenantEntityMapper::from_active_model(entity)),
+            Err(e) => {
+                log::error!("[TenantUseCase::update] Failed to update tenant: {}", e);
+                None
+            }
+        }
     }
 
     pub async fn persist(&self, tenant: Tenant) -> Option<Tenant> {
@@ -164,6 +152,6 @@ impl TenantUseCase {
             "[TenantUseCase::persist] Executing persist tenant: {:?}",
             tenant.business_name
         );
-        self.create(tenant).await.ok()
+        self.create(tenant).await
     }
 }

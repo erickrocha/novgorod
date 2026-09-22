@@ -1,6 +1,5 @@
 use crate::commons::entity_mapper::EntityMapper;
 use crate::commons::gateway::Gateway;
-use crate::domain::business_error::BusinessError;
 use crate::domain::customer::{Customer, CustomerEntityMapper};
 use crate::gateway::customer_gateway::CustomerGateway;
 
@@ -13,52 +12,46 @@ impl CustomerUseCase {
         Self { gateway }
     }
 
-    pub async fn create(&self, customer: Customer) -> Result<Customer, BusinessError> {
+    pub async fn create(&self, customer: Customer) -> Option<Customer> {
         let entity = self.gateway.persist(customer).await.map_err(|e| {
-            BusinessError::new(format!("Failed to persist customer: {}", e))
-        })?;
-        Ok(CustomerEntityMapper::from_active_model(entity))
+            log::error!("Failed to persist customer: {}", e);
+        }).ok()?;
+        Some(CustomerEntityMapper::from_active_model(entity))
     }
 
-    pub async fn find_all(&self) -> Result<Vec<Customer>, BusinessError> {
+    pub async fn find_all(&self) -> Vec<Customer> {
         let entities = self.gateway.find_all().await.map_err(|e| {
-            BusinessError::new(format!("Database error: {}", e))
-        })?;
-        Ok(CustomerEntityMapper::from_models(entities))
+            log::error!("Database error: {}", e);
+        }).unwrap_or_default();
+        CustomerEntityMapper::from_models(entities)
     }
 
-    pub async fn find_by_id(&self, id: i64) -> Result<Customer, BusinessError> {
+    pub async fn find_by_id(&self, id: i64) -> Option<Customer> {
         let entity = self.gateway.find_by_id(id).await.map_err(|e| {
-            BusinessError::new(format!("Database error: {}", e))
-        })?;
-        match entity {
-            Some(value) => Ok(CustomerEntityMapper::from_model(value)),
-            None => Err(BusinessError::new("Customer not found".to_string())),
-        }
+            log::error!("Database error: {}", e);
+        }).ok()??;
+        Some(CustomerEntityMapper::from_model(entity))
     }
 
-    pub async fn find_by_uuid(&self, uuid: String) -> Result<Customer, BusinessError> {
+    pub async fn find_by_uuid(&self, uuid: String) -> Option<Customer> {
         let entity = self.gateway.find_by_uuid(uuid).await.map_err(|e| {
-            BusinessError::new(format!("Database error: {}", e))
-        })?;
-        match entity {
-            Some(value) => Ok(CustomerEntityMapper::from_model(value)),
-            None => Err(BusinessError::new("Customer not found".to_string())),
-        }
+            log::error!("Database error: {}", e);
+        }).ok()??;
+        Some(CustomerEntityMapper::from_model(entity))
     }
 
-    pub async fn update(&self, id: i64, mut customer: Customer) -> Result<Customer, BusinessError> {
+    pub async fn update(&self, id: i64, mut customer: Customer) -> Option<Customer> {
         customer.id = Some(id);
         let entity = self.gateway.persist(customer).await.map_err(|e| {
-            BusinessError::new(format!("Failed to update customer: {}", e))
-        })?;
-        Ok(CustomerEntityMapper::from_active_model(entity))
+            log::error!("Failed to update customer: {}", e);
+        }).ok()?;
+        Some(CustomerEntityMapper::from_active_model(entity))
     }
 
-    pub async fn delete_by_id(&self, id: i64) -> Result<(), BusinessError> {
+    pub async fn delete_by_id(&self, id: i64) -> Option<()> {
         self.gateway.delete_by_id(id).await.map_err(|e| {
-            BusinessError::new(format!("Failed to delete customer: {}", e))
-        })?;
-        Ok(())
+            log::error!("Failed to delete customer: {}", e);
+        }).ok()?;
+        Some(())
     }
 }

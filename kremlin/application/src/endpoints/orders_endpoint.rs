@@ -15,12 +15,13 @@ use axum::{
 };
 use business::commons::entity_mapper::EntityMapper;
 use business::domain::enums::Role;
-use business::domain::orders::OrdersEntityMapper;
+use business::domain::orders::{Orders, OrdersEntityMapper};
 use business::domain::user::User;
+use business::gateway::orders_gateway::OrdersGateway;
 use business::sea_orm::{
-    ActiveModelTrait, ColumnTrait, Condition, EntityTrait, IntoActiveModel, NotSet,
-    PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Set,
+    ColumnTrait, Condition, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect,
 };
+use business::use_cases::orders_use_case::OrdersUseCase;
 use entity::orders_entity;
 
 fn tenant_for_write(user: &User, requested: Option<i64>) -> Option<i64> {
@@ -62,23 +63,11 @@ const ORDERS_SORT_FIELDS: &[&str] = &[
 )]
 pub async fn list_all(
     State(state): State<AppState>,
-    Extension(current_user): Extension<User>,
+    Extension(_current_user): Extension<User>,
 ) -> Json<Vec<OrdersJson>> {
-    let mut query = orders_entity::Entity::find();
-    if current_user.role != Role::SysAdmin {
-        if let Some(id) = current_user.tenant_id {
-            query = query.filter(orders_entity::Column::TenantId.eq(id));
-        } else {
-            return Json(Vec::new());
-        }
-    }
-    let r = query
-        .order_by_desc(orders_entity::Column::Id)
-        .all(state.conn.as_ref())
-        .await
-        .unwrap_or_default();
-    let domains = OrdersEntityMapper::from_models(r);
-    Json(OrdersMapper::json_vec(domains))
+    let usecase = OrdersUseCase::new(OrdersGateway::new(state.conn.as_ref().clone()));
+    let items = usecase.find_all().await;
+    Json(OrdersMapper::json_vec(items))
 }
 
 #[utoipa::path(
@@ -183,10 +172,10 @@ pub async fn get_by_id(
     Extension(current_user): Extension<User>,
     Path(id): Path<i64>,
 ) -> HttpResponse<Json<OrdersJson>> {
-    let item = orders_entity::Entity::find_by_id(id)
-        .one(state.conn.as_ref())
+    let usecase = OrdersUseCase::new(OrdersGateway::new(state.conn.as_ref().clone()));
+    let item = usecase
+        .find_by_id(id)
         .await
-        .map_err(|_| ExceptionResponse::NotFound(locale, ErrorKey::InvalidParameterValue))?
         .ok_or(ExceptionResponse::NotFound(
             locale,
             ErrorKey::InvalidParameterValue,
@@ -199,8 +188,7 @@ pub async fn get_by_id(
         ));
     }
 
-    let domain = OrdersEntityMapper::from_model(item);
-    Ok(Json(OrdersMapper::json(domain)))
+    Ok(Json(OrdersMapper::json(item)))
 }
 
 #[utoipa::path(
@@ -232,43 +220,43 @@ pub async fn add(
     });
 
     let now = chrono::Utc::now().naive_utc();
-    let model = orders_entity::ActiveModel {
-        id: NotSet,
-        uuid: NotSet,
-        tenant_id: Set(Some(tenant_id)),
-        number: Set(number),
-        customer_id: Set(input.customer_id),
-        status: Set(input.status.unwrap_or_else(|| "pending".to_string())),
-        payment_status: Set(input.payment_status.unwrap_or_else(|| "pending".to_string())),
-        subtotal_cents: Set(input.subtotal_cents),
-        discount_cents: Set(input.discount_cents.unwrap_or(0)),
-        shipping_cents: Set(input.shipping_cents.unwrap_or(0)),
-        tax_total_cents: Set(input.tax_total_cents.unwrap_or(0)),
-        total_cents: Set(input.total_cents),
-        coupon_id: Set(input.coupon_id),
-        coupon_code: Set(input.coupon_code),
-        ship_recipient: Set(input.ship_recipient),
-        ship_cep: Set(input.ship_cep),
-        ship_logradouro: Set(input.ship_logradouro),
-        ship_numero: Set(input.ship_numero),
-        ship_complemento: Set(input.ship_complemento),
-        ship_bairro: Set(input.ship_bairro),
-        ship_cidade: Set(input.ship_cidade),
-        ship_uf: Set(input.ship_uf),
-        placed_at: Set(now),
-        created_at: NotSet,
-        created_by: NotSet,
-        updated_at: NotSet,
-        updated_by: NotSet,
+    let domain = Orders {
+        id: None,
+        uuid: None,
+        tenant_id: Some(tenant_id),
+        number,
+        customer_id: input.customer_id,
+        status: input.status.unwrap_or_else(|| "pending".to_string()),
+        payment_status: input.payment_status.unwrap_or_else(|| "pending".to_string()),
+        subtotal_cents: input.subtotal_cents,
+        discount_cents: input.discount_cents.unwrap_or(0),
+        shipping_cents: input.shipping_cents.unwrap_or(0),
+        tax_total_cents: input.tax_total_cents.unwrap_or(0),
+        total_cents: input.total_cents,
+        coupon_id: input.coupon_id,
+        coupon_code: input.coupon_code,
+        ship_recipient: input.ship_recipient,
+        ship_cep: input.ship_cep,
+        ship_logradouro: input.ship_logradouro,
+        ship_numero: input.ship_numero,
+        ship_complemento: input.ship_complemento,
+        ship_bairro: input.ship_bairro,
+        ship_cidade: input.ship_cidade,
+        ship_uf: input.ship_uf,
+        placed_at: now,
+        created_at: None,
+        created_by: None,
+        updated_at: None,
+        updated_by: None,
     };
 
-    let saved = model
-        .insert(state.conn.as_ref())
+    let usecase = OrdersUseCase::new(OrdersGateway::new(state.conn.as_ref().clone()));
+    let saved = usecase
+        .create(domain)
         .await
-        .map_err(|_| ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
+        .ok_or(ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
 
-    let domain = OrdersEntityMapper::from_model(saved);
-    Ok((StatusCode::CREATED, Json(OrdersMapper::json(domain))))
+    Ok((StatusCode::CREATED, Json(OrdersMapper::json(saved))))
 }
 
 #[utoipa::path(
@@ -294,10 +282,10 @@ pub async fn update(
     Path(id): Path<i64>,
     Json(input): Json<OrdersInputJson>,
 ) -> HttpResponse<Json<OrdersJson>> {
-    let existing = orders_entity::Entity::find_by_id(id)
-        .one(state.conn.as_ref())
+    let usecase = OrdersUseCase::new(OrdersGateway::new(state.conn.as_ref().clone()));
+    let existing = usecase
+        .find_by_id(id)
         .await
-        .map_err(|_| ExceptionResponse::NotFound(locale, ErrorKey::InvalidParameterValue))?
         .ok_or(ExceptionResponse::NotFound(
             locale,
             ErrorKey::InvalidParameterValue,
@@ -312,19 +300,18 @@ pub async fn update(
         ));
     }
 
-    let mut model = existing.into_active_model();
+    let mut updated = existing;
     if let Some(st) = input.status {
-        model.status = Set(st);
+        updated.status = st;
     }
     if let Some(ps) = input.payment_status {
-        model.payment_status = Set(ps);
+        updated.payment_status = ps;
     }
 
-    let saved = model
-        .update(state.conn.as_ref())
+    let saved = usecase
+        .update(id, updated)
         .await
-        .map_err(|_| ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
+        .ok_or(ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
 
-    let domain = OrdersEntityMapper::from_model(saved);
-    Ok(Json(OrdersMapper::json(domain)))
+    Ok(Json(OrdersMapper::json(saved)))
 }
