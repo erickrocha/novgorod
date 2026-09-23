@@ -12,6 +12,8 @@ use crate::infrastructure::mapper::{Mapper, UserMapper};
 use axum::Json;
 use axum::extract::{Extension, Path, Query, State};
 use axum::http::StatusCode;
+use crate::endpoints::json::customer_json::{CustomerJson, CustomerAddressJson};
+use crate::infrastructure::mapper::CustomerMapper;
 use business::domain::enums::Role;
 use business::domain::user::User;
 use business::gateway::user_gateway::UserGateway;
@@ -411,4 +413,80 @@ pub async fn change_password(
         ))?;
 
     Ok(StatusCode::OK)
+}
+
+#[derive(serde::Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MeResponse {
+    pub user: UserJson,
+    pub customer: Option<CustomerJson>,
+    pub addresses: Vec<CustomerAddressJson>,
+}
+
+#[utoipa::path(
+    get,
+    tag = "User",
+    path = "/me",
+    responses(
+        (status = 200, description = "Current user info", body = MeResponse),
+        (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn me(
+    State(state): State<AppState>,
+    Extension(current_user): Extension<User>,
+) -> HttpResponse<Json<MeResponse>> {
+    use business::sea_orm::{EntityTrait, QueryFilter, ColumnTrait};
+    use entity::{customer_entity, customer_address_entity};
+    use business::domain::customer::CustomerEntityMapper;
+    use business::commons::entity_mapper::EntityMapper;
+    
+    let mut response = MeResponse {
+        user: UserMapper::json(current_user.clone()),
+        customer: None,
+        addresses: vec![],
+    };
+
+    if let Some(user_id) = current_user.id {
+        let customer_model = customer_entity::Entity::find()
+            .filter(customer_entity::Column::UserId.eq(user_id))
+            .one(state.conn.as_ref())
+            .await
+            .unwrap_or(None);
+
+        if let Some(model) = customer_model {
+            let customer_domain = CustomerEntityMapper::from_model(model);
+            let customer_id = customer_domain.id.unwrap_or(0);
+            response.customer = Some(CustomerMapper::json(customer_domain));
+
+            let address_models = customer_address_entity::Entity::find()
+                .filter(customer_address_entity::Column::CustomerId.eq(customer_id))
+                .all(state.conn.as_ref())
+                .await
+                .unwrap_or_default();
+            
+            // Just map them manually since there might not be a mapper
+            response.addresses = address_models.into_iter().map(|a| CustomerAddressJson {
+                id: a.id,
+                uuid: business::commons::functions::uuid_to_string(a.uuid),
+                tenant_id: a.tenant_id,
+                customer_id: a.customer_id,
+                label: a.label,
+                recipient: a.recipient,
+                cep: a.cep,
+                logradouro: a.logradouro,
+                numero: a.numero,
+                complemento: a.complemento,
+                bairro: a.bairro,
+                cidade: a.cidade,
+                uf: a.uf,
+                is_default: a.is_default,
+                created_at: Some(a.created_at),
+                updated_at: Some(a.updated_at),
+            }).collect();
+        }
+    }
+
+    Ok(Json(response))
 }

@@ -10,6 +10,14 @@ use axum::http::StatusCode;
 use axum::{Extension, Form, Json};
 use business::use_cases::account_invite_use_case::AccountInviteUseCase;
 use business::use_cases::authentication_use_case::AuthenticationUseCase;
+use business::use_cases::customer_registration_use_case::CustomerRegistrationUseCase;
+use crate::endpoints::json::signup_request::SignupRequest;
+use crate::endpoints::json::customer_json::CustomerJson;
+use crate::infrastructure::mapper::CustomerMapper;
+use business::domain::customer::Customer;
+use business::domain::customer_address::CustomerAddress;
+use business::domain::user::User;
+use business::domain::enums::Role;
 
 #[utoipa::path(
     post,
@@ -34,6 +42,93 @@ pub async fn sign_in(
             locale,
             ErrorKey::BadCredentials,
         )),
+    }
+}
+
+#[utoipa::path(
+    post,
+    path = "/signup",
+    request_body = SignupRequest,
+    responses(
+        (status = 200, description = "Registration successful", body = CustomerJson),
+        (status = 400, description = "Bad Request")
+    )
+)]
+pub async fn signup(
+    state: State<AppState>,
+    Extension(locale): Extension<Locale>,
+    Json(signup_request): Json<SignupRequest>,
+) -> HttpResponse<Json<CustomerJson>> {
+    // Basic mapping
+    let user = User {
+        id: None,
+        uuid: None,
+        tenant_id: None, // Customer registration is not tenant bound (for now)
+        name: Some(signup_request.name.clone()),
+        email: signup_request.email.clone(),
+        password: signup_request.password.clone(),
+        role: Role::Customer,
+        enabled: true,
+        first_login: true,
+        created_at: None,
+        created_by: None,
+        updated_at: None,
+        updated_by: None,
+    };
+    
+    let customer = Customer {
+        id: None,
+        uuid: None,
+        tenant_id: None,
+        user_id: None,
+        name: signup_request.name.clone(),
+        email: signup_request.email.clone(),
+        password_hash: signup_request.password.clone(),
+        cpf: signup_request.cpf.clone(),
+        phone: signup_request.phone.clone(),
+        marketing_consent: false,
+        consent_at: None,
+        active: true,
+        created_at: None,
+        created_by: None,
+        updated_at: None,
+        updated_by: None,
+    };
+    
+    let address = signup_request.address.map(|a| CustomerAddress {
+        id: None,
+        uuid: None,
+        tenant_id: None,
+        customer_id: 0, // Assigned inside usecase
+        label: a.label,
+        recipient: a.recipient,
+        cep: a.cep,
+        logradouro: a.logradouro,
+        numero: a.numero,
+        complemento: a.complemento,
+        bairro: a.bairro,
+        cidade: a.cidade,
+        uf: a.uf,
+        is_default: a.is_default.unwrap_or(true),
+        created_at: None,
+        updated_at: None,
+        created_by: None,
+        updated_by: None,
+    });
+
+    let result = CustomerRegistrationUseCase::execute(
+        &state.conn,
+        user,
+        customer,
+        address
+    ).await;
+    
+    match result {
+        Ok(c) => Ok(Json(CustomerMapper::json(c))),
+        Err(_) => Err(ExceptionResponse::BadRequest(
+            locale,
+            ErrorKey::InvalidParameterValue,
+        ))
     }
 }
 

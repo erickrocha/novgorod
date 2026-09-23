@@ -1,6 +1,6 @@
 use crate::AppState;
 use crate::authentication::authentication_middleware::authentication;
-use crate::endpoints::user_endpoint::{add, change_password, get_by_id, list_all, paged, update};
+use crate::endpoints::user_endpoint::{add, change_password, get_by_id, list_all, paged, update, me};
 use axum::routing::{get, post, put};
 use axum::{Router, middleware};
 
@@ -10,6 +10,7 @@ pub fn user_routes(state: AppState) -> Router<AppState> {
         .route("/", get(list_all))
         .route("/paged", get(paged))
         .route("/change-password", put(change_password))
+        .route("/me", get(me))
         .route("/{id}", get(get_by_id))
         .route("/{id}", put(update))
         .route_layer(middleware::from_fn_with_state(state, authentication))

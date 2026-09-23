@@ -27,7 +27,7 @@ use entity::coupon_redemption_entity;
 fn tenant_for_write(user: &User, requested: Option<i64>) -> Option<i64> {
     match user.role {
         Role::SysAdmin => requested,
-        Role::TenantOwner | Role::TenantUser => user.tenant_id,
+        Role::TenantOwner | Role::TenantUser | Role::Customer => user.tenant_id,
     }
 }
 

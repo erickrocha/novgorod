@@ -80,12 +80,11 @@ impl ProductGateway {
             conditions.push(format!("(p.name ILIKE '%{}%' OR p.description ILIKE '%{}%' OR p.brand ILIKE '%{}%')", escaped, escaped, escaped));
         }
 
-        if let Some(ref cat) = query.category {
-            if cat != "all" {
+        if let Some(ref cat) = query.category
+            && cat != "all" {
                 let escaped = cat.replace("'", "''");
                 conditions.push(format!("EXISTS (SELECT 1 FROM product_category pc JOIN category c ON pc.category_id = c.id WHERE pc.product_id = p.id AND c.slug = '{}')", escaped));
             }
-        }
 
         // Basic cursor pagination using p.id
         // We will default to sorting by p.id DESC if not specified.

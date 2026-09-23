@@ -240,6 +240,12 @@ pub async fn import(
                 ErrorKey::InvalidParameterValue,
             ));
         }
+        Role::Customer => {
+            return Err(ExceptionResponse::Forbidden(
+                locale,
+                ErrorKey::InvalidParameterValue,
+            ));
+        }
     };
     let rows: Vec<CatalogRow> = if let Some(json) = rows_json {
         serde_json::from_str(&json)

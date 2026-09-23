@@ -30,6 +30,7 @@ mod m20260919_000013_create_table_order_status_history;
 mod m20260919_000014_create_table_coupon_redemption;
 mod m20260921_000001_create_person_table;
 mod m20260921_000002_create_person_address_table;
+mod m20260923_000001_alter_table_customer;
 
 pub struct Migrator;
 
@@ -67,6 +68,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260919_000014_create_table_coupon_redemption::Migration),
             Box::new(m20260921_000001_create_person_table::Migration),
             Box::new(m20260921_000002_create_person_address_table::Migration),
+            Box::new(m20260923_000001_alter_table_customer::Migration),
         ]
     }
 }
@@ -85,12 +87,12 @@ mod tests {
             .collect();
         let unique: HashSet<&str> = names.iter().copied().collect();
 
-        assert_eq!(names.len(), 30);
+        assert_eq!(names.len(), 31);
         assert_eq!(unique.len(), names.len());
         assert!(names.windows(2).all(|pair| pair[0] < pair[1]));
         assert_eq!(
             names.last().copied(),
-            Some("m20260921_000002_create_person_address_table")
+            Some("m20260923_000001_alter_table_customer")
         );
     }
 }

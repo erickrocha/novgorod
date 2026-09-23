@@ -2,6 +2,7 @@ use crate::commons::entity_mapper::EntityMapper;
 use crate::domain::access_token::{AccessToken, Claims};
 use crate::domain::business_error::BusinessError;
 use crate::domain::user::{User, UserEntityMapper};
+use crate::gateway::customer_gateway::CustomerGateway;
 use crate::gateway::user_gateway::UserGateway;
 use chrono::Utc;
 use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, encode};
@@ -71,7 +72,42 @@ impl AuthenticationUseCase {
                 "Email and password are required".to_string(),
             ));
         }
-        let user = Self::load_enabled_user(db, &email, "execute").await?;
+        // Determine if it's an email or CPF
+        let user = if email.contains('@') {
+            Self::load_enabled_user(db, &email, "execute").await?
+        } else {
+            // It might be a CPF. Strip non-numeric characters.
+            let cpf: String = email.chars().filter(|c| c.is_ascii_digit()).collect();
+            if cpf.is_empty() {
+                return Err(BusinessError::new("Invalid credentials".to_string()));
+            }
+
+            let customer = CustomerGateway::find_by_cpf(db, cpf).await.map_err(|err| {
+                log::error!("[AuthenticationUseCase::execute] Database error looking up CPF: {}", err);
+                BusinessError::new("Invalid credentials".to_string())
+            })?;
+
+            if let Some(c) = customer {
+                if let Some(uid) = c.user_id {
+                    let user_model = UserGateway::find_by_id_static(db, uid).await.map_err(|_| {
+                        BusinessError::new("Invalid credentials".to_string())
+                    })?;
+                    
+                    if let Some(um) = user_model {
+                        if !um.enabled {
+                            return Err(BusinessError::new("Invalid credentials".to_string()));
+                        }
+                        UserEntityMapper::from_model(um)
+                    } else {
+                        return Err(BusinessError::new("Invalid credentials".to_string()));
+                    }
+                } else {
+                    return Err(BusinessError::new("Invalid credentials".to_string()));
+                }
+            } else {
+                return Err(BusinessError::new("Invalid credentials".to_string()));
+            }
+        };
 
         if bcrypt::verify(password, user.password.as_str()).unwrap_or(false) {
             log::info!(

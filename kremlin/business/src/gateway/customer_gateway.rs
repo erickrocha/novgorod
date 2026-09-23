@@ -29,6 +29,13 @@ impl CustomerGateway {
             .one(&self.db)
             .await
     }
+
+    pub async fn find_by_cpf(db: &DbConn, cpf: String) -> Result<Option<customer_entity::Model>, DbErr> {
+        CustomerQuery::find()
+            .filter(customer_entity::Column::Cpf.eq(cpf))
+            .one(db)
+            .await
+    }
 }
 
 #[async_trait]

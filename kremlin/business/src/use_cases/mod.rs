@@ -31,3 +31,4 @@ pub mod sku_use_case;
 pub mod tax_rule_use_case;
 pub mod tenant_use_case;
 pub mod user_use_case;
+pub mod customer_registration_use_case;

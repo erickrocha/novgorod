@@ -132,16 +132,6 @@ impl<T> PagedResponse<T> {
     }
 }
 
-#[derive(Debug, Clone, serde::Deserialize, IntoParams)]
-#[serde(rename_all = "camelCase")]
-pub struct CursorPageQuery {
-    pub cursor: Option<i64>,
-    pub limit: Option<u64>,
-    pub q: Option<String>,
-    pub active: Option<bool>,
-    pub brand: Option<String>,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

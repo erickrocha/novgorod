@@ -71,6 +71,16 @@ impl UserGateway {
             .await
     }
 
+    pub async fn find_by_id_static(
+        db: &DbConn,
+        id: i64,
+    ) -> Result<Option<user_entity::Model>, DbErr> {
+        UserQuery::find()
+            .filter(user_entity::Column::Id.eq(id))
+            .one(db)
+            .await
+    }
+
     pub async fn find_by_role(
         db: &DbConn,
         role: String,

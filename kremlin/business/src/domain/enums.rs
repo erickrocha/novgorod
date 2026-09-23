@@ -9,6 +9,7 @@ pub enum Role {
     TenantOwner,
     #[default]
     TenantUser,
+    Customer,
 }
 
 impl Display for Role {
@@ -17,6 +18,7 @@ impl Display for Role {
             Role::SysAdmin => write!(f, "SysAdmin"),
             Role::TenantOwner => write!(f, "TenantOwner"),
             Role::TenantUser => write!(f, "TenantUser"),
+            Role::Customer => write!(f, "Customer"),
         }
     }
 }
@@ -28,6 +30,7 @@ impl FromStr for Role {
             "SysAdmin" => Ok(Self::SysAdmin),
             "TenantOwner" => Ok(Self::TenantOwner),
             "TenantUser" => Ok(Self::TenantUser),
+            "Customer" => Ok(Self::Customer),
             _ => Err(format!("Invalid recommended period: {}", value))?,
         }
     }

@@ -1,6 +1,6 @@
 use crate::AppState;
 use crate::authentication::authentication_middleware::authentication;
-use crate::endpoints::auth_endpoint::{accept_invite, refresh_token, sign_in};
+use crate::endpoints::auth_endpoint::{accept_invite, refresh_token, sign_in, signup};
 use axum::routing::post;
 use axum::{Router, middleware};
 
@@ -10,6 +10,13 @@ pub fn auth_routes(state: AppState) -> Router<AppState> {
         .route(
             "/login",
             post(sign_in).route_layer(middleware::from_fn_with_state(
+                state.clone(),
+                authentication,
+            )),
+        )
+        .route(
+            "/signup",
+            post(signup).route_layer(middleware::from_fn_with_state(
                 state.clone(),
                 authentication,
             )),

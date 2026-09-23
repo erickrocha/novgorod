@@ -16,6 +16,7 @@ pub struct Model {
     pub id: i64,
     pub uuid: Uuid,
     pub tenant_id: Option<i64>,
+    pub user_id: Option<i64>,
     pub name: String,
     pub email: String,
     pub password_hash: String,
@@ -35,6 +36,7 @@ pub enum Column {
     Id,
     Uuid,
     TenantId,
+    UserId,
     Name,
     Email,
     PasswordHash,
@@ -64,6 +66,7 @@ impl PrimaryKeyTrait for PrimaryKey {
 #[derive(Copy, Clone, Debug, EnumIter)]
 pub enum Relation {
     Tenant,
+    User,
     CustomerAddress,
     Cart,
     Orders,
@@ -76,7 +79,8 @@ impl ColumnTrait for Column {
         match self {
             Self::Id => ColumnType::Integer.def(),
             Self::Uuid => ColumnType::Uuid.def().unique(),
-            Self::TenantId => ColumnType::Integer.def(),
+            Self::TenantId => ColumnType::Integer.def().null(),
+            Self::UserId => ColumnType::Integer.def().null(),
             Self::Name => ColumnType::String(StringLen::N(150u32)).def(),
             Self::Email => ColumnType::String(StringLen::N(190u32)).def(),
             Self::PasswordHash => ColumnType::String(StringLen::N(255u32)).def(),
@@ -100,6 +104,10 @@ impl RelationTrait for Relation {
                 .from(Column::TenantId)
                 .to(super::tenant_entity::Column::Id)
                 .into(),
+            Self::User => Entity::belongs_to(super::user_entity::Entity)
+                .from(Column::UserId)
+                .to(super::user_entity::Column::Id)
+                .into(),
             Self::CustomerAddress => {
                 Entity::has_many(super::customer_address_entity::Entity).into()
             }
@@ -115,6 +123,12 @@ impl RelationTrait for Relation {
 impl Related<super::tenant_entity::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::Tenant.def()
+    }
+}
+
+impl Related<super::user_entity::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::User.def()
     }
 }
 

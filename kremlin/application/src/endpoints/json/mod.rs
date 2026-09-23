@@ -23,3 +23,4 @@ pub mod user_json;
 pub mod product_json;
 
 pub mod web_store_json;
+pub mod signup_request;
