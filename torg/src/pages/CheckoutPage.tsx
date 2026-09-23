@@ -25,11 +25,10 @@ interface CheckoutFormData {
   email: string;
   phone: string;
   postalCode: string;
-  street: string;
-  number: string;
-  neighborhood: string;
-  city: string;
-  state: string;
+  addressLine1: string;
+  addressLine2?: string;
+  locality: string;
+  administrativeArea: string;
   paymentMethod: 'pix' | 'credit' | 'boleto';
 }
 
@@ -42,11 +41,10 @@ const checkoutSchema = yup.object({
     .trim()
     .required('CEP é obrigatório')
     .matches(/^\d{5}-?\d{3}$/, 'CEP deve ter 8 dígitos'),
-  street: yup.string().trim().required('Rua/Avenida é obrigatória'),
-  number: yup.string().trim().required('Número é obrigatório'),
-  neighborhood: yup.string().trim().required('Bairro é obrigatório'),
-  city: yup.string().trim().required('Cidade é obrigatória'),
-  state: yup.string().trim().required('Estado é obrigatório'),
+  addressLine1: yup.string().trim().required('Endereço é obrigatório'),
+  addressLine2: yup.string().trim(),
+  locality: yup.string().trim().required('Cidade é obrigatória'),
+  administrativeArea: yup.string().trim().required('Estado é obrigatório'),
   paymentMethod: yup
     .string()
     .oneOf(['pix', 'credit', 'boleto'] as const)
@@ -77,11 +75,10 @@ export const CheckoutPage: React.FC = () => {
       email: customer?.email || '',
       phone: customer?.phone || '',
       postalCode: customer?.addresses?.[0]?.postalCode || savedCep || '01310-100',
-      street: customer?.addresses?.[0]?.street || '',
-      number: customer?.addresses?.[0]?.number || '',
-      neighborhood: customer?.addresses?.[0]?.neighborhood || '',
-      city: customer?.addresses?.[0]?.city || 'São Paulo',
-      state: customer?.addresses?.[0]?.state || 'SP',
+      addressLine1: customer?.addresses?.[0]?.addressLine1 || '',
+      addressLine2: customer?.addresses?.[0]?.addressLine2 || '',
+      locality: customer?.addresses?.[0]?.locality || 'São Paulo',
+      administrativeArea: customer?.addresses?.[0]?.administrativeArea || 'SP',
       paymentMethod: 'pix',
     },
   });
@@ -291,71 +288,68 @@ export const CheckoutPage: React.FC = () => {
                 )}
               </div>
               <div className="sm:col-span-2">
-                <label htmlFor="shipping-street" className="text-xs font-semibold text-slate-700 block mb-1">
-                  Rua / Avenida
+                <label htmlFor="shipping-addressLine1" className="text-xs font-semibold text-slate-700 block mb-1">
+                  Endereço (Rua, Número)
                 </label>
                 <input
-                  id="shipping-street"
+                  id="shipping-addressLine1"
                   type="text"
-                  placeholder="Av. Paulista"
-                  {...register('street')}
+                  placeholder="Av. Paulista, 1000"
+                  {...register('addressLine1')}
                   className={`w-full p-2.5 rounded-xl border text-sm focus:outline-none ${
-                    errors.street ? 'border-rose-500' : 'border-slate-200 focus:border-amber-500'
+                    errors.addressLine1 ? 'border-rose-500' : 'border-slate-200 focus:border-amber-500'
                   }`}
                 />
-                {errors.street && (
-                  <p className="text-xs text-rose-600 mt-1">{errors.street.message}</p>
+                {errors.addressLine1 && (
+                  <p className="text-xs text-rose-600 mt-1">{errors.addressLine1.message}</p>
                 )}
               </div>
               <div>
-                <label htmlFor="shipping-number" className="text-xs font-semibold text-slate-700 block mb-1">
-                  Número
+                <label htmlFor="shipping-addressLine2" className="text-xs font-semibold text-slate-700 block mb-1">
+                  Complemento / Bairro
                 </label>
                 <input
-                  id="shipping-number"
+                  id="shipping-addressLine2"
                   type="text"
-                  placeholder="1000"
-                  {...register('number')}
+                  placeholder="Apt 42, Bela Vista"
+                  {...register('addressLine2')}
                   className={`w-full p-2.5 rounded-xl border text-sm focus:outline-none ${
-                    errors.number ? 'border-rose-500' : 'border-slate-200 focus:border-amber-500'
+                    errors.addressLine2 ? 'border-rose-500' : 'border-slate-200 focus:border-amber-500'
                   }`}
                 />
-                {errors.number && (
-                  <p className="text-xs text-rose-600 mt-1">{errors.number.message}</p>
-                )}
               </div>
               <div>
-                <label htmlFor="shipping-neighborhood" className="text-xs font-semibold text-slate-700 block mb-1">
-                  Bairro
-                </label>
-                <input
-                  id="shipping-neighborhood"
-                  type="text"
-                  placeholder="Bela Vista"
-                  {...register('neighborhood')}
-                  className={`w-full p-2.5 rounded-xl border text-sm focus:outline-none ${
-                    errors.neighborhood ? 'border-rose-500' : 'border-slate-200 focus:border-amber-500'
-                  }`}
-                />
-                {errors.neighborhood && (
-                  <p className="text-xs text-rose-600 mt-1">{errors.neighborhood.message}</p>
-                )}
-              </div>
-              <div>
-                <label htmlFor="shipping-city" className="text-xs font-semibold text-slate-700 block mb-1">
+                <label htmlFor="shipping-locality" className="text-xs font-semibold text-slate-700 block mb-1">
                   Cidade
                 </label>
                 <input
-                  id="shipping-city"
+                  id="shipping-locality"
                   type="text"
                   placeholder="São Paulo"
-                  {...register('city')}
+                  {...register('locality')}
                   className={`w-full p-2.5 rounded-xl border text-sm focus:outline-none ${
-                    errors.city ? 'border-rose-500' : 'border-slate-200 focus:border-amber-500'
+                    errors.locality ? 'border-rose-500' : 'border-slate-200 focus:border-amber-500'
                   }`}
                 />
-                {errors.city && (
-                  <p className="text-xs text-rose-600 mt-1">{errors.city.message}</p>
+                {errors.locality && (
+                  <p className="text-xs text-rose-600 mt-1">{errors.locality.message}</p>
+                )}
+              </div>
+              <div>
+                <label htmlFor="shipping-administrativeArea" className="text-xs font-semibold text-slate-700 block mb-1">
+                  Estado (UF)
+                </label>
+                <input
+                  id="shipping-administrativeArea"
+                  type="text"
+                  placeholder="SP"
+                  {...register('administrativeArea')}
+                  className={`w-full p-2.5 rounded-xl border text-sm focus:outline-none ${
+                    errors.administrativeArea ? 'border-rose-500' : 'border-slate-200 focus:border-amber-500'
+                  }`}
+                />
+                {errors.administrativeArea && (
+                  <p className="text-xs text-rose-600 mt-1">{errors.administrativeArea.message}</p>
                 )}
               </div>
             </div>

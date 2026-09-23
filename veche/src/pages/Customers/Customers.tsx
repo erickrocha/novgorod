@@ -57,15 +57,14 @@ export function Customers() {
   const [newAddress, setNewAddress] = useState<CustomerAddressInput>({
     tenantId: user?.tenantId || null,
     customerId: 0,
-    recipientName: "",
+    recipient: "",
     phone: "",
-    cep: "",
-    street: "",
-    number: "",
-    complement: "",
-    neighborhood: "",
-    city: "",
-    uf: "",
+    postalCode: "",
+    addressLine1: "",
+    addressLine2: "",
+    locality: "",
+    administrativeArea: "",
+    countryCode: "BR",
     isDefault: false,
   });
 
@@ -118,9 +117,9 @@ export function Customers() {
     }
   }, []);
 
-  // Automatically load cities when UF changes
+  // Automatically load cities when administrativeArea changes
   useEffect(() => {
-    if (!newAddress.uf) {
+    if (!newAddress.administrativeArea) {
       activeProvinceIdRef.current = null;
       queueMicrotask(() => {
         setCities([]);
@@ -129,7 +128,7 @@ export function Customers() {
     }
     if (provinces.length === 0) return;
 
-    const target = newAddress.uf.trim().toLowerCase();
+    const target = newAddress.administrativeArea.trim().toLowerCase();
     const prov = provinces.find(
       (p) =>
         p.acronym.toLowerCase() === target || p.name.toLowerCase() === target,
@@ -144,7 +143,7 @@ export function Customers() {
         setCities([]);
       });
     }
-  }, [newAddress.uf, provinces, loadCities]);
+  }, [newAddress.administrativeArea, provinces, loadCities]);
 
   const handleProvinceChange = (val: string, option?: ComboboxOption) => {
     const searchVal = val.trim().toLowerCase();
@@ -158,8 +157,8 @@ export function Customers() {
     const chosenAcronym = prov ? prov.acronym : val;
     setNewAddress((prev) => ({
       ...prev,
-      uf: chosenAcronym,
-      city: "",
+      administrativeArea: chosenAcronym,
+      locality: "",
     }));
   };
 
@@ -247,15 +246,14 @@ export function Customers() {
     setNewAddress({
       tenantId: c.tenantId,
       customerId: c.id,
-      recipientName: "",
+      recipient: "",
       phone: "",
-      cep: "",
-      street: "",
-      number: "",
-      complement: "",
-      neighborhood: "",
-      city: "",
-      uf: "",
+      postalCode: "",
+      addressLine1: "",
+      addressLine2: "",
+      locality: "",
+      administrativeArea: "",
+      countryCode: "BR",
       isDefault: false,
     });
     setAddressModalOpen(true);
@@ -271,7 +269,7 @@ export function Customers() {
       const res = await dispatch(
         createCustomerAddress({
           ...newAddress,
-          cep: stripNonDigits(newAddress.cep),
+          postalCode: stripNonDigits(newAddress.postalCode || ""),
           customerId: selectedCustomer.id,
           tenantId: selectedCustomer.tenantId,
         }),
@@ -287,15 +285,14 @@ export function Customers() {
         setNewAddress({
           tenantId: selectedCustomer.tenantId,
           customerId: selectedCustomer.id,
-          recipientName: "",
+          recipient: "",
           phone: "",
-          cep: "",
-          street: "",
-          number: "",
-          complement: "",
-          neighborhood: "",
-          city: "",
-          uf: "",
+          postalCode: "",
+          addressLine1: "",
+          addressLine2: "",
+          locality: "",
+          administrativeArea: "",
+          countryCode: "BR",
           isDefault: false,
         });
       } else {
@@ -489,53 +486,26 @@ export function Customers() {
             </h4>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div>
-                <Label htmlFor="recipientName">Recipient Name</Label>
+                <Label htmlFor="recipient">Recipient Name</Label>
                 <Input
-                  id="recipientName"
+                  id="recipient"
                   placeholder="Recipient Name"
-                  value={newAddress.recipientName}
+                  value={newAddress.recipient}
                   onChange={(e) =>
-                    setNewAddress({ ...newAddress, recipientName: e.target.value })
+                    setNewAddress({ ...newAddress, recipient: e.target.value })
                   }
                   required
                 />
               </div>
               <div>
-                <Label htmlFor="cep">CEP</Label>
+                <Label htmlFor="postalCode">Postal Code / CEP</Label>
                 <Input
-                  id="cep"
+                  id="postalCode"
                   placeholder="00000-000"
                   maxLength={9}
-                  value={newAddress.cep}
+                  value={newAddress.postalCode || ""}
                   onChange={(e) =>
-                    setNewAddress({ ...newAddress, cep: formatPostalCode(e.target.value) })
-                  }
-                  required
-                />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              <div className="md:col-span-2">
-                <Label htmlFor="street">Street Address</Label>
-                <Input
-                  id="street"
-                  placeholder="Av. Paulista"
-                  value={newAddress.street}
-                  onChange={(e) =>
-                    setNewAddress({ ...newAddress, street: e.target.value })
-                  }
-                  required
-                />
-              </div>
-              <div>
-                <Label htmlFor="number">Number</Label>
-                <Input
-                  id="number"
-                  placeholder="1000"
-                  value={newAddress.number}
-                  onChange={(e) =>
-                    setNewAddress({ ...newAddress, number: e.target.value })
+                    setNewAddress({ ...newAddress, postalCode: formatPostalCode(e.target.value) })
                   }
                   required
                 />
@@ -544,28 +514,31 @@ export function Customers() {
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div>
-                <Label htmlFor="complement">Complement</Label>
+                <Label htmlFor="addressLine1">Address Line 1</Label>
                 <Input
-                  id="complement"
-                  placeholder="Apt 42"
-                  value={newAddress.complement || ""}
+                  id="addressLine1"
+                  placeholder="Street name, number"
+                  value={newAddress.addressLine1 || ""}
                   onChange={(e) =>
-                    setNewAddress({ ...newAddress, complement: e.target.value })
+                    setNewAddress({ ...newAddress, addressLine1: e.target.value })
                   }
+                  required
                 />
               </div>
               <div>
-                <Label htmlFor="neighborhood">Neighborhood</Label>
+                <Label htmlFor="addressLine2">Address Line 2 (Optional)</Label>
                 <Input
-                  id="neighborhood"
-                  placeholder="Bela Vista"
-                  value={newAddress.neighborhood || ""}
+                  id="addressLine2"
+                  placeholder="Apt, suite, neighborhood"
+                  value={newAddress.addressLine2 || ""}
                   onChange={(e) =>
-                    setNewAddress({ ...newAddress, neighborhood: e.target.value })
+                    setNewAddress({ ...newAddress, addressLine2: e.target.value })
                   }
                 />
               </div>
             </div>
+
+
 
             {/* Country (20%), State/UF (30%), City (50%) matching Tenant & Person Address standard */}
             <div className="grid grid-cols-1 md:grid-cols-10 gap-3 items-end">
@@ -590,10 +563,10 @@ export function Customers() {
                 </div>
               </div>
               <div className="md:col-span-3">
-                <Label htmlFor="customerStateProvince">State / UF</Label>
+                <Label htmlFor="customerStateProvince">State / Province</Label>
                 <FilterableCombobox
                   id="customerStateProvince"
-                  value={newAddress.uf}
+                  value={newAddress.administrativeArea || ""}
                   options={provinceOptions}
                   onChange={handleProvinceChange}
                   placeholder="Select state..."
@@ -606,19 +579,19 @@ export function Customers() {
                 <Label htmlFor="customerCity">City</Label>
                 <FilterableCombobox
                   id="customerCity"
-                  value={newAddress.city}
+                  value={newAddress.locality || ""}
                   options={cityOptions}
                   onChange={(val) =>
-                    setNewAddress((prev) => ({ ...prev, city: val }))
+                    setNewAddress((prev) => ({ ...prev, locality: val }))
                   }
                   placeholder={
-                    !newAddress.uf
+                    !newAddress.administrativeArea
                       ? "Select state first..."
                       : loadingCities
                       ? "Loading cities..."
                       : "Select or search city..."
                   }
-                  disabled={!newAddress.uf}
+                  disabled={!newAddress.administrativeArea}
                   loading={loadingCities}
                   emptyText={
                     loadingCities
@@ -672,7 +645,7 @@ export function Customers() {
                   <div className="space-y-0.5">
                     <div className="flex items-center gap-2">
                       <span className="font-semibold text-sm text-gray-900 dark:text-white">
-                        {addr.recipientName}
+                        {addr.recipient}
                       </span>
                       {addr.isDefault && (
                         <Badge size="sm" color="success">
@@ -681,12 +654,11 @@ export function Customers() {
                       )}
                     </div>
                     <p className="text-xs text-gray-600 dark:text-gray-300">
-                      {addr.street}, {addr.number}
-                      {addr.complement ? ` - ${addr.complement}` : ""},{" "}
-                      {addr.neighborhood}
+                      {addr.addressLine1}
+                      {addr.addressLine2 ? ` - ${addr.addressLine2}` : ""}
                     </p>
                     <p className="text-xs text-gray-400 dark:text-gray-500">
-                      {addr.city} - {addr.uf} · CEP: {addr.cep}
+                      {addr.locality} - {addr.administrativeArea} · {addr.postalCode}
                     </p>
                   </div>
                 </div>

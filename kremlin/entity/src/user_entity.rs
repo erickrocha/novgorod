@@ -18,9 +18,9 @@ pub struct Model {
     pub tenant_id: Option<i64>,
     pub role: String,
     pub blocked_reason: Option<String>,
-    pub created_at: Option<DateTime>,
+    pub created_at: DateTime,
     pub created_by: Option<String>,
-    pub updated_at: Option<DateTime>,
+    pub updated_at: DateTime,
     pub updated_by: Option<String>,
 }
 
@@ -28,4 +28,4 @@ pub struct Model {
 pub enum Relation {
 }
 
-impl ActiveModelBehavior for ActiveModel {}
+crate::impl_tenant_auditable_before_save!(ActiveModel);

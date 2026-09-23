@@ -12,12 +12,7 @@ use sea_orm::{DbConn, TransactionTrait};
 pub struct CustomerRegistrationUseCase {}
 
 impl CustomerRegistrationUseCase {
-    pub async fn execute(
-        db: &DbConn,
-        mut user: User,
-        mut customer: Customer,
-        address: Option<CustomerAddress>,
-    ) -> Result<Customer, BusinessError> {
+    pub async fn execute(db: &DbConn,mut user: User,mut customer: Customer,address: Option<CustomerAddress>) -> Result<Customer, BusinessError> {
         let txn = db.begin().await.map_err(|e| {
             log::error!("Failed to begin transaction: {}", e);
             BusinessError::new("Internal server error".to_string())
@@ -159,9 +154,9 @@ mod tests {
             tenant_id: Some(1),
             role: "customer".to_string(),
             blocked_reason: None,
-            created_at: Option::from(Utc::now().naive_utc()),
+            created_at: Utc::now().naive_utc(),
             created_by: None,
-            updated_at: Option::from(Utc::now().naive_utc()),
+            updated_at: Utc::now().naive_utc(),
             updated_by: None,
         }
     }

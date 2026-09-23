@@ -7,12 +7,14 @@ export interface CustomerProfile {
   phone?: string;
   addresses?: Array<{
     id: string;
-    street: string;
-    number: string;
-    neighborhood: string;
-    city: string;
-    state: string;
-    postalCode: string;
+    label?: string;
+    recipient?: string;
+    addressLine1?: string;
+    addressLine2?: string;
+    locality?: string;
+    administrativeArea?: string;
+    postalCode?: string;
+    countryCode?: string;
     isDefault?: boolean;
   }>;
 }
