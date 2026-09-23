@@ -539,9 +539,10 @@ pub struct CustomerMapper;
 impl Mapper<Customer, CustomerJson> for CustomerMapper {
     fn json(t: Customer) -> CustomerJson {
         CustomerJson {
-            id: t.id.unwrap_or_default(),
-            uuid: t.uuid.unwrap_or_default(),
+            id: t.id,
+            uuid: t.uuid,
             tenant_id: t.tenant_id,
+            user_id:t.user_id,
             name: t.name,
             email: t.email,
             cpf: t.cpf,
@@ -555,13 +556,12 @@ impl Mapper<Customer, CustomerJson> for CustomerMapper {
 
     fn domain(u: CustomerJson) -> Customer {
         Customer {
-            id: if u.id > 0 { Some(u.id) } else { None },
-            uuid: if u.uuid.is_empty() { None } else { Some(u.uuid) },
+            id: u.id,
+            uuid: u.uuid,
             tenant_id: u.tenant_id,
-            user_id: None,
+            user_id: u.user_id,
             name: u.name,
             email: u.email,
-            password_hash: String::new(),
             cpf: u.cpf,
             phone: u.phone,
             marketing_consent: u.marketing_consent,
@@ -579,19 +579,18 @@ pub struct CustomerAddressMapper;
 impl Mapper<CustomerAddress, CustomerAddressJson> for CustomerAddressMapper {
     fn json(t: CustomerAddress) -> CustomerAddressJson {
         CustomerAddressJson {
-            id: t.id.unwrap_or_default(),
-            uuid: t.uuid.unwrap_or_default(),
+            id: t.id,
+            uuid: t.uuid,
             tenant_id: t.tenant_id,
             customer_id: t.customer_id,
             label: t.label,
             recipient: t.recipient,
-            cep: t.cep,
-            logradouro: t.logradouro,
-            numero: t.numero,
-            complemento: t.complemento,
-            bairro: t.bairro,
-            cidade: t.cidade,
-            uf: t.uf,
+            address_line1: t.address_line1,
+            address_line2: t.address_line2,
+            locality: t.locality,
+            administrative_area: t.administrative_area,
+            postal_code: t.postal_code,
+            country_code: t.country_code,
             is_default: t.is_default,
             created_at: t.created_at,
             updated_at: t.updated_at,
@@ -600,19 +599,18 @@ impl Mapper<CustomerAddress, CustomerAddressJson> for CustomerAddressMapper {
 
     fn domain(u: CustomerAddressJson) -> CustomerAddress {
         CustomerAddress {
-            id: if u.id > 0 { Some(u.id) } else { None },
-            uuid: if u.uuid.is_empty() { None } else { Some(u.uuid) },
+            id: u.id,
+            uuid: u.uuid,
             tenant_id: u.tenant_id,
             customer_id: u.customer_id,
             label: u.label,
             recipient: u.recipient,
-            cep: u.cep,
-            logradouro: u.logradouro,
-            numero: u.numero,
-            complemento: u.complemento,
-            bairro: u.bairro,
-            cidade: u.cidade,
-            uf: u.uf,
+            address_line1: u.address_line1,
+            address_line2: u.address_line2,
+            locality: u.locality,
+            administrative_area: u.administrative_area,
+            postal_code: u.postal_code,
+            country_code: u.country_code,
             is_default: u.is_default,
             created_at: u.created_at,
             created_by: None,
@@ -693,8 +691,8 @@ pub struct PersonAddressMapper;
 impl Mapper<PersonAddress, PersonAddressJson> for PersonAddressMapper {
     fn json(t: PersonAddress) -> PersonAddressJson {
         PersonAddressJson {
-            id: t.id.unwrap_or_default(),
-            uuid: t.uuid.unwrap_or_default(),
+            id: t.id,
+            uuid: t.uuid,
             tenant_id: t.tenant_id,
             person_id: t.person_id,
             address_line1: t.address_line1,
@@ -710,8 +708,8 @@ impl Mapper<PersonAddress, PersonAddressJson> for PersonAddressMapper {
 
     fn domain(u: PersonAddressJson) -> PersonAddress {
         PersonAddress {
-            id: if u.id > 0 { Some(u.id) } else { None },
-            uuid: if u.uuid.is_empty() { None } else { Some(u.uuid) },
+            id: u.id,
+            uuid: u.uuid,
             tenant_id: u.tenant_id,
             person_id: u.person_id,
             address_line1: u.address_line1,
@@ -1289,7 +1287,6 @@ mod new_domain_mapper_tests {
             user_id: Some(10),
             name: "Alice Smith".to_string(),
             email: "alice@example.com".to_string(),
-            password_hash: "secret_hash".to_string(),
             cpf: Some("12345678901".to_string()),
             phone: Some("+5511999999999".to_string()),
             marketing_consent: true,
@@ -1495,7 +1492,7 @@ mod new_domain_mapper_tests {
             updated_by: None,
         };
         let json = PersonAddressMapper::json(domain.clone());
-        assert_eq!(json.id, 2);
+        assert_eq!(json.id.unwrap(), 2);
         assert_eq!(json.person_id, 1);
         assert_eq!(json.locality, Some("Bela Vista".to_string()));
 

@@ -94,8 +94,8 @@ impl PersonPageQuery {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct PersonAddressJson {
-    pub id: i64,
-    pub uuid: String,
+    pub id: Option<i64>,
+    pub uuid: Option<String>,
     pub tenant_id: Option<i64>,
     pub person_id: i64,
     pub address_line1: Option<String>,

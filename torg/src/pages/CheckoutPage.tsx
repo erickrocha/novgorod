@@ -9,6 +9,7 @@ import { clearCart } from '../store/slices/cartSlice';
 import { addToast } from '../store/slices/uiSlice';
 import Button from '../components/common/Button';
 import { Breadcrumb } from '../components/common/Breadcrumb';
+import { CheckoutAuth } from '../components/checkout/CheckoutAuth';
 import {
   ShieldCheck,
   CreditCard,
@@ -57,6 +58,7 @@ export const CheckoutPage: React.FC = () => {
   const items = useAppSelector(selectCartItems);
   const summary = useAppSelector(selectCartSummary);
   const savedCep = useAppSelector(selectShippingCep);
+  const { isAuthenticated, customer } = useAppSelector((state) => state.auth);
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [orderCompleted, setOrderCompleted] = useState(false);
@@ -71,15 +73,15 @@ export const CheckoutPage: React.FC = () => {
   } = useForm<CheckoutFormData>({
     resolver: yupResolver(checkoutSchema),
     defaultValues: {
-      name: '',
-      email: '',
-      phone: '',
-      postalCode: savedCep || '01310-100',
-      street: '',
-      number: '',
-      neighborhood: '',
-      city: 'São Paulo',
-      state: 'SP',
+      name: customer?.name || '',
+      email: customer?.email || '',
+      phone: customer?.phone || '',
+      postalCode: customer?.addresses?.[0]?.postalCode || savedCep || '01310-100',
+      street: customer?.addresses?.[0]?.street || '',
+      number: customer?.addresses?.[0]?.number || '',
+      neighborhood: customer?.addresses?.[0]?.neighborhood || '',
+      city: customer?.addresses?.[0]?.city || 'São Paulo',
+      state: customer?.addresses?.[0]?.state || 'SP',
       paymentMethod: 'pix',
     },
   });
@@ -200,68 +202,69 @@ export const CheckoutPage: React.FC = () => {
         </Link>
       </div>
 
-      <form onSubmit={handleSubmit(onSubmit)} className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-        {/* Forms column */}
-        <div className="lg:col-span-8 space-y-6">
-          {/* Customer info */}
-          <div className="bg-white rounded-3xl border border-slate-200/80 p-6 sm:p-8 shadow-xs space-y-4">
-            <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
-              <span>1. Informações de Contato</span>
-            </h2>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
-              <div className="sm:col-span-2">
-                <label htmlFor="customer-name" className="text-xs font-semibold text-slate-700 block mb-1">
-                  Nome Completo
-                </label>
-                <input
-                  id="customer-name"
-                  type="text"
-                  placeholder="Ex: João da Silva"
-                  {...register('name')}
-                  className={`w-full p-2.5 rounded-xl border text-sm focus:outline-none ${
-                    errors.name ? 'border-rose-500' : 'border-slate-200 focus:border-amber-500'
-                  }`}
-                />
-                {errors.name && (
-                  <p className="text-xs text-rose-600 mt-1">{errors.name.message}</p>
-                )}
+      {isAuthenticated ? (
+        <form onSubmit={handleSubmit(onSubmit)} className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+          {/* Forms column */}
+          <div className="lg:col-span-8 space-y-6">
+            {/* Customer info */}
+              <div className="bg-white rounded-3xl border border-slate-200/80 p-6 sm:p-8 shadow-xs space-y-4">
+                <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                  <span>1. Informações de Contato</span>
+                </h2>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
+                  <div className="sm:col-span-2">
+                    <label htmlFor="customer-name" className="text-xs font-semibold text-slate-700 block mb-1">
+                      Nome Completo
+                    </label>
+                    <input
+                      id="customer-name"
+                      type="text"
+                      placeholder="Ex: João da Silva"
+                      {...register('name')}
+                      className={`w-full p-2.5 rounded-xl border text-sm focus:outline-none ${
+                        errors.name ? 'border-rose-500' : 'border-slate-200 focus:border-amber-500'
+                      }`}
+                    />
+                    {errors.name && (
+                      <p className="text-xs text-rose-600 mt-1">{errors.name.message}</p>
+                    )}
+                  </div>
+                  <div>
+                    <label htmlFor="customer-email" className="text-xs font-semibold text-slate-700 block mb-1">
+                      E-mail
+                    </label>
+                    <input
+                      id="customer-email"
+                      type="email"
+                      placeholder="joao@exemplo.com"
+                      {...register('email')}
+                      className={`w-full p-2.5 rounded-xl border text-sm focus:outline-none ${
+                        errors.email ? 'border-rose-500' : 'border-slate-200 focus:border-amber-500'
+                      }`}
+                    />
+                    {errors.email && (
+                      <p className="text-xs text-rose-600 mt-1">{errors.email.message}</p>
+                    )}
+                  </div>
+                  <div>
+                    <label htmlFor="customer-phone" className="text-xs font-semibold text-slate-700 block mb-1">
+                      Telefone / WhatsApp
+                    </label>
+                    <input
+                      id="customer-phone"
+                      type="tel"
+                      placeholder="(11) 99999-9999"
+                      {...register('phone')}
+                      className={`w-full p-2.5 rounded-xl border text-sm focus:outline-none ${
+                        errors.phone ? 'border-rose-500' : 'border-slate-200 focus:border-amber-500'
+                      }`}
+                    />
+                    {errors.phone && (
+                      <p className="text-xs text-rose-600 mt-1">{errors.phone.message}</p>
+                    )}
+                  </div>
+                </div>
               </div>
-              <div>
-                <label htmlFor="customer-email" className="text-xs font-semibold text-slate-700 block mb-1">
-                  E-mail
-                </label>
-                <input
-                  id="customer-email"
-                  type="email"
-                  placeholder="joao@exemplo.com"
-                  {...register('email')}
-                  className={`w-full p-2.5 rounded-xl border text-sm focus:outline-none ${
-                    errors.email ? 'border-rose-500' : 'border-slate-200 focus:border-amber-500'
-                  }`}
-                />
-                {errors.email && (
-                  <p className="text-xs text-rose-600 mt-1">{errors.email.message}</p>
-                )}
-              </div>
-              <div>
-                <label htmlFor="customer-phone" className="text-xs font-semibold text-slate-700 block mb-1">
-                  Telefone / WhatsApp
-                </label>
-                <input
-                  id="customer-phone"
-                  type="tel"
-                  placeholder="(11) 99999-9999"
-                  {...register('phone')}
-                  className={`w-full p-2.5 rounded-xl border text-sm focus:outline-none ${
-                    errors.phone ? 'border-rose-500' : 'border-slate-200 focus:border-amber-500'
-                  }`}
-                />
-                {errors.phone && (
-                  <p className="text-xs text-rose-600 mt-1">{errors.phone.message}</p>
-                )}
-              </div>
-            </div>
-          </div>
 
           {/* Shipping Address */}
           <div className="bg-white rounded-3xl border border-slate-200/80 p-6 sm:p-8 shadow-xs space-y-4">
@@ -488,6 +491,7 @@ export const CheckoutPage: React.FC = () => {
                 variant="primary"
                 size="lg"
                 isLoading={isSubmitting}
+                disabled={!isAuthenticated}
                 className="w-full font-bold shadow-md"
               >
                 Confirmar e Pagar
@@ -506,6 +510,30 @@ export const CheckoutPage: React.FC = () => {
           </div>
         </div>
       </form>
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+          <div className="lg:col-span-8 space-y-6">
+            <CheckoutAuth />
+          </div>
+          <div className="lg:col-span-4">
+            <div className="bg-white rounded-3xl border border-slate-200/80 p-6 sm:p-8 shadow-xs sticky top-24 space-y-6">
+              <h2 className="text-lg font-bold text-slate-900 border-b border-slate-100 pb-4">
+                Resumo da Compra
+              </h2>
+              <div className="space-y-3 text-sm">
+                <div className="flex justify-between text-slate-600">
+                  <span>Subtotal dos Itens ({summary.totalItems})</span>
+                  <span>R$ {summary.subtotal.toFixed(2).replace('.', ',')}</span>
+                </div>
+                <div className="border-t pt-2 flex justify-between text-base font-extrabold text-slate-950">
+                  <span>Total</span>
+                  <span className="text-amber-700">R$ {summary.total.toFixed(2).replace('.', ',')}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

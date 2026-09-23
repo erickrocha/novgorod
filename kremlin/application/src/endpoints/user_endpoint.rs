@@ -433,10 +433,7 @@ pub struct MeResponse {
     ),
     security(("bearer_auth" = []))
 )]
-pub async fn me(
-    State(state): State<AppState>,
-    Extension(current_user): Extension<User>,
-) -> HttpResponse<Json<MeResponse>> {
+pub async fn me(State(state): State<AppState>,Extension(current_user): Extension<User>) -> HttpResponse<Json<MeResponse>> {
     use business::sea_orm::{EntityTrait, QueryFilter, ColumnTrait};
     use entity::{customer_entity, customer_address_entity};
     use business::domain::customer::CustomerEntityMapper;
@@ -468,19 +465,18 @@ pub async fn me(
             
             // Just map them manually since there might not be a mapper
             response.addresses = address_models.into_iter().map(|a| CustomerAddressJson {
-                id: a.id,
-                uuid: business::commons::functions::uuid_to_string(a.uuid),
+                id: Option::from(a.id),
+                uuid: Option::from(business::commons::functions::uuid_to_string(a.uuid)),
                 tenant_id: a.tenant_id,
                 customer_id: a.customer_id,
                 label: a.label,
                 recipient: a.recipient,
-                cep: a.cep,
-                logradouro: a.logradouro,
-                numero: a.numero,
-                complemento: a.complemento,
-                bairro: a.bairro,
-                cidade: a.cidade,
-                uf: a.uf,
+                address_line1: a.address_line1,
+                address_line2: a.address_line2,
+                locality: a.locality,
+                administrative_area: a.administrative_area,
+                postal_code: a.postal_code,
+                country_code: a.country_code,
                 is_default: a.is_default,
                 created_at: Some(a.created_at),
                 updated_at: Some(a.updated_at),

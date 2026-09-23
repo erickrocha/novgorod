@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
-use super::customer_json::CustomerAddressInputJson;
+use super::customer_json::{CustomerAddressJson};
 
 #[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 #[serde(rename_all = "camelCase")]
@@ -10,5 +10,5 @@ pub struct SignupRequest {
     pub password: String,
     pub cpf: Option<String>,
     pub phone: Option<String>,
-    pub address: Option<CustomerAddressInputJson>,
+    pub address: Option<CustomerAddressJson>,
 }

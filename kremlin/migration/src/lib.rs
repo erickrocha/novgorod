@@ -30,7 +30,6 @@ mod m20260919_000013_create_table_order_status_history;
 mod m20260919_000014_create_table_coupon_redemption;
 mod m20260921_000001_create_person_table;
 mod m20260921_000002_create_person_address_table;
-mod m20260923_000001_alter_table_customer;
 
 pub struct Migrator;
 
@@ -68,7 +67,6 @@ impl MigratorTrait for Migrator {
             Box::new(m20260919_000014_create_table_coupon_redemption::Migration),
             Box::new(m20260921_000001_create_person_table::Migration),
             Box::new(m20260921_000002_create_person_address_table::Migration),
-            Box::new(m20260923_000001_alter_table_customer::Migration),
         ]
     }
 }

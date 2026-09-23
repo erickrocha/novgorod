@@ -12,7 +12,7 @@ impl CustomerAddressUseCase {
         Self { gateway }
     }
 
-    pub async fn create(&self, address: CustomerAddress) -> Option<CustomerAddress> {
+    pub async fn persist(&self, address: CustomerAddress) -> Option<CustomerAddress> {
         let entity = self.gateway.persist(address).await.map_err(|e| {
             log::error!("Failed to persist customer address: {}", e);
         }).ok()?;

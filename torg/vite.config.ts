@@ -16,5 +16,23 @@ export default defineConfig({
   },
   server: {
     port: 5174,
+    proxy: {
+      '/api': {
+        target: 'http://localhost:8080',
+        changeOrigin: true,
+      },
+      '/login': {
+        target: 'http://localhost:8080',
+        changeOrigin: true,
+      },
+      '/signup': {
+        target: 'http://localhost:8080',
+        changeOrigin: true,
+      },
+      '/refresh': {
+        target: 'http://localhost:8080',
+        changeOrigin: true,
+      },
+    },
   },
 });

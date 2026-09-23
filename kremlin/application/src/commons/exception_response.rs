@@ -14,26 +14,35 @@ pub enum ExceptionResponse {
     BadRequest(Locale, ErrorKey),
 
     NotFound(Locale, ErrorKey),
+
+    CustomBadRequest(String),
 }
 
 impl IntoResponse for ExceptionResponse {
     fn into_response(self) -> axum::http::Response<axum::body::Body> {
-        let (status, locale, key) = match self {
-            ExceptionResponse::Unauthorized(locale, key) => {
-                (axum::http::StatusCode::UNAUTHORIZED, locale, key)
-            }
-            ExceptionResponse::Forbidden(locale, key) => {
-                (axum::http::StatusCode::FORBIDDEN, locale, key)
-            }
-            ExceptionResponse::BadRequest(locale, key) => {
-                (axum::http::StatusCode::BAD_REQUEST, locale, key)
-            }
-            ExceptionResponse::NotFound(locale, key) => {
-                (axum::http::StatusCode::NOT_FOUND, locale, key)
-            }
+        let (status, payload) = match self {
+            ExceptionResponse::Unauthorized(locale, key) => (
+                axum::http::StatusCode::UNAUTHORIZED,
+                ErrorResponseJson::new(key.as_str().to_string(), translate(locale, key)),
+            ),
+            ExceptionResponse::Forbidden(locale, key) => (
+                axum::http::StatusCode::FORBIDDEN,
+                ErrorResponseJson::new(key.as_str().to_string(), translate(locale, key)),
+            ),
+            ExceptionResponse::BadRequest(locale, key) => (
+                axum::http::StatusCode::BAD_REQUEST,
+                ErrorResponseJson::new(key.as_str().to_string(), translate(locale, key)),
+            ),
+            ExceptionResponse::NotFound(locale, key) => (
+                axum::http::StatusCode::NOT_FOUND,
+                ErrorResponseJson::new(key.as_str().to_string(), translate(locale, key)),
+            ),
+            ExceptionResponse::CustomBadRequest(msg) => (
+                axum::http::StatusCode::BAD_REQUEST,
+                ErrorResponseJson::new("bad_request".to_string(), msg),
+            ),
         };
 
-        let payload = ErrorResponseJson::new(key.as_str().to_string(), translate(locale, key));
         (status, Json(payload)).into_response()
     }
 }

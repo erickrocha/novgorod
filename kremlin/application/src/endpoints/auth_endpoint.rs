@@ -28,14 +28,8 @@ use business::domain::enums::Role;
         (status = 401, description = "Unauthorized")
     )
 )]
-pub async fn sign_in(
-    state: State<AppState>,
-    Extension(locale): Extension<Locale>,
-    Form(login_request): Form<LoginRequest>,
-) -> HttpResponse<Json<AccessTokenJson>> {
-    let access_token =
-        AuthenticationUseCase::execute(&state.conn, login_request.email, login_request.password)
-            .await;
+pub async fn sign_in(state: State<AppState>,Extension(locale): Extension<Locale>,Form(login_request): Form<LoginRequest>) -> HttpResponse<Json<AccessTokenJson>> {
+    let access_token = AuthenticationUseCase::execute(&state.conn, login_request.email, login_request.password).await;
     match access_token {
         Ok(token) => Ok(Json(AccessTokenMapper::json(token))),
         Err(_) => Err(ExceptionResponse::Unauthorized(
@@ -54,11 +48,7 @@ pub async fn sign_in(
         (status = 400, description = "Bad Request")
     )
 )]
-pub async fn signup(
-    state: State<AppState>,
-    Extension(locale): Extension<Locale>,
-    Json(signup_request): Json<SignupRequest>,
-) -> HttpResponse<Json<CustomerJson>> {
+pub async fn signup(state: State<AppState>,Extension(_locale): Extension<Locale>,Json(signup_request): Json<SignupRequest>) -> HttpResponse<Json<CustomerJson>> {
     // Basic mapping
     let user = User {
         id: None,
@@ -83,8 +73,7 @@ pub async fn signup(
         user_id: None,
         name: signup_request.name.clone(),
         email: signup_request.email.clone(),
-        password_hash: signup_request.password.clone(),
-        cpf: signup_request.cpf.clone(),
+        cpf: signup_request.cpf.map(|c| c.chars().filter(|ch| ch.is_ascii_digit()).collect()),
         phone: signup_request.phone.clone(),
         marketing_consent: false,
         consent_at: None,
@@ -102,14 +91,13 @@ pub async fn signup(
         customer_id: 0, // Assigned inside usecase
         label: a.label,
         recipient: a.recipient,
-        cep: a.cep,
-        logradouro: a.logradouro,
-        numero: a.numero,
-        complemento: a.complemento,
-        bairro: a.bairro,
-        cidade: a.cidade,
-        uf: a.uf,
-        is_default: a.is_default.unwrap_or(true),
+        address_line1: a.address_line1,
+        address_line2: a.address_line2,
+        locality: a.locality,
+        administrative_area: a.administrative_area,
+        postal_code: a.postal_code,
+        country_code: a.country_code,
+        is_default: a.is_default,
         created_at: None,
         updated_at: None,
         created_by: None,
@@ -125,10 +113,7 @@ pub async fn signup(
     
     match result {
         Ok(c) => Ok(Json(CustomerMapper::json(c))),
-        Err(_) => Err(ExceptionResponse::BadRequest(
-            locale,
-            ErrorKey::InvalidParameterValue,
-        ))
+        Err(e) => Err(ExceptionResponse::CustomBadRequest(e.message)),
     }
 }
 

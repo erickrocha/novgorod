@@ -1,4 +1,3 @@
-use crate::m20260917_000002_create_tenant_table::Tenant;
 use sea_orm_migration::{prelude::*, schema::*};
 
 #[derive(DeriveMigrationName)]
@@ -14,10 +13,10 @@ impl MigrationTrait for Migration {
                     .if_not_exists()
                     .col(pk_auto(Customer::Id).big_integer())
                     .col(uuid_uniq(Customer::Uuid))
-                    .col(big_integer(Customer::TenantId))
+                    .col(big_integer(Customer::TenantId).null())
+                    .col(big_integer(Customer::UserId).null())
                     .col(string_len(Customer::Name, 150))
                     .col(string_len(Customer::Email, 190))
-                    .col(string_len(Customer::PasswordHash, 255))
                     .col(string_len_null(Customer::Cpf, 255))
                     .col(string_len_null(Customer::Phone, 20))
                     .col(boolean(Customer::MarketingConsent).default(false))
@@ -29,24 +28,15 @@ impl MigrationTrait for Migration {
                     .col(string_len_null(Customer::UpdatedBy, 255))
                     .index(
                         Index::create()
-                            .name("uq_customer_tenant_id_id")
-                            .col(Customer::TenantId)
+                            .name("uq_customer_id")
                             .col(Customer::Id)
                             .unique(),
                     )
                     .index(
                         Index::create()
                             .name("uq_customer_tenant_email")
-                            .col(Customer::TenantId)
                             .col(Customer::Email)
                             .unique(),
-                    )
-                    .foreign_key(
-                        ForeignKey::create()
-                            .name("fk_customer_tenant")
-                            .from(Customer::Table, Customer::TenantId)
-                            .to(Tenant::Table, Tenant::Id)
-                            .on_delete(ForeignKeyAction::Restrict),
                     )
                     .to_owned(),
             )
@@ -66,9 +56,9 @@ pub enum Customer {
     Id,
     Uuid,
     TenantId,
+    UserId,
     Name,
     Email,
-    PasswordHash,
     Cpf,
     Phone,
     MarketingConsent,

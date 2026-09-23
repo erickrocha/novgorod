@@ -5,9 +5,10 @@ use utoipa::{IntoParams, ToSchema};
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct CustomerJson {
-    pub id: i64,
-    pub uuid: String,
+    pub id: Option<i64>,
+    pub uuid: Option<String>,
     pub tenant_id: Option<i64>,
+    pub user_id: Option<i64>,
     pub name: String,
     pub email: String,
     pub cpf: Option<String>,
@@ -16,19 +17,6 @@ pub struct CustomerJson {
     pub active: bool,
     pub created_at: Option<chrono::NaiveDateTime>,
     pub updated_at: Option<chrono::NaiveDateTime>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct CustomerInputJson {
-    pub tenant_id: Option<i64>,
-    pub name: String,
-    pub email: String,
-    pub password: Option<String>,
-    pub cpf: Option<String>,
-    pub phone: Option<String>,
-    pub marketing_consent: Option<bool>,
-    pub active: Option<bool>,
 }
 
 #[derive(Debug, Clone, Deserialize, IntoParams)]
@@ -62,39 +50,21 @@ impl CustomerPageQuery {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct CustomerAddressJson {
-    pub id: i64,
-    pub uuid: String,
+    pub id: Option<i64>,
+    pub uuid: Option<String>,
     pub tenant_id: Option<i64>,
     pub customer_id: i64,
     pub label: Option<String>,
     pub recipient: String,
-    pub cep: String,
-    pub logradouro: String,
-    pub numero: String,
-    pub complemento: Option<String>,
-    pub bairro: String,
-    pub cidade: String,
-    pub uf: String,
+    pub address_line1: Option<String>,
+    pub address_line2: Option<String>,
+    pub locality: Option<String>,
+    pub administrative_area: Option<String>,
+    pub postal_code: Option<String>,
+    pub country_code: Option<String>,
     pub is_default: bool,
     pub created_at: Option<chrono::NaiveDateTime>,
     pub updated_at: Option<chrono::NaiveDateTime>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct CustomerAddressInputJson {
-    pub tenant_id: Option<i64>,
-    pub customer_id: i64,
-    pub label: Option<String>,
-    pub recipient: String,
-    pub cep: String,
-    pub logradouro: String,
-    pub numero: String,
-    pub complemento: Option<String>,
-    pub bairro: String,
-    pub cidade: String,
-    pub uf: String,
-    pub is_default: Option<bool>,
 }
 
 #[derive(Debug, Clone, Deserialize, IntoParams)]

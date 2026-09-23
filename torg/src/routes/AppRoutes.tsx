@@ -6,6 +6,7 @@ import Catalog from '../pages/Catalog';
 import ProductDetail from '../pages/ProductDetail';
 import CartPage from '../pages/CartPage';
 import CheckoutPage from '../pages/CheckoutPage';
+import SignUpPage from '../pages/SignUpPage';
 import NotFoundPage from '../pages/NotFoundPage';
 
 export const AppRoutes: React.FC = () => {
@@ -17,6 +18,7 @@ export const AppRoutes: React.FC = () => {
         <Route path="/produto/:slug" element={<ProductDetail />} />
         <Route path="/carrinho" element={<CartPage />} />
         <Route path="/checkout" element={<CheckoutPage />} />
+        <Route path="/cadastro" element={<SignUpPage />} />
         <Route path="*" element={<NotFoundPage />} />
       </Route>
     </Routes>

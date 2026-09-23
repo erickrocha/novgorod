@@ -24,17 +24,6 @@ use business::sea_orm::{
 use business::use_cases::customer_use_case::CustomerUseCase;
 use entity::customer_entity;
 
-fn tenant_for_write(user: &User, requested: Option<i64>) -> Option<i64> {
-    match user.role {
-        Role::SysAdmin => requested,
-        Role::TenantOwner | Role::TenantUser | Role::Customer => user.tenant_id,
-    }
-}
-
-fn can_read_tenant(user: &User, tenant_id: Option<i64>) -> bool {
-    user.role == Role::SysAdmin || (user.tenant_id.is_some() && user.tenant_id == tenant_id)
-}
-
 const CUSTOMER_SORT_FIELDS: &[&str] = &[
     "id",
     "name",
@@ -60,8 +49,8 @@ pub async fn list_all(
     State(state): State<AppState>,
     Extension(_current_user): Extension<User>,
 ) -> Json<Vec<CustomerJson>> {
-    let usecase = CustomerUseCase::new(CustomerGateway::new(state.conn.as_ref().clone()));
-    let items = usecase.find_all().await;
+    let use_case = CustomerUseCase::new(CustomerGateway::new(state.conn.as_ref().clone()));
+    let items = use_case.find_all().await;
     Json(CustomerMapper::json_vec(items))
 }
 
@@ -154,33 +143,20 @@ pub async fn paged(
     ),
     security(("bearer_auth" = []))
 )]
-pub async fn get_by_id(
-    State(state): State<AppState>,
-    Extension(locale): Extension<Locale>,
-    Extension(current_user): Extension<User>,
-    Path(id): Path<i64>,
-) -> HttpResponse<Json<CustomerJson>> {
-    let usecase = CustomerUseCase::new(CustomerGateway::new(state.conn.as_ref().clone()));
-    let item = usecase.find_by_id(id).await.ok_or(ExceptionResponse::NotFound(
-        locale,
-        ErrorKey::InvalidParameterValue,
-    ))?;
-
-    if !can_read_tenant(&current_user, item.tenant_id) {
-        return Err(ExceptionResponse::NotFound(
-            locale,
-            ErrorKey::InvalidParameterValue,
-        ));
+pub async fn get_by_id(State(state): State<AppState>,Extension(locale): Extension<Locale>,Path(id): Path<i64>) -> HttpResponse<Json<CustomerJson>> {
+    let use_case = CustomerUseCase::new(CustomerGateway::new(state.conn.as_ref().clone()));
+    let item = use_case.find_by_id(id).await;
+    match item {
+        Some(item) => Ok(Json(CustomerMapper::json(item))),
+        None => Err(ExceptionResponse::NotFound(locale,ErrorKey::InvalidParameterValue))
     }
-
-    Ok(Json(CustomerMapper::json(item)))
 }
 
 #[utoipa::path(
     post,
     path = "/customers",
     tag = "Customer",
-    request_body = CustomerInputJson,
+    request_body = CustomerJson,
     responses(
         (status = 201, description = "Customer created", body = CustomerJson),
         (status = 400, description = "Bad request", body = BadRequestErrorJson),
@@ -190,50 +166,19 @@ pub async fn get_by_id(
     ),
     security(("bearer_auth" = []))
 )]
-pub async fn add(
-    State(state): State<AppState>,
-    Extension(locale): Extension<Locale>,
-    Extension(user): Extension<User>,
-    Json(input): Json<CustomerInputJson>,
-) -> HttpResponse<(StatusCode, Json<CustomerJson>)> {
-    let tenant_id = tenant_for_write(&user, input.tenant_id).ok_or(
-        ExceptionResponse::Forbidden(locale, ErrorKey::InvalidParameterValue),
-    )?;
-
-    if input.name.trim().is_empty() || input.email.trim().is_empty() {
-        return Err(ExceptionResponse::BadRequest(
-            locale,
-            ErrorKey::InvalidParameterValue,
-        ));
+pub async fn add(State(state): State<AppState>,Extension(locale): Extension<Locale>,Json(payload): Json<CustomerJson>) -> HttpResponse<(StatusCode, Json<CustomerJson>)> {
+    if payload.name.trim().is_empty() || payload.email.trim().is_empty() {
+        return Err(ExceptionResponse::BadRequest(locale,ErrorKey::InvalidParameterValue));
     }
 
-    let mut customer = CustomerMapper::domain(CustomerJson {
-        id: 0,
-        uuid: String::new(),
-        tenant_id: Some(tenant_id),
-        name: input.name.trim().to_string(),
-        email: input.email.trim().to_lowercase(),
-        cpf: input.cpf,
-        phone: input.phone,
-        marketing_consent: input.marketing_consent.unwrap_or(false),
-        active: input.active.unwrap_or(true),
-        created_at: None,
-        updated_at: None,
-    });
-    if let Some(pwd) = input.password {
-        customer.password_hash = pwd;
+    let customer = CustomerMapper::domain(payload);
+    let use_case = CustomerUseCase::new(CustomerGateway::new(state.conn.as_ref().clone()));
+    let saved = use_case.create(customer).await;
+
+    match saved {
+        Some(domain) => Ok((StatusCode::CREATED, Json(CustomerMapper::json(domain)))),
+        None => Err(ExceptionResponse::BadRequest(locale,ErrorKey::InvalidParameterValue))
     }
-
-    let usecase = CustomerUseCase::new(CustomerGateway::new(state.conn.as_ref().clone()));
-    let saved = usecase
-        .create(customer)
-        .await
-        .ok_or(ExceptionResponse::BadRequest(
-            locale,
-            ErrorKey::InvalidParameterValue,
-        ))?;
-
-    Ok((StatusCode::CREATED, Json(CustomerMapper::json(saved))))
 }
 
 #[utoipa::path(
@@ -241,7 +186,7 @@ pub async fn add(
     path = "/customers/{id}",
     tag = "Customer",
     params(("id" = i64, Path, description = "Customer ID")),
-    request_body = CustomerInputJson,
+    request_body = CustomerJson,
     responses(
         (status = 200, description = "Customer updated", body = CustomerJson),
         (status = 400, description = "Bad request", body = BadRequestErrorJson),
@@ -252,60 +197,14 @@ pub async fn add(
     ),
     security(("bearer_auth" = []))
 )]
-pub async fn update(
-    State(state): State<AppState>,
-    Extension(locale): Extension<Locale>,
-    Extension(user): Extension<User>,
-    Path(id): Path<i64>,
-    Json(input): Json<CustomerInputJson>,
-) -> HttpResponse<Json<CustomerJson>> {
-    let usecase = CustomerUseCase::new(CustomerGateway::new(state.conn.as_ref().clone()));
-    let existing = usecase
-        .find_by_id(id)
-        .await
-        .ok_or(ExceptionResponse::NotFound(
-            locale,
-            ErrorKey::InvalidParameterValue,
-        ))?;
+pub async fn update(State(state): State<AppState>,Extension(locale): Extension<Locale>,Path(id): Path<i64>,Json(payload): Json<CustomerJson>) -> HttpResponse<Json<CustomerJson>> {
+    let use_case = CustomerUseCase::new(CustomerGateway::new(state.conn.as_ref().clone()));
+    let customer = CustomerMapper::domain(payload);
 
-    if !can_read_tenant(&user, existing.tenant_id)
-        || tenant_for_write(&user, input.tenant_id.or(existing.tenant_id)) != existing.tenant_id
-    {
-        return Err(ExceptionResponse::Forbidden(
-            locale,
-            ErrorKey::InvalidParameterValue,
-        ));
+    let saved = use_case.update(id, customer).await;
+
+    match saved {
+        Some(saved) => Ok(Json(CustomerMapper::json(saved))),
+        None => Err(ExceptionResponse::BadRequest(locale,ErrorKey::InvalidParameterValue))
     }
-
-    if input.name.trim().is_empty() || input.email.trim().is_empty() {
-        return Err(ExceptionResponse::BadRequest(
-            locale,
-            ErrorKey::InvalidParameterValue,
-        ));
-    }
-
-    let mut customer = CustomerMapper::domain(CustomerJson {
-        id,
-        uuid: existing.uuid.unwrap_or_default(),
-        tenant_id: existing.tenant_id,
-        name: input.name.trim().to_string(),
-        email: input.email.trim().to_lowercase(),
-        cpf: input.cpf.or(existing.cpf),
-        phone: input.phone.or(existing.phone),
-        marketing_consent: input.marketing_consent.unwrap_or(existing.marketing_consent),
-        active: input.active.unwrap_or(existing.active),
-        created_at: existing.created_at,
-        updated_at: existing.updated_at,
-    });
-    customer.password_hash = existing.password_hash;
-
-    let saved = usecase
-        .update(id, customer)
-        .await
-        .ok_or(ExceptionResponse::BadRequest(
-            locale,
-            ErrorKey::InvalidParameterValue,
-        ))?;
-
-    Ok(Json(CustomerMapper::json(saved)))
 }

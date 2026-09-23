@@ -2,20 +2,15 @@
 
 use sea_orm::entity::prelude::*;
 
-#[derive(Copy, Clone, Default, Debug, DeriveEntity)]
-pub struct Entity;
-
-impl EntityName for Entity {
-    fn table_name(&self) -> &'static str {
-        "user"
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, DeriveModel, DeriveActiveModel, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
+#[sea_orm(table_name = "user")]
 pub struct Model {
+    #[sea_orm(primary_key)]
     pub id: i64,
+    #[sea_orm(unique)]
     pub uuid: Uuid,
     pub name: Option<String>,
+    #[sea_orm(unique)]
     pub email: String,
     pub password: String,
     pub first_login: bool,
@@ -23,81 +18,14 @@ pub struct Model {
     pub tenant_id: Option<i64>,
     pub role: String,
     pub blocked_reason: Option<String>,
-    pub created_at: DateTime,
+    pub created_at: Option<DateTime>,
     pub created_by: Option<String>,
-    pub updated_at: DateTime,
+    pub updated_at: Option<DateTime>,
     pub updated_by: Option<String>,
 }
 
-#[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
-pub enum Column {
-    Id,
-    Uuid,
-    Name,
-    Email,
-    Password,
-    FirstLogin,
-    Enabled,
-    TenantId,
-    Role,
-    BlockedReason,
-    CreatedAt,
-    CreatedBy,
-    UpdatedAt,
-    UpdatedBy,
-}
-
-#[derive(Copy, Clone, Debug, EnumIter, DerivePrimaryKey)]
-pub enum PrimaryKey {
-    Id,
-}
-
-impl PrimaryKeyTrait for PrimaryKey {
-    type ValueType = i64;
-    fn auto_increment() -> bool {
-        true
-    }
-}
-
-#[derive(Copy, Clone, Debug, EnumIter)]
+#[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
-    Customer,
 }
 
-impl ColumnTrait for Column {
-    type EntityName = Entity;
-    fn def(&self) -> ColumnDef {
-        match self {
-            Self::Id => ColumnType::Integer.def(),
-            Self::Uuid => ColumnType::Uuid.def().unique(),
-            Self::Name => ColumnType::String(StringLen::N(500u32)).def().null(),
-            Self::Email => ColumnType::String(StringLen::N(500u32)).def().unique(),
-            Self::Password => ColumnType::String(StringLen::N(500u32)).def(),
-            Self::FirstLogin => ColumnType::Boolean.def(),
-            Self::Enabled => ColumnType::Boolean.def(),
-            Self::TenantId => ColumnType::Integer.def().null(),
-            Self::Role => ColumnType::String(StringLen::N(50u32)).def(),
-            Self::BlockedReason => ColumnType::String(StringLen::N(32u32)).def().null(),
-            Self::CreatedAt => ColumnType::DateTime.def().null(),
-            Self::CreatedBy => ColumnType::String(StringLen::N(50u32)).def().null(),
-            Self::UpdatedAt => ColumnType::DateTime.def().null(),
-            Self::UpdatedBy => ColumnType::String(StringLen::N(50u32)).def().null(),
-        }
-    }
-}
-
-impl RelationTrait for Relation {
-    fn def(&self) -> RelationDef {
-        match self {
-            Self::Customer => Entity::has_one(super::customer_entity::Entity).into(),
-        }
-    }
-}
-
-impl Related<super::customer_entity::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::Customer.def()
-    }
-}
-
-crate::impl_tenant_auditable_before_save!(ActiveModel);
+impl ActiveModelBehavior for ActiveModel {}

@@ -62,9 +62,9 @@ impl EntityMapper<User, Model, ActiveModel> for UserEntityMapper {
             first_login: e.first_login,
             tenant_id: e.tenant_id,
             role: Role::from_str(e.role.as_str()).unwrap_or(Role::TenantUser),
-            created_at: Some(e.created_at),
+            created_at: e.created_at,
             created_by: e.created_by,
-            updated_at: Some(e.updated_at),
+            updated_at: e.updated_at,
             updated_by: e.updated_by,
         }
     }
@@ -84,9 +84,9 @@ impl EntityMapper<User, Model, ActiveModel> for UserEntityMapper {
                 first_login: e.first_login.take().unwrap_or(false),
                 tenant_id: e.tenant_id.take().flatten(),
                 role: Role::from_str(e.role.unwrap().as_str()).unwrap_or(Role::TenantUser),
-                created_at: e.created_at.take(),
+                created_at: e.created_at.take().flatten(),
                 created_by: e.created_by.take().flatten(),
-                updated_at: e.updated_at.take(),
+                updated_at: e.updated_at.take().flatten(),
                 updated_by: e.updated_by.take().flatten(),
             },
         }

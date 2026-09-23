@@ -18,13 +18,12 @@ impl MigrationTrait for Migration {
                     .col(big_integer(CustomerAddress::CustomerId))
                     .col(string_len_null(CustomerAddress::Label, 40))
                     .col(string_len(CustomerAddress::Recipient, 150))
-                    .col(string_len(CustomerAddress::Cep, 8))
-                    .col(string_len(CustomerAddress::Logradouro, 200))
-                    .col(string_len(CustomerAddress::Numero, 20))
-                    .col(string_len_null(CustomerAddress::Complemento, 100))
-                    .col(string_len(CustomerAddress::Bairro, 100))
-                    .col(string_len(CustomerAddress::Cidade, 100))
-                    .col(string_len(CustomerAddress::Uf, 2))
+                    .col(string_len_null(CustomerAddress::AddressLine1, 500))
+                    .col(string_len_null(CustomerAddress::AddressLine2, 500))
+                    .col(string_len_null(CustomerAddress::Locality, 500))
+                    .col(string_len_null(CustomerAddress::AdministrativeArea, 500))
+                    .col(string_len_null(CustomerAddress::PostalCode, 20))
+                    .col(string_len_null(CustomerAddress::CountryCode, 2))
                     .col(boolean(CustomerAddress::IsDefault).default(false))
                     .col(date_time(CustomerAddress::CreatedAt))
                     .col(string_len_null(CustomerAddress::CreatedBy, 255))
@@ -32,8 +31,7 @@ impl MigrationTrait for Migration {
                     .col(string_len_null(CustomerAddress::UpdatedBy, 255))
                     .index(
                         Index::create()
-                            .name("uq_customer_address_tenant_id_id")
-                            .col(CustomerAddress::TenantId)
+                            .name("uq_customer_address_id")
                             .col(CustomerAddress::Id)
                             .unique(),
                     )
@@ -41,10 +39,8 @@ impl MigrationTrait for Migration {
                         ForeignKey::create()
                             .name("fk_customer_address_customer")
                             .from_tbl(CustomerAddress::Table)
-                            .from_col(CustomerAddress::TenantId)
                             .from_col(CustomerAddress::CustomerId)
                             .to_tbl(Customer::Table)
-                            .to_col(Customer::TenantId)
                             .to_col(Customer::Id)
                             .on_delete(ForeignKeyAction::Cascade),
                     )
@@ -57,7 +53,6 @@ impl MigrationTrait for Migration {
                 Index::create()
                     .name("idx_customer_address_tenant_customer")
                     .table(CustomerAddress::Table)
-                    .col(CustomerAddress::TenantId)
                     .col(CustomerAddress::CustomerId)
                     .to_owned(),
             )
@@ -80,13 +75,12 @@ pub enum CustomerAddress {
     CustomerId,
     Label,
     Recipient,
-    Cep,
-    Logradouro,
-    Numero,
-    Complemento,
-    Bairro,
-    Cidade,
-    Uf,
+    AddressLine1,
+    AddressLine2,
+    Locality,
+    AdministrativeArea,
+    PostalCode,
+    CountryCode,
     IsDefault,
     CreatedAt,
     CreatedBy,

@@ -2,30 +2,23 @@
 
 use sea_orm::entity::prelude::*;
 
-#[derive(Copy, Clone, Default, Debug, DeriveEntity)]
-pub struct Entity;
-
-impl EntityName for Entity {
-    fn table_name(&self) -> &'static str {
-        "customer_address"
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, DeriveModel, DeriveActiveModel, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
+#[sea_orm(table_name = "customer_address")]
 pub struct Model {
+    #[sea_orm(primary_key)]
     pub id: i64,
+    #[sea_orm(unique)]
     pub uuid: Uuid,
     pub tenant_id: Option<i64>,
     pub customer_id: i64,
     pub label: Option<String>,
     pub recipient: String,
-    pub cep: String,
-    pub logradouro: String,
-    pub numero: String,
-    pub complemento: Option<String>,
-    pub bairro: String,
-    pub cidade: String,
-    pub uf: String,
+    pub address_line1: Option<String>,
+    pub address_line2: Option<String>,
+    pub locality: Option<String>,
+    pub administrative_area: Option<String>,
+    pub postal_code: Option<String>,
+    pub country_code: Option<String>,
     pub is_default: bool,
     pub created_at: DateTime,
     pub created_by: Option<String>,
@@ -33,83 +26,16 @@ pub struct Model {
     pub updated_by: Option<String>,
 }
 
-#[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
-pub enum Column {
-    Id,
-    Uuid,
-    TenantId,
-    CustomerId,
-    Label,
-    Recipient,
-    Cep,
-    Logradouro,
-    Numero,
-    Complemento,
-    Bairro,
-    Cidade,
-    Uf,
-    IsDefault,
-    CreatedAt,
-    CreatedBy,
-    UpdatedAt,
-    UpdatedBy,
-}
-
-#[derive(Copy, Clone, Debug, EnumIter, DerivePrimaryKey)]
-pub enum PrimaryKey {
-    Id,
-}
-
-impl PrimaryKeyTrait for PrimaryKey {
-    type ValueType = i64;
-    fn auto_increment() -> bool {
-        true
-    }
-}
-
-#[derive(Copy, Clone, Debug, EnumIter)]
+#[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
+    #[sea_orm(
+        belongs_to = "super::customer_entity::Entity",
+        from = "Column::CustomerId",
+        to = "super::customer_entity::Column::Id",
+        on_update = "NoAction",
+        on_delete = "Cascade"
+    )]
     Customer,
-}
-
-impl ColumnTrait for Column {
-    type EntityName = Entity;
-    fn def(&self) -> ColumnDef {
-        match self {
-            Self::Id => ColumnType::Integer.def(),
-            Self::Uuid => ColumnType::Uuid.def().unique(),
-            Self::TenantId => ColumnType::Integer.def(),
-            Self::CustomerId => ColumnType::Integer.def(),
-            Self::Label => ColumnType::String(StringLen::N(40u32)).def().null(),
-            Self::Recipient => ColumnType::String(StringLen::N(150u32)).def(),
-            Self::Cep => ColumnType::String(StringLen::N(8u32)).def(),
-            Self::Logradouro => ColumnType::String(StringLen::N(200u32)).def(),
-            Self::Numero => ColumnType::String(StringLen::N(20u32)).def(),
-            Self::Complemento => ColumnType::String(StringLen::N(100u32)).def().null(),
-            Self::Bairro => ColumnType::String(StringLen::N(100u32)).def(),
-            Self::Cidade => ColumnType::String(StringLen::N(100u32)).def(),
-            Self::Uf => ColumnType::String(StringLen::N(2u32)).def(),
-            Self::IsDefault => ColumnType::Boolean.def(),
-            Self::CreatedAt => ColumnType::DateTime.def(),
-            Self::CreatedBy => ColumnType::String(StringLen::N(255u32)).def().null(),
-            Self::UpdatedAt => ColumnType::DateTime.def(),
-            Self::UpdatedBy => ColumnType::String(StringLen::N(255u32)).def().null(),
-        }
-    }
-}
-
-impl RelationTrait for Relation {
-    fn def(&self) -> RelationDef {
-        match self {
-            Self::Customer => Entity::belongs_to(super::customer_entity::Entity)
-                .from((Column::TenantId, Column::CustomerId))
-                .to((
-                    super::customer_entity::Column::TenantId,
-                    super::customer_entity::Column::Id,
-                ))
-                .into(),
-        }
-    }
 }
 
 impl Related<super::customer_entity::Entity> for Entity {
