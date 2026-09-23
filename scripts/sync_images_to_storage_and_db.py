@@ -95,7 +95,7 @@ def sync_all():
             except Exception:
                 width_px, height_px = img.get("width", 800), img.get("height", 800)
             
-            img_uuid = uuid.uuid4()
+            img_uuid = uuid.uuid5(uuid.NAMESPACE_DNS, f"novgorod-t{TENANT_ID}-p{product_id}-img{sort_order}")
             uuid_bytes_hex = img_uuid.hex
             clean_filename = f"image_{idx + 1}.jpg"
             object_key = f"tenants/{TENANT_ID}/products/{product_id}/images/{img_uuid}-{clean_filename}"

@@ -1,9 +1,12 @@
 use crate::AppState;
-use crate::commons::pagination::{CursorPageQuery, PagedResponse};
+use crate::commons::pagination::PagedResponse;
 use crate::endpoints::catalog_attribute_endpoint;
 use crate::endpoints::category_endpoint;
 use crate::endpoints::json::product_json::ProductJson;
-use crate::endpoints::json::web_store_json::{WebStorePageQuery, WebStoreProductJson};
+use crate::endpoints::json::web_store_json::{
+    WebStoreAttributeJson, WebStoreImageJson, WebStorePageQuery, WebStoreProductDetailJson,
+    WebStoreProductJson, WebStoreSellerJson, WebStoreSkuAttributeValueJson, WebStoreSkuJson,
+};
 use crate::endpoints::product_category_endpoint;
 use crate::endpoints::sku_attribute_endpoint;
 use crate::endpoints::sku_endpoint;
@@ -11,8 +14,8 @@ use crate::endpoints::sku_stock_endpoint;
 use crate::infrastructure::mapper::{Mapper, ProductMapper};
 use axum::{
     Json,
-    extract::{Extension, Query, State},
-    http::HeaderMap,
+    extract::{Extension, Path, Query, State},
+    http::{HeaderMap, StatusCode},
 };
 use business::domain::enums::Role;
 use business::domain::user::User;
@@ -108,6 +111,104 @@ pub async fn query_products(
     }).collect();
 
     Json(PagedResponse::page_by_cursor(json_products, next_cursor))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/public/products/{slug}",
+    tag = "WebStore",
+    params(
+        ("slug" = String, Path, description = "Product slug or ID")
+    ),
+    responses(
+        (status = 200, description = "Product details with images, skus, attributes and seller", body = WebStoreProductDetailJson),
+        (status = 404, description = "Product not found")
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn product_detail(
+    state: State<AppState>,
+    Path(slug): Path<String>,
+) -> Result<Json<WebStoreProductDetailJson>, StatusCode> {
+    let use_case = ProductUseCase::new(ProductGateway::new(state.conn.as_ref().clone()));
+    let detail = use_case.find_webstore_product_detail(&slug).await;
+
+    match detail {
+        Some(p) => {
+            let images = p.images.into_iter().map(|img| WebStoreImageJson {
+                id: img.id,
+                url: state.storage.get_cdn_url(&img.object_key),
+                alt_text: img.alt_text,
+                sort_order: img.sort_order,
+                is_primary: img.is_primary,
+                width_px: img.width_px,
+                height_px: img.height_px,
+            }).collect();
+
+            let skus = p.skus.into_iter().map(|s| WebStoreSkuJson {
+                id: s.id,
+                uuid: s.uuid,
+                code: s.code,
+                variant_key: s.variant_key,
+                price_cents: s.price_cents,
+                compare_at_price_cents: s.compare_at_price_cents,
+                weight_g: s.weight_g,
+                width_mm: s.width_mm,
+                height_mm: s.height_mm,
+                length_mm: s.length_mm,
+                active: s.active,
+                stock: s.stock,
+                attributes: s.attributes.into_iter().map(|a| WebStoreSkuAttributeValueJson {
+                    attribute_id: a.attribute_id,
+                    name: a.name,
+                    value: a.value,
+                }).collect(),
+            }).collect();
+
+            let attributes = p.attributes.into_iter().map(|a| WebStoreAttributeJson {
+                id: a.id,
+                attribute_id: a.attribute_id,
+                name: a.name,
+                display_type: a.display_type,
+                required: a.required,
+                sort_order: a.sort_order,
+            }).collect();
+
+            let seller = WebStoreSellerJson {
+                id: p.seller.id,
+                business_name: p.seller.business_name,
+                company_name: p.seller.company_name,
+                email: p.seller.email,
+                phone: p.seller.phone,
+                web_site: p.seller.web_site,
+                locality: p.seller.locality,
+                administrative_area: p.seller.administrative_area,
+                postal_code: p.seller.postal_code,
+                country_code: p.seller.country_code,
+            };
+
+            Ok(Json(WebStoreProductDetailJson {
+                id: p.id,
+                uuid: p.uuid,
+                name: p.name,
+                slug: p.slug,
+                description: p.description,
+                brand: p.brand,
+                active: p.active,
+                ncm: p.ncm,
+                cest: p.cest,
+                origem_mercadoria: p.origem_mercadoria,
+                seller,
+                images,
+                skus,
+                attributes,
+                category_slugs: p.category_slugs,
+                rating: p.rating,
+                review_count: p.review_count,
+            }))
+        }
+        None => Err(StatusCode::NOT_FOUND),
+    }
 }
 
 // ==========================================

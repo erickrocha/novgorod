@@ -61,6 +61,17 @@ impl ProductUseCase {
         }
     }
 
+    pub async fn find_webstore_product_detail(&self, slug_or_id: &str) -> Option<crate::domain::product::WebStoreProductDetailDto> {
+        log::info!("[ProductUseCase::find_webstore_product_detail] Fetching product detail for '{}'", slug_or_id);
+        match self.gateway.find_webstore_product_detail(slug_or_id).await {
+            Ok(detail) => detail,
+            Err(e) => {
+                log::error!("[ProductUseCase::find_webstore_product_detail] Error fetching product detail: {:?}", e.to_string());
+                None
+            }
+        }
+    }
+
     pub async fn find_by_id(&self, id: i64) -> Option<Product> {
         let entity = self.gateway.find_by_id(id).await.map_err(|e| {
             log::error!("Database error: {}", e);

@@ -18,6 +18,60 @@ export interface ProductVariant {
   attributes?: Record<string, string>;
 }
 
+export interface Seller {
+  id: number;
+  businessName: string;
+  companyName?: string;
+  email?: string;
+  phone?: string;
+  webSite?: string;
+  locality?: string;
+  administrativeArea?: string;
+  postalCode?: string;
+  countryCode?: string;
+}
+
+export interface ProductDetailImage {
+  id: number;
+  url: string;
+  altText?: string;
+  sortOrder: number;
+  isPrimary: boolean;
+  widthPx?: number;
+  heightPx?: number;
+}
+
+export interface SkuAttributeValue {
+  attributeId: number;
+  name: string;
+  value: string;
+}
+
+export interface ProductSku {
+  id: number;
+  uuid: string;
+  code: string;
+  variantKey: string;
+  priceCents: number;
+  compareAtPriceCents?: number;
+  weightG?: number;
+  widthMm?: number;
+  heightMm?: number;
+  lengthMm?: number;
+  active: boolean;
+  stock: number;
+  attributes: SkuAttributeValue[];
+}
+
+export interface ProductAttribute {
+  id: number;
+  attributeId: number;
+  name: string;
+  displayType: string;
+  required: boolean;
+  sortOrder: number;
+}
+
 export interface Product {
   id: string;
   slug: string;
@@ -46,6 +100,10 @@ export interface Product {
     [key: string]: unknown;
   };
   variants?: ProductVariant[];
+  seller?: Seller;
+  detailImages?: ProductDetailImage[];
+  skus?: ProductSku[];
+  productAttributes?: ProductAttribute[];
 }
 
 export interface ProductFilterState {

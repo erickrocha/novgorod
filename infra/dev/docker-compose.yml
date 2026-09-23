@@ -29,16 +29,22 @@ services:
       - S3_BUCKET_NAME=${S3_BUCKET_NAME:-novgorod-media-dev}
       - SQS_QUEUE_NAME=${SQS_QUEUE_NAME:-product-image-uploads}
       - EXTRA_CORS_ALLOWED_ORIGINS=*
-      - PERSISTENCE=1
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${DATABASE_NAME}
+      - POSTGRES_USER=${DATABASE_USER}
+      - POSTGRES_PASSWORD=${DATABASE_PASSWORD}
     volumes:
       - ./localstack-init:/etc/localstack/init/ready.d
-      - novgorod_localstack_data:/var/lib/localstack
+      - ../../data/wines/images:/data/images:ro
     networks:
       - novgorod-dev-network
+    depends_on:
+      postgres:
+        condition: service_healthy
 
 volumes:
   novgorod_data:
-  novgorod_localstack_data:
 
 networks:
   novgorod-dev-network:

@@ -202,6 +202,7 @@ impl Modify for SecurityAddon {
         endpoints::sku_stock_endpoint::delete,
         endpoints::web_store_endpoint::products,
         endpoints::web_store_endpoint::query_products,
+        endpoints::web_store_endpoint::product_detail,
     ),
     components(
         schemas(
@@ -265,7 +266,13 @@ impl Modify for SecurityAddon {
             endpoints::json::orders_json::OrderItemInputJson,
             endpoints::json::orders_json::OrderStatusHistoryJson,
             endpoints::json::orders_json::OrderStatusHistoryInputJson,
-            endpoints::json::orders_json::OrderStatusHistoryInputJson,
+            endpoints::json::web_store_json::WebStoreProductJson,
+            endpoints::json::web_store_json::WebStoreProductDetailJson,
+            endpoints::json::web_store_json::WebStoreSellerJson,
+            endpoints::json::web_store_json::WebStoreImageJson,
+            endpoints::json::web_store_json::WebStoreSkuJson,
+            endpoints::json::web_store_json::WebStoreSkuAttributeValueJson,
+            endpoints::json::web_store_json::WebStoreAttributeJson,
         ),
     ),
     tags(
