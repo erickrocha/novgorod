@@ -8,8 +8,7 @@ interface CatalogState {
   categories: ProductCategory[];
   selectedProduct: Product | null;
   totalProducts: number;
-  currentPage: number;
-  totalPages: number;
+  nextCursor: number | null;
   isLoading: boolean;
   isLoadingProduct: boolean;
   error: string | null;
@@ -31,8 +30,7 @@ const initialState: CatalogState = {
   categories: [],
   selectedProduct: null,
   totalProducts: 0,
-  currentPage: 1,
-  totalPages: 1,
+  nextCursor: null,
   isLoading: false,
   isLoadingProduct: false,
   error: null,
@@ -41,10 +39,12 @@ const initialState: CatalogState = {
 
 export const fetchProducts = createAsyncThunk(
   'catalog/fetchProducts',
-  async (customParams: Partial<GetProductsParams> | undefined, { getState, rejectWithValue }) => {
+  async (customParams: Partial<GetProductsParams> & { loadMore?: boolean } | undefined, { getState, rejectWithValue }) => {
     try {
       const state = getState() as { catalog: CatalogState };
       const currentFilters = state.catalog.filters;
+      
+      const cursor = customParams?.loadMore ? state.catalog.nextCursor : undefined;
 
       const params: GetProductsParams = {
         category: customParams?.category !== undefined ? customParams.category : currentFilters.category,
@@ -52,8 +52,8 @@ export const fetchProducts = createAsyncThunk(
         minPrice: customParams?.minPrice !== undefined ? customParams.minPrice : currentFilters.minPrice,
         maxPrice: customParams?.maxPrice !== undefined ? customParams.maxPrice : currentFilters.maxPrice,
         sortBy: customParams?.sortBy !== undefined ? customParams.sortBy : currentFilters.sortBy,
-        page: customParams?.page || 1,
-        pageSize: customParams?.pageSize || 12,
+        cursor,
+        limit: customParams?.limit || 12,
       };
 
       const result = await catalogService.getProducts(params);
@@ -138,10 +138,15 @@ export const catalogSlice = createSlice({
     });
     builder.addCase(fetchProducts.fulfilled, (state, action) => {
       state.isLoading = false;
-      state.products = action.payload.items;
-      state.totalProducts = action.payload.total;
-      state.currentPage = action.payload.page;
-      state.totalPages = action.payload.totalPages;
+      if (action.meta.arg?.loadMore) {
+        state.products = [...state.products, ...action.payload.items];
+      } else {
+        state.products = action.payload.items;
+      }
+      if (action.payload.total !== undefined) {
+        state.totalProducts = action.payload.total;
+      }
+      state.nextCursor = action.payload.nextCursor || null;
     });
     builder.addCase(fetchProducts.rejected, (state, action) => {
       state.isLoading = false;

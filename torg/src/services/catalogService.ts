@@ -7,48 +7,76 @@ export interface GetProductsParams {
   minPrice?: number;
   maxPrice?: number;
   sortBy?: string;
-  page?: number;
-  pageSize?: number;
+  cursor?: number | null;
+  limit?: number;
 }
+
+// Map backend product representation to frontend UI model
+// The new backend endpoint currently lacks some display fields like price and thumbnail
+const mapProductJsonToProduct = (item: any): Product => ({
+  id: String(item.id),
+  slug: item.slug || String(item.id),
+  name: item.name,
+  description: item.description || '',
+  price: item.priceCents ? item.priceCents / 100 : 99.90, 
+  originalPrice: item.compareAtPriceCents ? item.compareAtPriceCents / 100 : undefined,
+  currency: 'BRL',
+  category: item.categorySlugs?.[0] ?? 'Geral', // Backend doesn't return full category name yet, so use slug or wait for category mapping
+  categorySlug: item.categorySlugs?.[0] ?? 'geral',
+  images: item.primaryImageUrl ? [item.primaryImageUrl] : [],
+  thumbnail: item.primaryImageUrl ?? 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?q=80&w=600&auto=format&fit=crop',
+  rating: item.rating ?? 4.5,
+  reviewCount: item.reviewCount ?? 12,
+  stock: item.stock ?? 10,
+  isFeatured: item.isFeatured ?? false,
+  isNew: item.isNew ?? false,
+  attributes: {
+    brand: item.brand,
+    ...item.attributes
+  }
+});
 
 export const catalogService = {
   /**
    * Fetch paginated products with filters and search
    */
   async getProducts(params?: GetProductsParams): Promise<PaginatedResult<Product>> {
-    const page = params?.page || 1;
-    const pageSize = params?.pageSize || 25; // Default to 25 items as requested
+    const limit = params?.limit || 12; // Use 12 as requested originally
 
     // Translate frontend params to backend expected params
     const queryParams: Record<string, any> = {
-      page,
-      page_size: pageSize,
+      limit,
     };
+
+    if (params?.cursor !== undefined && params?.cursor !== null) {
+      queryParams.cursor = params.cursor;
+    }
 
     if (params?.query) {
       queryParams.q = params.query;
     }
 
-    // Note: If you need to filter by category, brand, etc., add them here based on backend support.
-    // Assuming backend takes sort_by and sort_dir
-    if (params?.sortBy) {
-      if (params.sortBy === 'price-asc') {
-        queryParams.sort_by = 'price';
-        queryParams.sort_dir = 'asc';
-      } else if (params.sortBy === 'price-desc') {
-        queryParams.sort_by = 'price';
-        queryParams.sort_dir = 'desc';
-      } else if (params.sortBy === 'rating') {
-        queryParams.sort_by = 'rating';
-        queryParams.sort_dir = 'desc';
-      } else if (params.sortBy === 'newest') {
-        queryParams.sort_by = 'created_at';
-        queryParams.sort_dir = 'desc';
-      }
+    if (params?.category) {
+      queryParams.category = params.category;
     }
 
-    const response = await apiClient.get<PaginatedResult<Product>>('/api/public/products/paged', { params: queryParams });
-    return response.data;
+    if (params?.minPrice !== undefined) {
+      queryParams.min_price = Math.round(params.minPrice * 100);
+    }
+    
+    if (params?.maxPrice !== undefined) {
+      queryParams.max_price = Math.round(params.maxPrice * 100);
+    }
+
+    if (params?.sortBy) {
+      queryParams.sort_by = params.sortBy;
+    }
+
+    const response = await apiClient.get<PaginatedResult<any>>('/api/public/products/query', { params: queryParams });
+    return {
+      ...response.data,
+      items: (response.data.items || []).map(mapProductJsonToProduct)
+    };
   },
 
   /**
@@ -56,8 +84,9 @@ export const catalogService = {
    */
   async getProductBySlug(slug: string): Promise<Product | null> {
     try {
-      const response = await apiClient.get<PaginatedResult<Product>>(`/api/public/products/paged`, { params: { q: slug, page_size: 1 } });
-      return response.data.items?.[0] || null;
+      const response = await apiClient.get<PaginatedResult<any>>(`/api/public/products/query`, { params: { q: slug, limit: 1 } });
+      const item = response.data.items?.[0];
+      return item ? mapProductJsonToProduct(item) : null;
     } catch {
       return null;
     }
@@ -67,19 +96,24 @@ export const catalogService = {
    * Fetch all categories
    */
   async getCategories(): Promise<ProductCategory[]> {
-    const response = await apiClient.get<ProductCategory[]>('/api/public/categories');
-    return response.data;
+    const response = await apiClient.get<any[]>('/api/public/categories');
+    return response.data.map(c => ({
+      id: String(c.id),
+      name: c.name,
+      slug: c.slug,
+      itemCount: 10, // Mock count until backend supports it
+    }));
   },
 
   /**
    * Fetch featured showcase products for vitrine
    */
   async getFeaturedProducts(): Promise<Product[]> {
-    // Calling the paged products with a small page_size and default sorting (or a specific featured filter if supported)
-    const response = await apiClient.get<PaginatedResult<Product>>('/api/public/products/paged', {
-      params: { page: 1, page_size: 10 }
+    // Calling the paged products with a small limit and default sorting
+    const response = await apiClient.get<PaginatedResult<any>>('/api/public/products/query', {
+      params: { limit: 10 }
     });
-    return response.data.items || [];
+    return (response.data.items || []).map(mapProductJsonToProduct);
   },
 
   /**

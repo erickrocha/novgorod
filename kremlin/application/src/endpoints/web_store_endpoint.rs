@@ -3,6 +3,7 @@ use crate::commons::pagination::{CursorPageQuery, PagedResponse};
 use crate::endpoints::catalog_attribute_endpoint;
 use crate::endpoints::category_endpoint;
 use crate::endpoints::json::product_json::ProductJson;
+use crate::endpoints::json::web_store_json::{WebStorePageQuery, WebStoreProductJson};
 use crate::endpoints::product_category_endpoint;
 use crate::endpoints::sku_attribute_endpoint;
 use crate::endpoints::sku_endpoint;
@@ -61,24 +62,52 @@ pub async fn products(state: State<AppState>) -> Json<Vec<ProductJson>> {
     path = "/api/public/products/query",
     tag = "WebStore",
     responses(
-        (status = 200, description = "Public List of all products", body = [ProductJson])
+        (status = 200, description = "Public List of all products", body = [WebStoreProductJson])
     ),
     security(("bearer_auth" = []))
 )]
-pub async fn query_products(state: State<AppState>, query: Query<CursorPageQuery>) -> Json<PagedResponse<ProductJson>> {
+pub async fn query_products(
+    state: State<AppState>,
+    headers: HeaderMap,
+    query: Query<WebStorePageQuery>,
+) -> Json<PagedResponse<WebStoreProductJson>> {
+    let user = build_dummy_user(&headers);
     let use_case = ProductUseCase::new(ProductGateway::new(state.conn.as_ref().clone()));
 
     let search_query = business::domain::product::ProductSearchQuery {
         cursor: query.cursor,
         limit: query.limit,
         q: query.q.clone(),
-        active: query.active,
-        brand: query.brand.clone(),
+        active: Some(true),
+        brand: None, // Can add if needed
+        category: query.category.clone(),
+        min_price: query.min_price,
+        max_price: query.max_price,
+        sort_by: query.sort_by.clone(),
     };
 
-    let (products, next_cursor) = use_case.find_paged_by_cursor(search_query).await;
+    let (products, next_cursor) = use_case.find_webstore_products(user.tenant_id, search_query).await;
 
-    Json(PagedResponse::page_by_cursor(ProductMapper::json_vec(products), next_cursor))
+    // Convert domain DTOs to API JSON DTOs
+    let json_products = products.into_iter().map(|p| WebStoreProductJson {
+        id: p.id,
+        uuid: p.uuid,
+        name: p.name,
+        slug: p.slug,
+        description: p.description,
+        brand: p.brand,
+        price_cents: p.price_cents,
+        compare_at_price_cents: p.compare_at_price_cents,
+        primary_image_url: p.primary_image_url.map(|key| state.storage.get_cdn_url(&key)),
+        primary_image_alt: p.primary_image_alt,
+        category_slugs: p.category_slugs,
+        rating: p.rating,
+        review_count: p.review_count,
+        is_featured: p.is_featured,
+        is_new: p.is_new,
+    }).collect();
+
+    Json(PagedResponse::page_by_cursor(json_products, next_cursor))
 }
 
 // ==========================================

@@ -19,7 +19,7 @@ export const Catalog: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
 
-  const { products, totalProducts, isLoading, filters } = useAppSelector(
+  const { products, totalProducts, isLoading, filters, nextCursor } = useAppSelector(
     (state) => state.catalog
   );
 
@@ -154,7 +154,19 @@ export const Catalog: React.FC = () => {
 
         {/* Products Grid */}
         <div className="lg:col-span-3">
-          <ProductGrid products={products} isLoading={isLoading} />
+          <ProductGrid products={products} isLoading={isLoading && !products.length} />
+
+          {nextCursor !== null && (
+            <div className="mt-10 flex justify-center">
+              <button
+                onClick={() => dispatch(fetchProducts({ loadMore: true }))}
+                disabled={isLoading}
+                className="px-6 py-3 bg-amber-600 text-white font-semibold rounded-xl shadow-md hover:bg-amber-700 disabled:opacity-70 disabled:cursor-not-allowed transition-colors"
+              >
+                {isLoading ? 'Carregando...' : 'Carregar Mais Produtos'}
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </div>

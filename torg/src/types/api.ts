@@ -7,10 +7,10 @@ export interface ApiResponse<T> {
 
 export interface PaginatedResult<T> {
   items: T[];
-  total: number;
-  page: number;
-  pageSize: number;
-  totalPages: number;
+  total?: number;
+  page?: number;
+  pageSize?: number;
+  nextCursor?: number | null;
 }
 
 export interface ApiError {

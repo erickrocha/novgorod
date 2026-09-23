@@ -110,4 +110,26 @@ pub struct ProductSearchQuery {
     pub q: Option<String>,
     pub active: Option<bool>,
     pub brand: Option<String>,
+    pub category: Option<String>,
+    pub min_price: Option<i32>,
+    pub max_price: Option<i32>,
+    pub sort_by: Option<String>,
+}
+
+pub struct WebStoreProductDto {
+    pub id: i64,
+    pub uuid: String,
+    pub name: String,
+    pub slug: String,
+    pub description: Option<String>,
+    pub brand: Option<String>,
+    pub price_cents: Option<i32>,
+    pub compare_at_price_cents: Option<i32>,
+    pub primary_image_url: Option<String>,
+    pub primary_image_alt: Option<String>,
+    pub category_slugs: Vec<String>,
+    pub rating: Option<f32>,
+    pub review_count: Option<i32>,
+    pub is_featured: bool,
+    pub is_new: bool,
 }

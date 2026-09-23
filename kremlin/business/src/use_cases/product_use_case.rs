@@ -48,6 +48,19 @@ impl ProductUseCase {
         }
     }
 
+    pub async fn find_webstore_products(&self, tenant_id: Option<i64>, query: crate::domain::product::ProductSearchQuery) -> (Vec<crate::domain::product::WebStoreProductDto>, Option<i64>) {
+        log::info!("[ProductUseCase::find_webstore_products] Executing find webstore products");
+        let result = self.gateway.find_webstore_products(tenant_id, query).await;
+
+        match result {
+            Ok((dtos, next_cursor)) => (dtos, next_cursor),
+            Err(e) => {
+                log::error!("[ProductUseCase::find_webstore_products] Failed to fetch products: {:?}", e.to_string());
+                (Vec::new(), None)
+            }
+        }
+    }
+
     pub async fn find_by_id(&self, id: i64) -> Option<Product> {
         let entity = self.gateway.find_by_id(id).await.map_err(|e| {
             log::error!("Database error: {}", e);
