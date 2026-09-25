@@ -35,3 +35,10 @@ pub use sku_attribute_value::{SkuAttribute, SkuAttributeEntityMapper};
 pub mod sku_attribute {
     pub use super::sku_attribute_value::*;
 }
+pub mod marketplace;
+pub mod purchase;
+pub mod order_address;
+pub mod payment;
+pub mod credit_card_details;
+pub mod payment_transaction;
+pub mod payment_allocation;

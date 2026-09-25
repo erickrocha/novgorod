@@ -41,6 +41,11 @@ impl Locale {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ErrorKey {
+    PurchaseConflict,
+    PurchaseInvalid,
+    PurchaseUnavailable,
+    PurchaseForbidden,
+    PurchaseNotFound,
     AuthHeaderMissing,
     BadCredentials,
     InvalidCurrentPassword,
@@ -56,6 +61,11 @@ pub enum ErrorKey {
 impl ErrorKey {
     pub fn as_str(self) -> &'static str {
         match self {
+            ErrorKey::PurchaseConflict => "PurchaseConflict",
+            ErrorKey::PurchaseInvalid => "PurchaseInvalid",
+            ErrorKey::PurchaseUnavailable => "PurchaseUnavailable",
+            ErrorKey::PurchaseForbidden => "PurchaseForbidden",
+            ErrorKey::PurchaseNotFound => "PurchaseNotFound",
             ErrorKey::AuthHeaderMissing => "AuthHeaderMissing",
             ErrorKey::BadCredentials => "BadCredentials",
             ErrorKey::InvalidCurrentPassword => "InvalidCurrentPassword",
@@ -71,6 +81,11 @@ impl ErrorKey {
 
     pub fn message_id(self) -> &'static str {
         match self {
+            ErrorKey::PurchaseConflict => "purchase-conflict",
+            ErrorKey::PurchaseInvalid => "purchase-invalid",
+            ErrorKey::PurchaseUnavailable => "purchase-unavailable",
+            ErrorKey::PurchaseForbidden => "purchase-forbidden",
+            ErrorKey::PurchaseNotFound => "purchase-not-found",
             ErrorKey::AuthHeaderMissing => "auth-header-missing",
             ErrorKey::BadCredentials => "bad-credentials",
             ErrorKey::InvalidCurrentPassword => "invalid-current-password",

@@ -1,7 +1,7 @@
 use crate::{
     m20260919_000002_create_table_customer::Customer,
     m20260919_000007_create_table_coupon::Coupon,
-    m20260919_000011_create_table_orders::Orders,
+    m20260924_000001_create_table_orders::Order,
 };
 use sea_orm_migration::{prelude::*, schema::*};
 
@@ -49,19 +49,17 @@ impl MigrationTrait for Migration {
                             .from_tbl(CouponRedemption::Table)
                             .from_col(CouponRedemption::TenantId)
                             .from_col(CouponRedemption::OrderId)
-                            .to_tbl(Orders::Table)
-                            .to_col(Orders::TenantId)
-                            .to_col(Orders::Id)
+                            .to_tbl(Order::Table)
+                            .to_col(Order::TenantId)
+                            .to_col(Order::Id)
                             .on_delete(ForeignKeyAction::Cascade),
                     )
                     .foreign_key(
                         ForeignKey::create()
                             .name("fk_coupon_redemption_customer")
                             .from_tbl(CouponRedemption::Table)
-                            .from_col(CouponRedemption::TenantId)
                             .from_col(CouponRedemption::CustomerId)
                             .to_tbl(Customer::Table)
-                            .to_col(Customer::TenantId)
                             .to_col(Customer::Id)
                             .on_delete(ForeignKeyAction::Restrict),
                     )

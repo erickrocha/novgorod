@@ -43,10 +43,8 @@ impl MigrationTrait for Migration {
                         ForeignKey::create()
                             .name("fk_cart_customer")
                             .from_tbl(Cart::Table)
-                            .from_col(Cart::TenantId)
                             .from_col(Cart::CustomerId)
                             .to_tbl(Customer::Table)
-                            .to_col(Customer::TenantId)
                             .to_col(Customer::Id)
                             .on_delete(ForeignKeyAction::SetNull),
                     )

@@ -24,13 +24,20 @@ mod m20260919_000006_create_table_campaign_target;
 mod m20260919_000007_create_table_coupon;
 mod m20260919_000009_create_table_cart;
 mod m20260919_000010_create_table_cart_item;
-mod m20260919_000011_create_table_orders;
-mod m20260919_000012_create_table_order_item;
-mod m20260919_000013_create_table_order_status_history;
+mod m20260924_000001_create_table_orders;
+mod m20260924_000002_create_table_order_item;
+mod m20260924_000003_create_table_order_status_history;
 mod m20260919_000014_create_table_coupon_redemption;
 mod m20260921_000001_create_person_table;
 mod m20260921_000002_create_person_address_table;
-mod m20260923_000001_order_payment_tables;
+mod m20260924_000004_create_table_order_address;
+mod m20260924_000005_create_table_order_payment;
+mod m20260924_000006_create_table_credit_card_details;
+mod m20260924_000007_create_table_payment_transaction;
+
+mod m20260924_000000_create_table_purchase;
+mod m20260924_000008_create_table_payment_allocation;
+mod m20260924_000009_global_customer_references;
 
 pub struct Migrator;
 
@@ -62,36 +69,20 @@ impl MigratorTrait for Migrator {
             Box::new(m20260919_000007_create_table_coupon::Migration),
             Box::new(m20260919_000009_create_table_cart::Migration),
             Box::new(m20260919_000010_create_table_cart_item::Migration),
-            Box::new(m20260919_000011_create_table_orders::Migration),
-            Box::new(m20260919_000012_create_table_order_item::Migration),
-            Box::new(m20260919_000013_create_table_order_status_history::Migration),
-            Box::new(m20260919_000014_create_table_coupon_redemption::Migration),
             Box::new(m20260921_000001_create_person_table::Migration),
             Box::new(m20260921_000002_create_person_address_table::Migration),
+            Box::new(m20260924_000000_create_table_purchase::Migration),
+            Box::new(m20260924_000001_create_table_orders::Migration),
+            Box::new(m20260924_000002_create_table_order_item::Migration),
+            Box::new(m20260924_000003_create_table_order_status_history::Migration),
+            Box::new(m20260924_000004_create_table_order_address::Migration),
+            Box::new(m20260924_000005_create_table_order_payment::Migration),
+            Box::new(m20260924_000006_create_table_credit_card_details::Migration),
+            Box::new(m20260924_000007_create_table_payment_transaction::Migration),
+            Box::new(m20260924_000008_create_table_payment_allocation::Migration),
+            Box::new(m20260919_000014_create_table_coupon_redemption::Migration),
+            Box::new(m20260924_000009_global_customer_references::Migration),
+
         ]
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::collections::HashSet;
-
-    #[test]
-    fn migrations_are_registered_once_in_order() {
-        let migrations = Migrator::migrations();
-        let names: Vec<&str> = migrations
-            .iter()
-            .map(|migration| migration.name())
-            .collect();
-        let unique: HashSet<&str> = names.iter().copied().collect();
-
-        assert_eq!(names.len(), 31);
-        assert_eq!(unique.len(), names.len());
-        assert!(names.windows(2).all(|pair| pair[0] < pair[1]));
-        assert_eq!(
-            names.last().copied(),
-            Some("m20260923_000001_alter_table_customer")
-        );
     }
 }

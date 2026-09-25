@@ -1,317 +1,158 @@
 use crate::AppState;
-use crate::commons::exception_response::{ExceptionResponse, HttpResponse};
-use crate::commons::i18n::{ErrorKey, Locale};
-use crate::commons::pagination::{NormalizedPagination, PagedResponse};
-use crate::endpoints::json::error_response_json::{
-    BadRequestErrorJson, ForbiddenErrorJson, InternalServerErrorJson, NotFoundErrorJson,
-    UnauthorizedErrorJson,
-};
-use crate::endpoints::json::orders_json::*;
-use crate::infrastructure::mapper::{Mapper, OrdersMapper};
-use axum::http::StatusCode;
-use axum::{
-    Json,
-    extract::{Extension, Path, Query, State},
-};
-use business::commons::entity_mapper::EntityMapper;
-use business::domain::enums::Role;
-use business::domain::orders::{Orders, OrdersEntityMapper};
-use business::domain::user::User;
-use business::gateway::orders_gateway::OrdersGateway;
-use business::sea_orm::{
-    ColumnTrait, Condition, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect,
-};
-use business::use_cases::orders_use_case::OrdersUseCase;
-use entity::orders_entity;
+use crate::commons::{exception_response::{ExceptionResponse, HttpResponse}, i18n::{ErrorKey, Locale}, pagination::{NormalizedPagination, PagedResponse}};
+use crate::endpoints::json::{orders_json::*, error_response_json::ErrorResponseJson};
+use crate::infrastructure::purchase_mapper::PurchaseMapper;
+use axum::{Json, extract::{State, Extension, Path, Query}, http::{HeaderMap, StatusCode}};
+use business::{domain::{user::User, marketplace::{PurchaseError, OrderFilter}}, gateway::purchase_gateway::PurchaseGateway, use_cases::purchase_use_case::PurchaseUseCase};
 
-fn tenant_for_write(user: &User, requested: Option<i64>) -> Option<i64> {
-    match user.role {
-        Role::SysAdmin => requested,
-        Role::TenantOwner | Role::TenantUser | Role::Customer => user.tenant_id,
-    }
+fn use_case(state: &AppState) -> PurchaseUseCase {
+ PurchaseUseCase::new(PurchaseGateway::new(state.conn.as_ref().clone()))
+}
+fn error(locale: Locale, error: PurchaseError) -> ExceptionResponse {
+ match error {
+ PurchaseError::Validation(_) => ExceptionResponse::BadRequest(locale, ErrorKey::PurchaseInvalid),
+ PurchaseError::NotFound => ExceptionResponse::NotFound(locale, ErrorKey::PurchaseNotFound),
+ PurchaseError::Forbidden => ExceptionResponse::Forbidden(locale, ErrorKey::PurchaseForbidden),
+ PurchaseError::Conflict => ExceptionResponse::Conflict(locale, ErrorKey::PurchaseConflict),
+ PurchaseError::Persistence(err) => {
+ log::error!("Purchase persistence failed: {err}");
+ ExceptionResponse::InternalServerError(locale, ErrorKey::PurchaseUnavailable)
+ }
+ }
+}
+fn filter(params: OrdersPageQuery, purchase: bool) -> (NormalizedPagination, OrderFilter) {
+ let allowed = if purchase { &["id", "status", "totalCents", "createdAt"][..] } else {
+ &["id", "number", "status", "paymentStatus", "totalCents", "placedAt", "createdAt"][..] };
+ let mut norm = NormalizedPagination::new(&params.to_page_query(), allowed, "id");
+ // Keep offsets within PostgreSQL's signed bigint range.
+ norm.offset = norm.page.saturating_sub(1).saturating_mul(norm.page_size).min(i64::MAX as u64);
+ let filter = OrderFilter { offset: norm.offset, limit: norm.page_size, query: norm.q.clone(),
+ status: params.status, tenant_id: params.tenant_id, customer_id: params.customer_id,
+ sort_by: norm.sort_by.clone(), descending: norm.sort_dir.is_descending() };
+ (norm, filter)
 }
 
-fn can_read_tenant(user: &User, tenant_id: Option<i64>) -> bool {
-    user.role == Role::SysAdmin || (user.tenant_id.is_some() && user.tenant_id == tenant_id)
+#[utoipa::path(post, path = "/purchases", tag = "Purchases",
+ params(("Idempotency-Key" = String, Header, description = "Required, 1–128 visible ASCII characters; reuse only for an equivalent request")),
+ request_body(content = CreatePurchaseInputJson, example = json!({
+ "items": [{"skuId": 101, "quantity": 3}, {"skuId": 202, "quantity": 2}],
+ "shippingAddress": {"recipient": "Buyer", "addressLine1": "Rua Um, 10", "locality": "São Paulo", "administrativeArea": "SP", "postalCode": "01001000", "countryCode": "BR"}
+ })),
+ description = "Creates one pending purchase and one order per SKU seller. Catalog prices only; shipping, discounts and taxes are zero. Does not reserve inventory or charge a card. Only registered customers may create purchases.",
+ responses((status = 201, description = "Created", body = PurchaseDetailJson),
+ (status = 200, description = "Idempotent replay", body = PurchaseDetailJson),
+ (status = 409, description = "Key reused with different request", body = ErrorResponseJson), (status = 400, description = "Invalid request", body = ErrorResponseJson),
+(status = 401, description = "Unauthorized", body = ErrorResponseJson),
+(status = 403, description = "Forbidden", body = ErrorResponseJson),
+(status = 404, description = "Not found or not accessible", body = ErrorResponseJson),
+(status = 500, description = "Persistence failure", body = ErrorResponseJson)),
+ security(("bearer_auth" = [])))]
+pub async fn create_purchase(State(state): State<AppState>, Extension(user): Extension<User>,
+ Extension(locale): Extension<Locale>, headers: HeaderMap,
+ input: Result<Json<CreatePurchaseInputJson>, axum::extract::rejection::JsonRejection>) -> HttpResponse<(StatusCode, Json<PurchaseDetailJson>)> {
+ let Json(input) = input.map_err(|_| ExceptionResponse::BadRequest(locale, ErrorKey::PurchaseInvalid))?;
+ let key = headers.get("Idempotency-Key").and_then(|v| v.to_str().ok())
+ .ok_or(ExceptionResponse::BadRequest(locale, ErrorKey::RequiredHeaderValueMissing))?;
+ let created = use_case(&state).create(&user, key, PurchaseMapper::input(input)).await.map_err(|e| error(locale, e))?;
+ Ok((if created.replayed { StatusCode::OK } else { StatusCode::CREATED }, Json(PurchaseMapper::json(created.detail))))
 }
 
-const ORDERS_SORT_FIELDS: &[&str] = &[
-    "id",
-    "number",
-    "status",
-    "paymentStatus",
-    "payment_status",
-    "totalCents",
-    "total_cents",
-    "placedAt",
-    "placed_at",
-    "createdAt",
-    "created_at",
-];
-
-#[utoipa::path(
-    get,
-    path = "/orders",
-    tag = "Orders",
-    responses(
-        (status = 200, description = "List of orders", body = [OrdersJson]),
-        (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
-        (status = 403, description = "Forbidden", body = ForbiddenErrorJson),
-        (status = 500, description = "Internal server error", body = InternalServerErrorJson),
-    ),
-    security(("bearer_auth" = []))
-)]
-pub async fn list_all(
-    State(state): State<AppState>,
-    Extension(_current_user): Extension<User>,
-) -> Json<Vec<OrdersJson>> {
-    let usecase = OrdersUseCase::new(OrdersGateway::new(state.conn.as_ref().clone()));
-    let items = usecase.find_all().await;
-    Json(OrdersMapper::json_vec(items))
+#[utoipa::path(get, path = "/purchases/{id}", tag = "Purchases", params(("id" = i64, Path)),
+ description = "Customers access only their own resources. Seller staff access only their seller orders and their histories. Purchase/payment resources are restricted to the purchase owner and SysAdmin.",
+ responses((status = 200, description = "Resource", body = PurchaseDetailJson), (status = 400, description = "Invalid request", body = ErrorResponseJson),
+(status = 401, description = "Unauthorized", body = ErrorResponseJson),
+(status = 403, description = "Forbidden", body = ErrorResponseJson),
+(status = 404, description = "Not found or not accessible", body = ErrorResponseJson),
+(status = 500, description = "Persistence failure", body = ErrorResponseJson)), security(("bearer_auth" = [])))]
+pub async fn get_purchase(State(state): State<AppState>, Extension(user): Extension<User>,
+ Extension(locale): Extension<Locale>, Path(id): Path<i64>) -> HttpResponse<Json<PurchaseDetailJson>> {
+ Ok(Json(PurchaseMapper::json(use_case(&state).get(&user, id).await.map_err(|e| error(locale, e))?)))
 }
 
-#[utoipa::path(
-    get,
-    path = "/orders/paged",
-    tag = "Orders",
-    params(OrdersPageQuery),
-    responses(
-        (status = 200, description = "Paged orders", body = PagedResponse<OrdersJson>),
-        (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
-        (status = 403, description = "Forbidden", body = ForbiddenErrorJson),
-        (status = 500, description = "Internal server error", body = InternalServerErrorJson),
-    ),
-    security(("bearer_auth" = []))
-)]
-pub async fn paged(
-    State(state): State<AppState>,
-    Extension(current_user): Extension<User>,
-    Query(params): Query<OrdersPageQuery>,
-) -> Json<PagedResponse<OrdersJson>> {
-    let norm = NormalizedPagination::new(&params.to_page_query(), ORDERS_SORT_FIELDS, "id");
-    let mut query = orders_entity::Entity::find();
-
-    if current_user.role != Role::SysAdmin {
-        if let Some(id) = current_user.tenant_id {
-            query = query.filter(orders_entity::Column::TenantId.eq(id));
-        } else {
-            return Json(PagedResponse::empty(norm.page, norm.page_size));
-        }
-    } else if let Some(tid) = params.tenant_id {
-        query = query.filter(orders_entity::Column::TenantId.eq(tid));
-    }
-
-    if let Some(ref st) = params.status {
-        query = query.filter(orders_entity::Column::Status.eq(st));
-    }
-
-    if let Some(cid) = params.customer_id {
-        query = query.filter(orders_entity::Column::CustomerId.eq(cid));
-    }
-
-    if let Some(ref q) = norm.q {
-        let pattern = format!("%{}%", q);
-        query = query.filter(
-            Condition::any()
-                .add(orders_entity::Column::Number.like(&pattern))
-                .add(orders_entity::Column::ShipRecipient.like(&pattern))
-                .add(orders_entity::Column::Status.like(&pattern)),
-        );
-    }
-
-    let sort_col = match norm.sort_by.to_ascii_lowercase().as_str() {
-        "number" => orders_entity::Column::Number,
-        "status" => orders_entity::Column::Status,
-        "paymentstatus" | "payment_status" => orders_entity::Column::PaymentStatus,
-        "totalcents" | "total_cents" => orders_entity::Column::TotalCents,
-        "placedat" | "placed_at" => orders_entity::Column::PlacedAt,
-        "createdat" | "created_at" => orders_entity::Column::CreatedAt,
-        _ => orders_entity::Column::Id,
-    };
-
-    query = if norm.sort_dir.is_descending() {
-        query
-            .order_by_desc(sort_col)
-            .order_by_desc(orders_entity::Column::Id)
-    } else {
-        query
-            .order_by_asc(sort_col)
-            .order_by_asc(orders_entity::Column::Id)
-    };
-
-    let total = query.clone().count(state.conn.as_ref()).await.unwrap_or(0);
-    let rows = query
-        .offset(norm.offset)
-        .limit(norm.page_size)
-        .all(state.conn.as_ref())
-        .await
-        .unwrap_or_default();
-
-    let domains = OrdersEntityMapper::from_models(rows);
-    let items = OrdersMapper::json_vec(domains);
-    Json(PagedResponse::new(items, total, norm.page, norm.page_size))
+#[utoipa::path(get, path = "/orders/{id}", tag = "Orders", params(("id" = i64, Path)),
+ description = "Customers access only their own resources. Seller staff access only their seller orders and their histories. Purchase/payment resources are restricted to the purchase owner and SysAdmin.",
+ responses((status = 200, description = "Resource", body = OrderDetailJson), (status = 400, description = "Invalid request", body = ErrorResponseJson),
+(status = 401, description = "Unauthorized", body = ErrorResponseJson),
+(status = 403, description = "Forbidden", body = ErrorResponseJson),
+(status = 404, description = "Not found or not accessible", body = ErrorResponseJson),
+(status = 500, description = "Persistence failure", body = ErrorResponseJson)), security(("bearer_auth" = [])))]
+pub async fn get_by_id(State(state): State<AppState>, Extension(user): Extension<User>,
+ Extension(locale): Extension<Locale>, Path(id): Path<i64>) -> HttpResponse<Json<OrderDetailJson>> {
+ Ok(Json(use_case(&state).order(&user, id).await.map_err(|e| error(locale, e))?.into()))
 }
 
-#[utoipa::path(
-    get,
-    path = "/orders/{id}",
-    tag = "Orders",
-    params(("id" = i64, Path, description = "Order ID")),
-    responses(
-        (status = 200, description = "Order found", body = OrdersJson),
-        (status = 404, description = "Not found", body = NotFoundErrorJson),
-        (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
-        (status = 403, description = "Forbidden", body = ForbiddenErrorJson),
-        (status = 500, description = "Internal server error", body = InternalServerErrorJson),
-    ),
-    security(("bearer_auth" = []))
-)]
-pub async fn get_by_id(
-    State(state): State<AppState>,
-    Extension(locale): Extension<Locale>,
-    Extension(current_user): Extension<User>,
-    Path(id): Path<i64>,
-) -> HttpResponse<Json<OrdersJson>> {
-    let usecase = OrdersUseCase::new(OrdersGateway::new(state.conn.as_ref().clone()));
-    let item = usecase
-        .find_by_id(id)
-        .await
-        .ok_or(ExceptionResponse::NotFound(
-            locale,
-            ErrorKey::InvalidParameterValue,
-        ))?;
-
-    if !can_read_tenant(&current_user, item.tenant_id) {
-        return Err(ExceptionResponse::NotFound(
-            locale,
-            ErrorKey::InvalidParameterValue,
-        ));
-    }
-
-    Ok(Json(OrdersMapper::json(item)))
+#[utoipa::path(get, path = "/purchases/{id}/payments", tag = "Payments", params(("id" = i64, Path)),
+ description = "Customers access only their own resources. Seller staff access only their seller orders and their histories. Purchase/payment resources are restricted to the purchase owner and SysAdmin.",
+ responses((status = 200, description = "Resource", body = Vec<PaymentDetailJson>), (status = 400, description = "Invalid request", body = ErrorResponseJson),
+(status = 401, description = "Unauthorized", body = ErrorResponseJson),
+(status = 403, description = "Forbidden", body = ErrorResponseJson),
+(status = 404, description = "Not found or not accessible", body = ErrorResponseJson),
+(status = 500, description = "Persistence failure", body = ErrorResponseJson)), security(("bearer_auth" = [])))]
+pub async fn payments(State(state): State<AppState>, Extension(user): Extension<User>,
+ Extension(locale): Extension<Locale>, Path(id): Path<i64>) -> HttpResponse<Json<Vec<PaymentDetailJson>>> {
+ Ok(Json(use_case(&state).get(&user, id).await.map_err(|e| error(locale, e))?.payments.into_iter().map(Into::into).collect()))
 }
 
-#[utoipa::path(
-    post,
-    path = "/orders",
-    tag = "Orders",
-    request_body = OrdersInputJson,
-    responses(
-        (status = 201, description = "Order created", body = OrdersJson),
-        (status = 400, description = "Bad request", body = BadRequestErrorJson),
-        (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
-        (status = 403, description = "Forbidden", body = ForbiddenErrorJson),
-        (status = 500, description = "Internal server error", body = InternalServerErrorJson),
-    ),
-    security(("bearer_auth" = []))
-)]
-pub async fn add(
-    State(state): State<AppState>,
-    Extension(locale): Extension<Locale>,
-    Extension(user): Extension<User>,
-    Json(input): Json<OrdersInputJson>,
-) -> HttpResponse<(StatusCode, Json<OrdersJson>)> {
-    let tenant_id = tenant_for_write(&user, input.tenant_id).ok_or(
-        ExceptionResponse::Forbidden(locale, ErrorKey::InvalidParameterValue),
-    )?;
-
-    let number = input.number.unwrap_or_else(|| {
-        format!("ORD-{}", chrono::Utc::now().timestamp_millis())
-    });
-
-    let now = chrono::Utc::now().naive_utc();
-    let domain = Orders {
-        id: None,
-        uuid: None,
-        tenant_id: Some(tenant_id),
-        number,
-        customer_id: input.customer_id,
-        status: input.status.unwrap_or_else(|| "pending".to_string()),
-        payment_status: input.payment_status.unwrap_or_else(|| "pending".to_string()),
-        subtotal_cents: input.subtotal_cents,
-        discount_cents: input.discount_cents.unwrap_or(0),
-        shipping_cents: input.shipping_cents.unwrap_or(0),
-        tax_total_cents: input.tax_total_cents.unwrap_or(0),
-        total_cents: input.total_cents,
-        coupon_id: input.coupon_id,
-        coupon_code: input.coupon_code,
-        ship_recipient: input.ship_recipient,
-        ship_cep: input.ship_cep,
-        ship_logradouro: input.ship_logradouro,
-        ship_numero: input.ship_numero,
-        ship_complemento: input.ship_complemento,
-        ship_bairro: input.ship_bairro,
-        ship_cidade: input.ship_cidade,
-        ship_uf: input.ship_uf,
-        placed_at: now,
-        created_at: None,
-        created_by: None,
-        updated_at: None,
-        updated_by: None,
-    };
-
-    let usecase = OrdersUseCase::new(OrdersGateway::new(state.conn.as_ref().clone()));
-    let saved = usecase
-        .create(domain)
-        .await
-        .ok_or(ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
-
-    Ok((StatusCode::CREATED, Json(OrdersMapper::json(saved))))
+#[utoipa::path(get, path = "/orders/{id}/status-history", tag = "Orders", params(("id" = i64, Path)),
+ description = "Customers access only their own resources. Seller staff access only their seller orders and their histories. Purchase/payment resources are restricted to the purchase owner and SysAdmin.",
+ responses((status = 200, description = "Resource", body = Vec<OrderStatusHistoryJson>), (status = 400, description = "Invalid request", body = ErrorResponseJson),
+(status = 401, description = "Unauthorized", body = ErrorResponseJson),
+(status = 403, description = "Forbidden", body = ErrorResponseJson),
+(status = 404, description = "Not found or not accessible", body = ErrorResponseJson),
+(status = 500, description = "Persistence failure", body = ErrorResponseJson)), security(("bearer_auth" = [])))]
+pub async fn history(State(state): State<AppState>, Extension(user): Extension<User>,
+ Extension(locale): Extension<Locale>, Path(id): Path<i64>) -> HttpResponse<Json<Vec<OrderStatusHistoryJson>>> {
+ Ok(Json(use_case(&state).history(&user, id).await.map_err(|e| error(locale, e))?.into_iter().map(Into::into).collect()))
 }
 
-#[utoipa::path(
-    put,
-    path = "/orders/{id}",
-    tag = "Orders",
-    params(("id" = i64, Path, description = "Order ID")),
-    request_body = OrdersInputJson,
-    responses(
-        (status = 200, description = "Order updated", body = OrdersJson),
-        (status = 400, description = "Bad request", body = BadRequestErrorJson),
-        (status = 404, description = "Not found", body = NotFoundErrorJson),
-        (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
-        (status = 403, description = "Forbidden", body = ForbiddenErrorJson),
-        (status = 500, description = "Internal server error", body = InternalServerErrorJson),
-    ),
-    security(("bearer_auth" = []))
-)]
-pub async fn update(
-    State(state): State<AppState>,
-    Extension(locale): Extension<Locale>,
-    Extension(user): Extension<User>,
-    Path(id): Path<i64>,
-    Json(input): Json<OrdersInputJson>,
-) -> HttpResponse<Json<OrdersJson>> {
-    let usecase = OrdersUseCase::new(OrdersGateway::new(state.conn.as_ref().clone()));
-    let existing = usecase
-        .find_by_id(id)
-        .await
-        .ok_or(ExceptionResponse::NotFound(
-            locale,
-            ErrorKey::InvalidParameterValue,
-        ))?;
+#[utoipa::path(get, path = "/payments/{id}/transactions", tag = "Payments", params(("id" = i64, Path)),
+ description = "Customers access only their own resources. Seller staff access only their seller orders and their histories. Purchase/payment resources are restricted to the purchase owner and SysAdmin.",
+ responses((status = 200, description = "Resource", body = Vec<PaymentTransactionJson>), (status = 400, description = "Invalid request", body = ErrorResponseJson),
+(status = 401, description = "Unauthorized", body = ErrorResponseJson),
+(status = 403, description = "Forbidden", body = ErrorResponseJson),
+(status = 404, description = "Not found or not accessible", body = ErrorResponseJson),
+(status = 500, description = "Persistence failure", body = ErrorResponseJson)), security(("bearer_auth" = [])))]
+pub async fn transactions(State(state): State<AppState>, Extension(user): Extension<User>,
+ Extension(locale): Extension<Locale>, Path(id): Path<i64>) -> HttpResponse<Json<Vec<PaymentTransactionJson>>> {
+ Ok(Json(use_case(&state).transactions(&user, id).await.map_err(|e| error(locale, e))?.into_iter().map(Into::into).collect()))
+}
 
-    if !can_read_tenant(&user, existing.tenant_id)
-        || tenant_for_write(&user, input.tenant_id.or(existing.tenant_id)) != existing.tenant_id
-    {
-        return Err(ExceptionResponse::Forbidden(
-            locale,
-            ErrorKey::InvalidParameterValue,
-        ));
-    }
+#[utoipa::path(get, path = "/orders/paged", tag = "Orders", params(OrdersPageQuery),
+ responses((status = 200, description = "Accessible records", body = PagedResponse<OrdersJson>), (status = 400, description = "Invalid request", body = ErrorResponseJson),
+(status = 401, description = "Unauthorized", body = ErrorResponseJson),
+(status = 403, description = "Forbidden", body = ErrorResponseJson),
+(status = 404, description = "Not found or not accessible", body = ErrorResponseJson),
+(status = 500, description = "Persistence failure", body = ErrorResponseJson)), security(("bearer_auth" = [])))]
+pub async fn paged(State(state): State<AppState>, Extension(user): Extension<User>,
+ Extension(locale): Extension<Locale>, Query(params): Query<OrdersPageQuery>) -> HttpResponse<Json<PagedResponse<OrdersJson>>> {
+ let (norm, filter) = filter(params, false);
+ let page = use_case(&state).orders(&user, &filter).await.map_err(|e| error(locale, e))?;
+ Ok(Json(PagedResponse::new(page.items.into_iter().map(Into::into).collect(), page.total, norm.page, norm.page_size)))
+}
 
-    let mut updated = existing;
-    if let Some(st) = input.status {
-        updated.status = st;
-    }
-    if let Some(ps) = input.payment_status {
-        updated.payment_status = ps;
-    }
+#[utoipa::path(get, path = "/purchases/paged", tag = "Purchases", params(OrdersPageQuery),
+ responses((status = 200, description = "Accessible records", body = PagedResponse<PurchaseJson>), (status = 400, description = "Invalid request", body = ErrorResponseJson),
+(status = 401, description = "Unauthorized", body = ErrorResponseJson),
+(status = 403, description = "Forbidden", body = ErrorResponseJson),
+(status = 404, description = "Not found or not accessible", body = ErrorResponseJson),
+(status = 500, description = "Persistence failure", body = ErrorResponseJson)), security(("bearer_auth" = [])))]
+pub async fn purchases_paged(State(state): State<AppState>, Extension(user): Extension<User>,
+ Extension(locale): Extension<Locale>, Query(params): Query<OrdersPageQuery>) -> HttpResponse<Json<PagedResponse<PurchaseJson>>> {
+ let (norm, filter) = filter(params, true);
+ let page = use_case(&state).purchases(&user, &filter).await.map_err(|e| error(locale, e))?;
+ Ok(Json(PagedResponse::new(page.items.into_iter().map(Into::into).collect(), page.total, norm.page, norm.page_size)))
+}
 
-    let saved = usecase
-        .update(id, updated)
-        .await
-        .ok_or(ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
-
-    Ok(Json(OrdersMapper::json(saved)))
+#[utoipa::path(get, path = "/orders", tag = "Orders",
+ responses((status = 200, description = "Accessible orders; prefer /orders/paged for large result sets", body = Vec<OrdersJson>), (status = 400, description = "Invalid request", body = ErrorResponseJson),
+(status = 401, description = "Unauthorized", body = ErrorResponseJson),
+(status = 403, description = "Forbidden", body = ErrorResponseJson),
+(status = 404, description = "Not found or not accessible", body = ErrorResponseJson),
+(status = 500, description = "Persistence failure", body = ErrorResponseJson)), security(("bearer_auth" = [])))]
+pub async fn list_all(State(state): State<AppState>, Extension(user): Extension<User>,
+ Extension(locale): Extension<Locale>) -> HttpResponse<Json<Vec<OrdersJson>>> {
+ let filter = OrderFilter { offset: 0, limit: i64::MAX as u64, query: None, status: None,
+ tenant_id: None, customer_id: None, sort_by: "id".into(), descending: true };
+ let page = use_case(&state).orders(&user, &filter).await.map_err(|e| error(locale, e))?;
+ Ok(Json(page.items.into_iter().map(Into::into).collect()))
 }

@@ -84,11 +84,8 @@ impl RelationTrait for Relation {
                 .to(super::tenant_entity::Column::Id)
                 .into(),
             Self::Customer => Entity::belongs_to(super::customer_entity::Entity)
-                .from((Column::TenantId, Column::CustomerId))
-                .to((
-                    super::customer_entity::Column::TenantId,
-                    super::customer_entity::Column::Id,
-                ))
+                .from(Column::CustomerId)
+                .to(super::customer_entity::Column::Id)
                 .into(),
             Self::CartItem => Entity::has_many(super::cart_item_entity::Entity).into(),
         }

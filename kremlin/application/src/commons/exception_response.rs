@@ -16,6 +16,8 @@ pub enum ExceptionResponse {
     NotFound(Locale, ErrorKey),
 
     CustomBadRequest(String),
+    Conflict(Locale, ErrorKey),
+    InternalServerError(Locale, ErrorKey),
 }
 
 impl IntoResponse for ExceptionResponse {
@@ -35,6 +37,14 @@ impl IntoResponse for ExceptionResponse {
             ),
             ExceptionResponse::NotFound(locale, key) => (
                 axum::http::StatusCode::NOT_FOUND,
+                ErrorResponseJson::new(key.as_str().to_string(), translate(locale, key)),
+            ),
+            ExceptionResponse::Conflict(locale, key) => (
+                axum::http::StatusCode::CONFLICT,
+                ErrorResponseJson::new(key.as_str().to_string(), translate(locale, key)),
+            ),
+            ExceptionResponse::InternalServerError(locale, key) => (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
                 ErrorResponseJson::new(key.as_str().to_string(), translate(locale, key)),
             ),
             ExceptionResponse::CustomBadRequest(msg) => (

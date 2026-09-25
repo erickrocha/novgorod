@@ -13,8 +13,6 @@ pub mod coupon_redemption_endpoint;
 pub mod customer_address_endpoint;
 pub mod customer_endpoint;
 pub mod json;
-pub mod order_item_endpoint;
-pub mod order_status_history_endpoint;
 pub mod orders_endpoint;
 pub mod person_address_endpoint;
 pub mod person_endpoint;
