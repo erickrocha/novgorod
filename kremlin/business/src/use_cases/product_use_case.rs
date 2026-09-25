@@ -48,17 +48,9 @@ impl ProductUseCase {
         }
     }
 
-    pub async fn find_webstore_products(&self, tenant_id: Option<i64>, query: crate::domain::product::ProductSearchQuery) -> (Vec<crate::domain::product::WebStoreProductDto>, Option<i64>) {
+    pub async fn find_webstore_products(&self, tenant_id: Option<i64>, query: crate::domain::product::ProductSearchQuery) -> Result<(Vec<crate::domain::product::WebStoreProductDto>, Option<i64>, u64), sea_orm::DbErr> {
         log::info!("[ProductUseCase::find_webstore_products] Executing find webstore products");
-        let result = self.gateway.find_webstore_products(tenant_id, query).await;
-
-        match result {
-            Ok((dtos, next_cursor)) => (dtos, next_cursor),
-            Err(e) => {
-                log::error!("[ProductUseCase::find_webstore_products] Failed to fetch products: {:?}", e.to_string());
-                (Vec::new(), None)
-            }
-        }
+        self.gateway.find_webstore_products(tenant_id, query).await
     }
 
     pub async fn find_webstore_product_detail(&self, slug_or_id: &str) -> Option<crate::domain::product::WebStoreProductDetailDto> {

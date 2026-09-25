@@ -19,6 +19,14 @@ pub struct WebStoreProductJson {
     pub review_count: Option<i32>,
     pub is_featured: bool,
     pub is_new: bool,
+    pub seller: Option<WebStoreSellerSummaryJson>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct WebStoreSellerSummaryJson {
+    pub id: i64,
+    pub business_name: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -114,7 +122,10 @@ pub struct WebStorePageQuery {
     pub limit: Option<u64>,
     pub q: Option<String>,
     pub category: Option<String>,
+    #[serde(alias = "min_price")]
     pub min_price: Option<i32>,
+    #[serde(alias = "max_price")]
     pub max_price: Option<i32>,
+    #[serde(alias = "sort_by")]
     pub sort_by: Option<String>,
 }

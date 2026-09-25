@@ -56,6 +56,8 @@ describe('cartSlice', () => {
       shippingLoading: false,
       shippingError: null,
       shippingDetails: null,
+      sellerLookupPendingIds: [],
+      sellerLookupFailedIds: [],
     };
   });
 

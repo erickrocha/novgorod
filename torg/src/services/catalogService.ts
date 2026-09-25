@@ -17,7 +17,7 @@ const mapProductJsonToProduct = (item: any): Product => ({
   slug: item.slug || String(item.id),
   name: item.name,
   description: item.description || '',
-  price: item.priceCents ? item.priceCents / 100 : 99.90, 
+  price: item.priceCents != null ? item.priceCents / 100 : 0,
   originalPrice: item.compareAtPriceCents ? item.compareAtPriceCents / 100 : undefined,
   currency: 'BRL',
   category: item.categorySlugs?.[0] ?? 'Vinhos',
@@ -29,6 +29,7 @@ const mapProductJsonToProduct = (item: any): Product => ({
   stock: item.stock ?? 10,
   isFeatured: item.isFeatured ?? false,
   isNew: item.isNew ?? false,
+  seller: item.seller ?? null,
   attributes: {
     brand: item.brand,
     ...item.attributes
@@ -84,7 +85,7 @@ const mapProductDetailJsonToProduct = (item: any): Product => {
   }
 
   const primarySku = skus[0];
-  const price = primarySku ? primarySku.priceCents / 100 : 99.90;
+  const price = primarySku ? primarySku.priceCents / 100 : 0;
   const originalPrice = primarySku?.compareAtPriceCents ? primarySku.compareAtPriceCents / 100 : undefined;
   const totalStock = skus.reduce((sum, s) => sum + s.stock, 0);
 
@@ -110,7 +111,7 @@ const mapProductDetailJsonToProduct = (item: any): Product => {
       ...specsMap,
     },
     variants,
-    seller: item.seller ? {
+    seller: item.seller?.id > 0 ? {
       id: item.seller.id,
       businessName: item.seller.businessName,
       companyName: item.seller.companyName,
@@ -121,7 +122,7 @@ const mapProductDetailJsonToProduct = (item: any): Product => {
       administrativeArea: item.seller.administrativeArea,
       postalCode: item.seller.postalCode,
       countryCode: item.seller.countryCode,
-    } : undefined,
+    } : null,
     detailImages: item.images || [],
     skus,
     productAttributes: item.attributes || [],
@@ -152,15 +153,15 @@ export const catalogService = {
     }
 
     if (params?.minPrice !== undefined) {
-      queryParams.min_price = Math.round(params.minPrice * 100);
+      queryParams.minPrice = Math.round(params.minPrice * 100);
     }
     
     if (params?.maxPrice !== undefined) {
-      queryParams.max_price = Math.round(params.maxPrice * 100);
+      queryParams.maxPrice = Math.round(params.maxPrice * 100);
     }
 
     if (params?.sortBy) {
-      queryParams.sort_by = params.sortBy;
+      queryParams.sortBy = params.sortBy;
     }
 
     const response = await apiClient.get<PaginatedResult<any>>('/api/public/products/query', { params: queryParams });
@@ -197,12 +198,12 @@ export const catalogService = {
    */
   async getCategories(): Promise<ProductCategory[]> {
     const response = await apiClient.get<any[]>('/api/public/categories');
-    return response.data.map(c => ({
-      id: String(c.id),
-      name: c.name,
-      slug: c.slug,
-      itemCount: 10,
-    }));
+    const slugs = new Set<string>();
+    return response.data.filter(c => {
+      if (c.active === false || slugs.has(c.slug)) return false;
+      slugs.add(c.slug);
+      return true;
+    }).map(c => ({ id: String(c.id), name: c.name, slug: c.slug }));
   },
 
   /**

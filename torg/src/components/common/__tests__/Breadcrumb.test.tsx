@@ -12,7 +12,7 @@ describe('Breadcrumb Component', () => {
       </MemoryRouter>
     );
 
-    const homeLink = screen.getByRole('link', { name: /início/i });
+    const homeLink = screen.getByRole('link', { name: /catálogo/i });
     expect(homeLink).toBeInTheDocument();
     expect(homeLink).toHaveAttribute('href', '/');
   });
@@ -45,7 +45,7 @@ describe('Breadcrumb Component', () => {
       </MemoryRouter>
     );
 
-    expect(screen.queryByRole('link', { name: /início/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /catálogo/i })).not.toBeInTheDocument();
     expect(screen.getByText('Vitrine')).toBeInTheDocument();
   });
 });

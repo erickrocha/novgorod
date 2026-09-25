@@ -76,14 +76,10 @@ export const SignUpPage: React.FC = () => {
       const loginRes = await authService.login(data.email, data.password);
 
       if (loginRes && loginRes.accessToken) {
+        const customer = await authService.me(loginRes.accessToken);
         dispatch(
           setCustomerSession({
-            customer: {
-              id: String(loginRes.userId),
-              name: loginRes.name,
-              email: loginRes.email,
-              phone: data.phone,
-            },
+            customer,
             token: loginRes.accessToken,
           })
         );

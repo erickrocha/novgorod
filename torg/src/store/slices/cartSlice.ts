@@ -14,6 +14,8 @@ export interface CartState {
   shippingLoading: boolean;
   shippingError: string | null;
   shippingDetails: ShippingQuote | null;
+  sellerLookupPendingIds: string[];
+  sellerLookupFailedIds: string[];
 }
 
 const STORAGE_KEY = 'torg_cart_items';
@@ -46,6 +48,8 @@ const initialState: CartState = {
   shippingLoading: false,
   shippingError: null,
   shippingDetails: null,
+  sellerLookupPendingIds: [],
+  sellerLookupFailedIds: [],
 };
 
 export const validateAndApplyCoupon = createAsyncThunk(
@@ -74,6 +78,15 @@ export const estimateShipping = createAsyncThunk(
   }
 );
 
+export const enrichCartSeller = createAsyncThunk(
+  'cart/enrichSeller',
+  async ({ productId, slug }: { productId: string; slug: string }) => {
+    const product = await catalogService.getProductBySlug(slug);
+    if (!product) throw new Error('Product details unavailable');
+    return { productId, seller: product.seller ?? null };
+  }
+);
+
 export const cartSlice = createSlice({
   name: 'cart',
   initialState,
@@ -89,6 +102,7 @@ export const cartSlice = createSlice({
       const existingIndex = state.items.findIndex(item => item.id === itemId);
 
       if (existingIndex > -1) {
+        if (product.seller !== undefined) state.items[existingIndex].product.seller = product.seller;
         state.items[existingIndex].quantity += quantity;
         state.items[existingIndex].totalPrice = state.items[existingIndex].quantity * state.items[existingIndex].unitPrice;
       } else {
@@ -134,6 +148,8 @@ export const cartSlice = createSlice({
       state.shippingAmount = 0;
       state.shippingCep = '';
       state.shippingDetails = null;
+      state.sellerLookupPendingIds = [];
+      state.sellerLookupFailedIds = [];
       saveCart([]);
     },
 
@@ -171,6 +187,22 @@ export const cartSlice = createSlice({
     },
   },
   extraReducers: (builder) => {
+    builder.addCase(enrichCartSeller.pending, (state, action) => {
+      const id = action.meta.arg.productId;
+      if (!state.sellerLookupPendingIds.includes(id)) state.sellerLookupPendingIds.push(id);
+      state.sellerLookupFailedIds = state.sellerLookupFailedIds.filter(value => value !== id);
+    });
+    builder.addCase(enrichCartSeller.fulfilled, (state, action) => {
+      const { productId, seller } = action.payload;
+      state.sellerLookupPendingIds = state.sellerLookupPendingIds.filter(id => id !== productId);
+      for (const item of state.items) if (item.product.id === productId) item.product.seller = seller;
+      saveCart(state.items);
+    });
+    builder.addCase(enrichCartSeller.rejected, (state, action) => {
+      const id = action.meta.arg.productId;
+      state.sellerLookupPendingIds = state.sellerLookupPendingIds.filter(value => value !== id);
+      if (!state.sellerLookupFailedIds.includes(id)) state.sellerLookupFailedIds.push(id);
+    });
     // Coupon
     builder.addCase(validateAndApplyCoupon.pending, (state) => {
       state.couponLoading = true;

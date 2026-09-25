@@ -1,4 +1,5 @@
 import apiClient from '../api/client';
+import type { CustomerProfile } from '../store/slices/authSlice';
 
 export interface AuthResponse {
   accessToken: string;
@@ -32,6 +33,14 @@ export interface CustomerResponse {
 }
 
 export const authService = {
+  async me(token?: string): Promise<CustomerProfile> {
+    const response = await apiClient.get<CustomerProfile>('/customers/me', token ? { headers: { Authorization: `Bearer ${token}` } } : undefined);
+    return { ...response.data, id: String(response.data.id) };
+  },
+  async completeCpf(cpf: string): Promise<CustomerProfile> {
+    const response = await apiClient.post<CustomerProfile>('/customers/me/tax-id', { cpf: cpf.replace(/\D/g, '') });
+    return { ...response.data, id: String(response.data.id) };
+  },
   async login(identifier: string, password: string): Promise<AuthResponse> {
     const formData = new URLSearchParams();
     formData.append('email', identifier);

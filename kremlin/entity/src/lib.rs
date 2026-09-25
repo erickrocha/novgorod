@@ -11,6 +11,7 @@ pub mod coupon_entity;
 pub mod coupon_redemption_entity;
 pub mod customer_address_entity;
 pub mod customer_entity;
+pub mod checkout_quote_entity;
 pub mod order_item_entity;
 pub mod order_status_history_entity;
 pub mod orders_entity;

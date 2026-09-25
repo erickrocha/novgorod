@@ -14,7 +14,7 @@ import {
 } from '../store/slices/cartSlice';
 import { addToast } from '../store/slices/uiSlice';
 import {
-  selectCartItems,
+  selectCartItems, selectCartGroups,
   selectCartSummary,
   selectAppliedCoupon,
   selectCouponLoading,
@@ -33,6 +33,7 @@ import {
 } from 'lucide-react';
 import Button from '../components/common/Button';
 import { Breadcrumb } from '../components/common/Breadcrumb';
+import CartTenantHeading from '../components/layout/CartTenantHeading';
 
 interface CouponFormData {
   code: string;
@@ -57,6 +58,7 @@ const shippingSchema = yup.object({
 export const CartPage: React.FC = () => {
   const dispatch = useAppDispatch();
   const items = useAppSelector(selectCartItems);
+  const groups = useAppSelector(selectCartGroups);
   const summary = useAppSelector(selectCartSummary);
   const appliedCoupon = useAppSelector(selectAppliedCoupon);
   const couponLoading = useAppSelector(selectCouponLoading);
@@ -133,7 +135,7 @@ export const CartPage: React.FC = () => {
           <p className="text-slate-500 mb-8 max-w-md mx-auto">
             Parece que você ainda não selecionou nenhum item. Conheça nossa seleção de vinhos, azeites e queijos artesanais.
           </p>
-          <Link to="/catalogo">
+          <Link to="/">
             <Button variant="primary" size="lg" className="gap-2 font-bold">
               <ArrowLeft className="w-4 h-4" />
               <span>Explorar Vitrine</span>
@@ -170,7 +172,9 @@ export const CartPage: React.FC = () => {
         {/* Items Table / List */}
         <div className="lg:col-span-8 bg-white rounded-3xl border border-slate-200/80 shadow-xs overflow-hidden">
           <div className="p-6 divide-y divide-slate-100">
-            {items.map((item) => (
+            {groups.map(group => <section key={group.key}>
+              <CartTenantHeading {...group} />
+              {group.items.map((item) => (
               <div key={item.id} className="py-5 first:pt-0 last:pb-0 flex flex-col sm:flex-row gap-5 items-center">
                 <img
                   src={item.product.thumbnail}
@@ -239,12 +243,13 @@ export const CartPage: React.FC = () => {
                   <Trash2 className="w-5 h-5" />
                 </button>
               </div>
-            ))}
+              ))}
+            </section>)}
           </div>
 
           <div className="p-6 bg-slate-50/70 border-t border-slate-100 flex items-center justify-between">
             <Link
-              to="/catalogo"
+              to="/"
               className="inline-flex items-center gap-2 text-sm font-bold text-amber-700 hover:text-amber-800 transition-colors"
             >
               <ArrowLeft className="w-4 h-4" />

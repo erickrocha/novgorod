@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
-import { ChevronRight, Home } from 'lucide-react';
+import { ChevronRight } from 'lucide-react';
 
 export interface BreadcrumbItem {
   label: string;
@@ -27,8 +27,7 @@ export const Breadcrumb: React.FC<BreadcrumbProps> = ({
               to="/"
               className="inline-flex items-center gap-1 text-slate-500 hover:text-amber-600 transition-colors"
             >
-              <Home className="w-3.5 h-3.5" />
-              <span className="sr-only sm:not-sr-only">Início</span>
+              <span className="sr-only sm:not-sr-only">Catálogo</span>
             </Link>
           </li>
         )}

@@ -75,7 +75,7 @@ export const ProductDetail: React.FC = () => {
         </div>
         <h2 className="text-2xl font-bold text-slate-800">Produto não encontrado</h2>
         <p className="text-slate-500 mt-2 mb-6">O vinho solicitado não está disponível em nossa adega.</p>
-        <Link to="/catalogo">
+        <Link to="/">
           <Button variant="primary">Voltar para a Vitrine</Button>
         </Link>
       </div>
@@ -143,8 +143,8 @@ export const ProductDetail: React.FC = () => {
       {/* Breadcrumb Navigation */}
       <Breadcrumb
         items={[
-          { label: 'Catálogo', href: '/catalogo' },
-          { label: selectedProduct.category, href: `/catalogo?categoria=${selectedProduct.categorySlug}` },
+          { label: 'Catálogo', href: '/' },
+          { label: selectedProduct.category, href: `/?cat=${selectedProduct.categorySlug}` },
           { label: selectedProduct.name },
         ]}
       />
@@ -425,7 +425,7 @@ export const ProductDetail: React.FC = () => {
           <h3 className="text-2xl font-black text-slate-900 tracking-tight">
             Você também pode gostar
           </h3>
-          <Link to="/catalogo" className="text-sm font-bold text-amber-700 hover:text-amber-800">
+          <Link to="/" className="text-sm font-bold text-amber-700 hover:text-amber-800">
             Ver todo o catálogo →
           </Link>
         </div>

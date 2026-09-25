@@ -132,6 +132,12 @@ pub struct WebStoreProductDto {
     pub review_count: Option<i32>,
     pub is_featured: bool,
     pub is_new: bool,
+    pub seller: Option<WebStoreSellerSummaryDto>,
+}
+
+pub struct WebStoreSellerSummaryDto {
+    pub id: i64,
+    pub business_name: String,
 }
 
 #[derive(Debug, Clone)]
@@ -213,4 +219,3 @@ pub struct WebStoreProductDetailDto {
     pub rating: Option<f32>,
     pub review_count: Option<i32>,
 }
-

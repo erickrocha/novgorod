@@ -3,6 +3,7 @@ import { createSlice, type PayloadAction } from '@reduxjs/toolkit';
 export interface CustomerProfile {
   id: string;
   name: string;
+  cpf?: string | null;
   email: string;
   phone?: string;
   addresses?: Array<{

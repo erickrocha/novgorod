@@ -64,7 +64,7 @@ torg/
 │   │   ├── common/      # Botões, badges, toasts
 │   │   ├── layout/      # Header, Footer, CartDrawer, QuickViewModal
 │   │   └── product/     # ProductCard, ProductGrid, ProductFilters
-│   ├── pages/           # Rotas da vitrine (Home, Catalog, ProductDetail, Cart, Checkout)
+│   ├── pages/           # Rotas da vitrine (Catalog, ProductDetail, Cart, Checkout)
 │   ├── routes/          # Definições do React Router
 │   ├── services/        # catalogService, cartService e mockData de alta fidelidade
 │   ├── store/           # Redux store, hooks tipados e slices

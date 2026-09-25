@@ -5,7 +5,7 @@ use crate::endpoints::category_endpoint;
 use crate::endpoints::json::product_json::ProductJson;
 use crate::endpoints::json::web_store_json::{
     WebStoreAttributeJson, WebStoreImageJson, WebStorePageQuery, WebStoreProductDetailJson,
-    WebStoreProductJson, WebStoreSellerJson, WebStoreSkuAttributeValueJson, WebStoreSkuJson,
+    WebStoreProductJson, WebStoreSellerJson, WebStoreSellerSummaryJson, WebStoreSkuAttributeValueJson, WebStoreSkuJson,
 };
 use crate::endpoints::product_category_endpoint;
 use crate::endpoints::sku_attribute_endpoint;
@@ -73,7 +73,7 @@ pub async fn query_products(
     state: State<AppState>,
     headers: HeaderMap,
     query: Query<WebStorePageQuery>,
-) -> Json<PagedResponse<WebStoreProductJson>> {
+) -> Result<Json<PagedResponse<WebStoreProductJson>>, StatusCode> {
     let user = build_dummy_user(&headers);
     let use_case = ProductUseCase::new(ProductGateway::new(state.conn.as_ref().clone()));
 
@@ -89,7 +89,12 @@ pub async fn query_products(
         sort_by: query.sort_by.clone(),
     };
 
-    let (products, next_cursor) = use_case.find_webstore_products(user.tenant_id, search_query).await;
+    let (products, next_cursor, total) = use_case.find_webstore_products(user.tenant_id, search_query)
+        .await
+        .map_err(|error| {
+            log::error!("Failed to query webstore products: {error}");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
 
     // Convert domain DTOs to API JSON DTOs
     let json_products = products.into_iter().map(|p| WebStoreProductJson {
@@ -108,9 +113,15 @@ pub async fn query_products(
         review_count: p.review_count,
         is_featured: p.is_featured,
         is_new: p.is_new,
+        seller: p.seller.map(|seller| WebStoreSellerSummaryJson {
+            id: seller.id,
+            business_name: seller.business_name,
+        }),
     }).collect();
 
-    Json(PagedResponse::page_by_cursor(json_products, next_cursor))
+    let mut response = PagedResponse::page_by_cursor(json_products, next_cursor);
+    response.total = Some(total);
+    Ok(Json(response))
 }
 
 #[utoipa::path(
@@ -305,3 +316,7 @@ pub async fn sku_stocks(
     let user = build_dummy_user(&headers);
     sku_stock_endpoint::list_all(state, Extension(user)).await
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/endpoints/web_store_endpoint.rs"]
+mod tests;

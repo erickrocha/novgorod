@@ -6,14 +6,16 @@ import {
   updateQuantity,
   removeFromCart,
 } from '../../store/slices/cartSlice';
-import { selectCartIsOpen, selectCartSummary, selectCartItems } from '../../store';
+import { selectCartIsOpen, selectCartSummary, selectCartItems, selectCartGroups } from '../../store';
 import { X, ShoppingBag, Plus, Minus, Trash2, ArrowRight } from 'lucide-react';
 import Button from '../common/Button';
+import CartTenantHeading from './CartTenantHeading';
 
 export const CartDrawer: React.FC = () => {
   const dispatch = useAppDispatch();
   const isOpen = useAppSelector(selectCartIsOpen);
   const items = useAppSelector(selectCartItems);
+  const groups = useAppSelector(selectCartGroups);
   const summary = useAppSelector(selectCartSummary);
 
   if (!isOpen) return null;
@@ -67,7 +69,9 @@ export const CartDrawer: React.FC = () => {
                 </Button>
               </div>
             ) : (
-              items.map((item) => (
+              groups.map(group => <section key={group.key} className="py-3">
+                <CartTenantHeading {...group} />
+                {group.items.map((item) => (
                 <div key={item.id} className="py-4 first:pt-0 last:pb-0 flex gap-4">
                   <img
                     src={item.product.thumbnail}
@@ -133,7 +137,8 @@ export const CartDrawer: React.FC = () => {
                     </div>
                   </div>
                 </div>
-              ))
+                ))}
+              </section>)
             )}
           </div>
 

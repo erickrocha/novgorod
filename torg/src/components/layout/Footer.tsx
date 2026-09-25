@@ -84,11 +84,11 @@ export const Footer: React.FC = () => {
           <div>
             <h5 className="text-xs uppercase tracking-wider text-slate-200 font-bold mb-4">Departamentos</h5>
             <ul className="space-y-2.5 text-sm text-slate-400">
-              <li><Link to="/catalogo?cat=vinhos-tintos" className="hover:text-amber-400 transition-colors">Vinhos Tintos</Link></li>
-              <li><Link to="/catalogo?cat=vinhos-brancos" className="hover:text-amber-400 transition-colors">Vinhos Brancos</Link></li>
-              <li><Link to="/catalogo?cat=azeites-especiarias" className="hover:text-amber-400 transition-colors">Azeites & Temperos</Link></li>
-              <li><Link to="/catalogo?cat=queijos-charcutaria" className="hover:text-amber-400 transition-colors">Queijos & Charcutaria</Link></li>
-              <li><Link to="/catalogo?cat=acessorios" className="hover:text-amber-400 transition-colors">Acessórios de Sommelier</Link></li>
+              <li><Link to="/?cat=vinhos-tintos" className="hover:text-amber-400 transition-colors">Vinhos Tintos</Link></li>
+              <li><Link to="/?cat=vinhos-brancos" className="hover:text-amber-400 transition-colors">Vinhos Brancos</Link></li>
+              <li><Link to="/?cat=azeites-especiarias" className="hover:text-amber-400 transition-colors">Azeites & Temperos</Link></li>
+              <li><Link to="/?cat=queijos-charcutaria" className="hover:text-amber-400 transition-colors">Queijos & Charcutaria</Link></li>
+              <li><Link to="/?cat=acessorios" className="hover:text-amber-400 transition-colors">Acessórios de Sommelier</Link></li>
             </ul>
           </div>
 

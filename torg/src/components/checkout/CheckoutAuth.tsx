@@ -37,13 +37,10 @@ export const CheckoutAuth: React.FC = () => {
     try {
       const response = await authService.login(data.identifier, data.password);
       if (response && response.accessToken) {
+        const customer = await authService.me(response.accessToken);
         dispatch(
           setCustomerSession({
-            customer: {
-              id: String(response.userId),
-              name: response.name,
-              email: response.email,
-            },
+            customer,
             token: response.accessToken,
           })
         );

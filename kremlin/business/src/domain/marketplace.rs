@@ -10,6 +10,7 @@ use std::collections::BTreeMap;
 #[derive(Debug)]
 pub enum PurchaseError {
     Validation(&'static str),
+    DeliveryRateMissing(String),
     NotFound,
     Forbidden,
     Conflict,
@@ -22,7 +23,14 @@ impl From<sea_orm::DbErr> for PurchaseError {
 }
 impl std::fmt::Display for PurchaseError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{self:?}")
+        match self {
+            Self::Validation(msg) => write!(f, "{msg}"),
+            Self::DeliveryRateMissing(msg) => write!(f, "{msg}"),
+            Self::NotFound => write!(f, "Not found"),
+            Self::Forbidden => write!(f, "Forbidden"),
+            Self::Conflict => write!(f, "Conflict"),
+            Self::Persistence(err) => write!(f, "{err}"),
+        }
     }
 }
 impl std::error::Error for PurchaseError {}

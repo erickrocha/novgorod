@@ -2,6 +2,7 @@ use crate::AppState;
 use crate::authentication::authentication_middleware::authentication;
 use crate::endpoints::customer_address_endpoint as address_ep;
 use crate::endpoints::customer_endpoint as cust_ep;
+use crate::endpoints::checkout_customer_endpoint as checkout_ep;
 use axum::routing::{get, post, put};
 use axum::{Router, middleware};
 
@@ -9,6 +10,8 @@ pub fn customer_routes(state: AppState) -> Router<AppState> {
     Router::new()
         // Customers
         .route("/customers", get(cust_ep::list_all))
+        .route("/customers/me", get(checkout_ep::me))
+        .route("/customers/me/tax-id", post(checkout_ep::complete_tax_id))
         .route("/customers/paged", get(cust_ep::paged))
         .route("/customers", post(cust_ep::add))
         .route("/customers/{id}", get(cust_ep::get_by_id))

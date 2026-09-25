@@ -100,7 +100,7 @@ export interface Product {
     [key: string]: unknown;
   };
   variants?: ProductVariant[];
-  seller?: Seller;
+  seller?: Seller | null;
   detailImages?: ProductDetailImage[];
   skus?: ProductSku[];
   productAttributes?: ProductAttribute[];
@@ -109,8 +109,7 @@ export interface Product {
 export interface ProductFilterState {
   searchQuery: string;
   category: string;
-  minPrice: number;
-  maxPrice: number;
-  sortBy: 'featured' | 'price-asc' | 'price-desc' | 'rating' | 'newest';
-  inStockOnly: boolean;
+  minPrice?: number;
+  maxPrice?: number;
+  sortBy: 'newest' | 'price-asc' | 'price-desc';
 }

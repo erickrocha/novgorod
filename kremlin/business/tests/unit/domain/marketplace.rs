@@ -72,3 +72,9 @@
         value["totalCents"] = 1.into();
         assert!(serde_json::from_value::<CreatePurchaseInput>(value).is_err());
     }
+
+    #[test]
+    fn delivery_rate_missing_formats_message() {
+        let err = PurchaseError::DeliveryRateMissing("O vendedor Vinícola Serra Alta não entrega para o estado AM.".into());
+        assert_eq!(err.to_string(), "O vendedor Vinícola Serra Alta não entrega para o estado AM.");
+    }

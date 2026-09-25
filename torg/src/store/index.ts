@@ -17,6 +17,21 @@ export type RootState = ReturnType<typeof store.getState>;
 export type AppDispatch = typeof store.dispatch;
 
 export const selectCartItems = (state: RootState) => state.cart.items;
+export const selectCartGroups = createSelector([selectCartItems], items => {
+  const groups: { key: string; name: string; items: typeof items; subtotal: number; unresolved: boolean }[] = [];
+  for (const item of items) {
+    const seller = item.product.seller;
+    const key = seller && seller.id > 0 ? `seller:${seller.id}` : `unknown:${item.product.id}`;
+    let group = groups.find(value => value.key === key);
+    if (!group) {
+      group = { key, name: seller && seller.id > 0 ? seller.businessName : 'Seller unavailable', items: [], subtotal: 0, unresolved: seller === undefined };
+      groups.push(group);
+    }
+    group.items.push(item);
+    group.subtotal += item.totalPrice;
+  }
+  return groups;
+});
 export const selectCartIsOpen = (state: RootState) => state.cart.isOpen;
 export const selectAppliedCoupon = (state: RootState) => state.cart.appliedCoupon;
 export const selectCouponLoading = (state: RootState) => state.cart.couponLoading;

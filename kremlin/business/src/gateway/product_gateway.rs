@@ -67,113 +67,109 @@ impl ProductGateway {
         Ok((rows, next_cursor))
     }
 
-    pub async fn find_webstore_products(&self, tenant_id: Option<i64>, query: ProductSearchQuery) -> Result<(Vec<crate::domain::product::WebStoreProductDto>, Option<i64>), DbErr> {
-        // Build conditions
+    pub async fn find_webstore_products(
+        &self,
+        tenant_id: Option<i64>,
+        query: ProductSearchQuery,
+    ) -> Result<(Vec<crate::domain::product::WebStoreProductDto>, Option<i64>, u64), DbErr> {
+        use crate::domain::product::WebStoreSellerSummaryDto;
+        use sea_orm::Value;
+
+        let mut values: Vec<Value> = Vec::new();
         let mut conditions = vec!["p.active = true".to_string()];
-        
-        if let Some(t_id) = tenant_id {
-            conditions.push(format!("p.tenant_id = {}", t_id));
+        if let Some(tenant_id) = tenant_id {
+            values.push(tenant_id.into());
+            conditions.push(format!("p.tenant_id = ${}", values.len()));
         }
-
-        if let Some(ref q) = query.q {
-            let escaped = q.replace("'", "''");
-            conditions.push(format!("(p.name ILIKE '%{}%' OR p.description ILIKE '%{}%' OR p.brand ILIKE '%{}%')", escaped, escaped, escaped));
+        if let Some(q) = query.q.as_deref().map(str::trim).filter(|q| !q.is_empty()) {
+            values.push(format!("%{q}%").into());
+            conditions.push(format!(
+                "(p.name ILIKE ${0} OR p.description ILIKE ${0} OR p.brand ILIKE ${0})",
+                values.len()
+            ));
         }
-
-        if let Some(ref cat) = query.category
-            && cat != "all" {
-                let escaped = cat.replace("'", "''");
-                conditions.push(format!("EXISTS (SELECT 1 FROM product_category pc JOIN category c ON pc.category_id = c.id WHERE pc.product_id = p.id AND c.slug = '{}')", escaped));
-            }
-
-        // Basic cursor pagination using p.id
-        // We will default to sorting by p.id DESC if not specified.
-        // For custom sorts (price-asc), cursor pagination gets very complex with raw SQL unless we use offset.
-        // For simplicity, we will use offset if sort_by is provided, or just id-based cursor if not.
-        // Actually, we can just use offset always for the webstore if cursor is used as an offset.
-        // Wait, if cursor is an ID, it's hard to sort by price.
-        // Let's assume cursor is an offset for webstore if we need sorting.
-        let offset = query.cursor.unwrap_or(0);
-        let limit = query.limit.unwrap_or(12);
-
-        let where_clause = if conditions.is_empty() {
-            "".to_string()
-        } else {
-            format!("WHERE {}", conditions.join(" AND "))
-        };
-
-        let mut order_clause = "ORDER BY p.id DESC".to_string();
-        if let Some(ref sort) = query.sort_by {
-            if sort == "price-asc" {
-                order_clause = "ORDER BY min_price ASC NULLS LAST, p.id DESC".to_string();
-            } else if sort == "price-desc" {
-                order_clause = "ORDER BY min_price DESC NULLS LAST, p.id DESC".to_string();
-            } else if sort == "rating" {
-                order_clause = "ORDER BY p.id DESC".to_string(); // Mock rating sort
-            } else if sort == "newest" {
-                order_clause = "ORDER BY p.created_at DESC NULLS LAST, p.id DESC".to_string();
-            }
+        if let Some(category) = query.category.as_deref().filter(|c| *c != "all") {
+            values.push(category.to_string().into());
+            conditions.push(format!("EXISTS (SELECT 1 FROM product_category pc JOIN category c ON pc.category_id = c.id WHERE pc.product_id = p.id AND c.slug = ${})", values.len()));
         }
-
-        let raw_sql = format!(
-            r#"
-            SELECT 
-                p.id, p.uuid, p.name, p.slug, p.description, p.brand,
-                (SELECT MIN(s.price_cents) FROM sku s WHERE s.product_id = p.id AND s.active = true) as min_price,
-                (SELECT MAX(s.compare_at_price_cents) FROM sku s WHERE s.product_id = p.id AND s.active = true) as compare_price,
-                (SELECT pi.object_key FROM product_image pi WHERE pi.product_id = p.id AND pi.is_primary = true LIMIT 1) as primary_image_url,
-                (SELECT pi.alt_text FROM product_image pi WHERE pi.product_id = p.id AND pi.is_primary = true LIMIT 1) as primary_image_alt
-            FROM product p
-            {}
-            {}
-            LIMIT {} OFFSET {}
-            "#,
-            where_clause, order_clause, limit + 1, offset
+        if let Some(min_price) = query.min_price {
+            values.push(min_price.into());
+            conditions.push(format!("price.min_price >= ${}", values.len()));
+        }
+        if let Some(max_price) = query.max_price {
+            values.push(max_price.into());
+            conditions.push(format!("price.min_price <= ${}", values.len()));
+        }
+        let where_clause = conditions.join(" AND ");
+        let from_clause = format!(
+            "FROM product p LEFT JOIN tenant t ON t.id = p.tenant_id \
+             LEFT JOIN LATERAL (SELECT MIN(s.price_cents) AS min_price, \
+             MAX(s.compare_at_price_cents) AS compare_price \
+             FROM sku s WHERE s.product_id = p.id AND s.active = true) price ON true \
+             WHERE {where_clause}"
         );
+        let count_sql = format!("SELECT COUNT(*) AS total {from_clause}");
+        let count_row = self.db.query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres, count_sql, values.clone(),
+        )).await?.ok_or_else(|| DbErr::Custom("Missing product count".into()))?;
+        let total: i64 = count_row.try_get("", "total")?;
 
-        let query_res = self.db.query_all_raw(Statement::from_string(DbBackend::Postgres, raw_sql)).await?;
-        
-        let mut products = Vec::new();
-        for row in query_res {
-            let id: i64 = row.try_get("", "id")?;
+        let order_clause = match query.sort_by.as_deref() {
+            Some("price-asc") => "ORDER BY price.min_price ASC NULLS LAST, p.id DESC",
+            Some("price-desc") => "ORDER BY price.min_price DESC NULLS LAST, p.id DESC",
+            _ => "ORDER BY p.created_at DESC, p.id DESC",
+        };
+        let offset = query.cursor.unwrap_or(0).max(0);
+        let limit = query.limit.unwrap_or(12).clamp(1, 100);
+        let limit_marker = values.len() + 1;
+        let offset_marker = values.len() + 2;
+        let rows_sql = format!(
+            "SELECT p.id, p.uuid, p.name, p.slug, p.description, p.brand, \
+             price.min_price, price.compare_price, p.tenant_id, t.business_name, \
+             (SELECT pi.object_key FROM product_image pi WHERE pi.product_id = p.id AND pi.is_primary = true LIMIT 1) AS primary_image_url, \
+             (SELECT pi.alt_text FROM product_image pi WHERE pi.product_id = p.id AND pi.is_primary = true LIMIT 1) AS primary_image_alt, \
+             ARRAY(SELECT DISTINCT c.slug FROM product_category pc JOIN category c ON c.id = pc.category_id WHERE pc.product_id = p.id ORDER BY c.slug) AS category_slugs \
+             {from_clause} {order_clause} LIMIT ${limit_marker} OFFSET ${offset_marker}"
+        );
+        values.push(((limit + 1) as i64).into());
+        values.push(offset.into());
+        let rows = self.db.query_all_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres, rows_sql, values,
+        )).await?;
+        let mut products = Vec::with_capacity(rows.len());
+        for row in rows {
             let uuid: uuid::Uuid = row.try_get("", "uuid")?;
-            let uuid_str = crate::commons::functions::uuid_to_string(uuid);
-            let name: String = row.try_get("", "name")?;
-            let slug: String = row.try_get("", "slug")?;
-            let description: Option<String> = row.try_get("", "description")?;
-            let brand: Option<String> = row.try_get("", "brand")?;
-            let price_cents: Option<i32> = row.try_get("", "min_price")?;
-            let compare_at_price_cents: Option<i32> = row.try_get("", "compare_price")?;
-            let primary_image_url: Option<String> = row.try_get("", "primary_image_url")?;
-            let primary_image_alt: Option<String> = row.try_get("", "primary_image_alt")?;
-
+            let tenant_id: Option<i64> = row.try_get("", "tenant_id")?;
+            let business_name: Option<String> = row.try_get("", "business_name")?;
             products.push(crate::domain::product::WebStoreProductDto {
-                id,
-                uuid: uuid_str,
-                name,
-                slug,
-                description,
-                brand,
-                price_cents,
-                compare_at_price_cents,
-                primary_image_url,
-                primary_image_alt,
-                category_slugs: vec![], // we can fetch these if needed
-                rating: Some(4.5),
-                review_count: Some(12),
+                id: row.try_get("", "id")?,
+                uuid: crate::commons::functions::uuid_to_string(uuid),
+                name: row.try_get("", "name")?,
+                slug: row.try_get("", "slug")?,
+                description: row.try_get("", "description")?,
+                brand: row.try_get("", "brand")?,
+                price_cents: row.try_get("", "min_price")?,
+                compare_at_price_cents: row.try_get("", "compare_price")?,
+                primary_image_url: row.try_get("", "primary_image_url")?,
+                primary_image_alt: row.try_get("", "primary_image_alt")?,
+                category_slugs: row.try_get("", "category_slugs")?,
+                rating: None,
+                review_count: None,
                 is_featured: false,
                 is_new: false,
+                seller: tenant_id.map(|id| WebStoreSellerSummaryDto {
+                    id,
+                    business_name: business_name.unwrap_or_else(|| "Seller unavailable".into()),
+                }),
             });
         }
-
         let next_cursor = if products.len() as u64 > limit {
             products.pop();
             Some(offset + limit as i64)
         } else {
             None
         };
-
-        Ok((products, next_cursor))
+        Ok((products, next_cursor, total as u64))
     }
 
     pub async fn find_webstore_product_detail(&self, slug_or_id: &str) -> Result<Option<WebStoreProductDetailDto>, DbErr> {

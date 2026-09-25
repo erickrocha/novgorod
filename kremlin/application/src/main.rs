@@ -18,7 +18,7 @@ use crate::routes::user_routes::user_routes;
 use crate::routes::web_store_routes::web_store_routes;
 use axum::Router;
 use axum::http::{Method, header};
-use axum::routing::get;
+use axum::routing::{get, post};
 use business::sea_orm::DatabaseConnection;
 use migration::{Migrator, MigratorTrait};
 use std::env;
@@ -349,7 +349,7 @@ async fn start() -> anyhow::Result<()> {
         conn: Arc::new(connection),
         storage,
     };
-
+    crate::endpoints::checkout_payment_endpoint::spawn_payment_reconciliation(state.clone());
 
     log::info!("Starting server...");
 
@@ -383,6 +383,7 @@ async fn start() -> anyhow::Result<()> {
         .merge(customer_routes(state.clone()))
         .merge(person_routes(state.clone()))
         .merge(order_routes(state.clone()))
+        .route("/webhooks/mercado-pago", post(endpoints::checkout_payment_endpoint::webhook))
         .merge(cart_routes(state.clone()))
         .merge(marketing_routes(state.clone()))
         .merge(shipping_tax_routes(state.clone()))

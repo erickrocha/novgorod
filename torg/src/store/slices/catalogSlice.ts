@@ -13,15 +13,15 @@ interface CatalogState {
   isLoadingProduct: boolean;
   error: string | null;
   filters: ProductFilterState;
+  activeRequestId: string | null;
 }
 
 const initialFilters: ProductFilterState = {
   searchQuery: '',
   category: 'all',
-  minPrice: 0,
-  maxPrice: 2000,
-  sortBy: 'featured',
-  inStockOnly: false,
+  minPrice: undefined,
+  maxPrice: undefined,
+  sortBy: 'newest',
 };
 
 const initialState: CatalogState = {
@@ -35,6 +35,7 @@ const initialState: CatalogState = {
   isLoadingProduct: false,
   error: null,
   filters: initialFilters,
+  activeRequestId: null,
 };
 
 export const fetchProducts = createAsyncThunk(
@@ -62,6 +63,13 @@ export const fetchProducts = createAsyncThunk(
       const message = err instanceof Error ? err.message : 'Falha ao buscar catálogo';
       return rejectWithValue(message);
     }
+  },
+  {
+    condition: (params: Partial<GetProductsParams> & { loadMore?: boolean } | undefined, { getState }) => {
+      if (!params?.loadMore) return true;
+      const { isLoading, nextCursor } = (getState() as { catalog: CatalogState }).catalog;
+      return !isLoading && nextCursor !== null;
+    },
   }
 );
 
@@ -107,6 +115,9 @@ export const catalogSlice = createSlice({
   name: 'catalog',
   initialState,
   reducers: {
+    setFilters: (state, action: PayloadAction<ProductFilterState>) => {
+      state.filters = action.payload;
+    },
     setSearchQuery: (state, action: PayloadAction<string>) => {
       state.filters.searchQuery = action.payload;
     },
@@ -120,11 +131,8 @@ export const catalogSlice = createSlice({
       state.filters.minPrice = action.payload.min;
       state.filters.maxPrice = action.payload.max;
     },
-    setInStockOnly: (state, action: PayloadAction<boolean>) => {
-      state.filters.inStockOnly = action.payload;
-    },
     resetFilters: (state) => {
-      state.filters = initialFilters;
+      state.filters = { ...initialFilters };
     },
     clearSelectedProduct: (state) => {
       state.selectedProduct = null;
@@ -132,11 +140,20 @@ export const catalogSlice = createSlice({
   },
   extraReducers: (builder) => {
     // Products
-    builder.addCase(fetchProducts.pending, (state) => {
+    builder.addCase(fetchProducts.pending, (state, action) => {
+      if (action.meta.arg?.loadMore && (state.isLoading || state.nextCursor === null)) return;
+      state.activeRequestId = action.meta.requestId;
       state.isLoading = true;
       state.error = null;
+      if (!action.meta.arg?.loadMore) {
+        state.products = [];
+        state.totalProducts = 0;
+        state.nextCursor = null;
+      }
     });
     builder.addCase(fetchProducts.fulfilled, (state, action) => {
+      if (state.activeRequestId !== action.meta.requestId) return;
+      state.activeRequestId = null;
       state.isLoading = false;
       if (action.meta.arg?.loadMore) {
         state.products = [...state.products, ...action.payload.items];
@@ -146,9 +163,11 @@ export const catalogSlice = createSlice({
       if (action.payload.total !== undefined) {
         state.totalProducts = action.payload.total;
       }
-      state.nextCursor = action.payload.nextCursor || null;
+      state.nextCursor = action.payload.nextCursor ?? null;
     });
     builder.addCase(fetchProducts.rejected, (state, action) => {
+      if (state.activeRequestId !== action.meta.requestId) return;
+      state.activeRequestId = null;
       state.isLoading = false;
       state.error = action.payload as string;
     });
@@ -180,11 +199,11 @@ export const catalogSlice = createSlice({
 });
 
 export const {
+  setFilters,
   setSearchQuery,
   setCategory,
   setSortBy,
   setPriceRange,
-  setInStockOnly,
   resetFilters,
   clearSelectedProduct,
 } = catalogSlice.actions;

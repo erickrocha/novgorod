@@ -38,6 +38,7 @@ mod m20260924_000007_create_table_payment_transaction;
 mod m20260924_000000_create_table_purchase;
 mod m20260924_000008_create_table_payment_allocation;
 mod m20260924_000009_global_customer_references;
+mod m20260925_000001_checkout;
 
 pub struct Migrator;
 
@@ -82,6 +83,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260924_000008_create_table_payment_allocation::Migration),
             Box::new(m20260919_000014_create_table_coupon_redemption::Migration),
             Box::new(m20260924_000009_global_customer_references::Migration),
+            Box::new(m20260925_000001_checkout::Migration),
 
         ]
     }

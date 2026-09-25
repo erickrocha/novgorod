@@ -30,3 +30,4 @@ pub mod tenant_use_case;
 pub mod user_use_case;
 pub mod customer_registration_use_case;
 pub mod purchase_use_case;
+pub mod checkout_quote_use_case;

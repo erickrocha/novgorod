@@ -3,13 +3,14 @@ use crate::commons::{exception_response::{ExceptionResponse, HttpResponse}, i18n
 use crate::endpoints::json::{orders_json::*, error_response_json::ErrorResponseJson};
 use crate::infrastructure::purchase_mapper::PurchaseMapper;
 use axum::{Json, extract::{State, Extension, Path, Query}, http::{HeaderMap, StatusCode}};
-use business::{domain::{user::User, marketplace::{PurchaseError, OrderFilter}}, gateway::purchase_gateway::PurchaseGateway, use_cases::purchase_use_case::PurchaseUseCase};
+use business::{domain::{user::User, marketplace::{PurchaseError, OrderFilter}}, gateway::purchase_gateway::PurchaseGateway, use_cases::purchase_use_case::{PurchaseUseCase, CheckoutPurchaseInput}};
 
 fn use_case(state: &AppState) -> PurchaseUseCase {
  PurchaseUseCase::new(PurchaseGateway::new(state.conn.as_ref().clone()))
 }
 fn error(locale: Locale, error: PurchaseError) -> ExceptionResponse {
  match error {
+ PurchaseError::DeliveryRateMissing(msg) => ExceptionResponse::CustomBadRequest(msg),
  PurchaseError::Validation(_) => ExceptionResponse::BadRequest(locale, ErrorKey::PurchaseInvalid),
  PurchaseError::NotFound => ExceptionResponse::NotFound(locale, ErrorKey::PurchaseNotFound),
  PurchaseError::Forbidden => ExceptionResponse::Forbidden(locale, ErrorKey::PurchaseForbidden),
@@ -49,11 +50,22 @@ fn filter(params: OrdersPageQuery, purchase: bool) -> (NormalizedPagination, Ord
  security(("bearer_auth" = [])))]
 pub async fn create_purchase(State(state): State<AppState>, Extension(user): Extension<User>,
  Extension(locale): Extension<Locale>, headers: HeaderMap,
- input: Result<Json<CreatePurchaseInputJson>, axum::extract::rejection::JsonRejection>) -> HttpResponse<(StatusCode, Json<PurchaseDetailJson>)> {
+ input: Result<Json<serde_json::Value>, axum::extract::rejection::JsonRejection>) -> HttpResponse<(StatusCode, Json<PurchaseDetailJson>)> {
  let Json(input) = input.map_err(|_| ExceptionResponse::BadRequest(locale, ErrorKey::PurchaseInvalid))?;
  let key = headers.get("Idempotency-Key").and_then(|v| v.to_str().ok())
  .ok_or(ExceptionResponse::BadRequest(locale, ErrorKey::RequiredHeaderValueMissing))?;
- let created = use_case(&state).create(&user, key, PurchaseMapper::input(input)).await.map_err(|e| error(locale, e))?;
+ let created = if input.get("quoteId").is_some() {
+     #[derive(serde::Deserialize)]
+     #[serde(rename_all = "camelCase", deny_unknown_fields)]
+     struct Quoted { quote_id: i64, email: String, phone: String }
+     let quoted: Quoted = serde_json::from_value(input).map_err(|_| ExceptionResponse::BadRequest(locale, ErrorKey::PurchaseInvalid))?;
+     use_case(&state).create_checkout(&user, key, CheckoutPurchaseInput {
+         quote_id: quoted.quote_id, email: quoted.email, phone: quoted.phone,
+     }).await
+ } else {
+     let legacy: CreatePurchaseInputJson = serde_json::from_value(input).map_err(|_| ExceptionResponse::BadRequest(locale, ErrorKey::PurchaseInvalid))?;
+     use_case(&state).create(&user, key, PurchaseMapper::input(legacy)).await
+ }.map_err(|e| error(locale, e))?;
  Ok((if created.replayed { StatusCode::OK } else { StatusCode::CREATED }, Json(PurchaseMapper::json(created.detail))))
 }
 
