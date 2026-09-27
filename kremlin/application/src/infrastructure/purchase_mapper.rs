@@ -44,6 +44,9 @@ impl From<business::domain::orders::Orders> for OrdersJson {
             tax_total_cents: value.tax_total_cents,
             total_cents: value.total_cents,
             coupon_id: value.coupon_id,
+            shipping_snapshot: value
+                .shipping_snapshot
+                .and_then(|v| serde_json::from_value(v).ok()),
             coupon_code: value.coupon_code,
             placed_at: value.placed_at,
             created_at: value.created_at,

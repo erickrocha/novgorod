@@ -24,12 +24,12 @@ mod m20260919_000006_create_table_campaign_target;
 mod m20260919_000007_create_table_coupon;
 mod m20260919_000009_create_table_cart;
 mod m20260919_000010_create_table_cart_item;
-mod m20260924_000001_create_table_orders;
-mod m20260924_000002_create_table_order_item;
-mod m20260924_000003_create_table_order_status_history;
 mod m20260919_000014_create_table_coupon_redemption;
 mod m20260921_000001_create_person_table;
 mod m20260921_000002_create_person_address_table;
+mod m20260924_000001_create_table_orders;
+mod m20260924_000002_create_table_order_item;
+mod m20260924_000003_create_table_order_status_history;
 mod m20260924_000004_create_table_order_address;
 mod m20260924_000005_create_table_order_payment;
 mod m20260924_000006_create_table_credit_card_details;
@@ -39,6 +39,8 @@ mod m20260924_000000_create_table_purchase;
 mod m20260924_000008_create_table_payment_allocation;
 mod m20260924_000009_global_customer_references;
 mod m20260925_000001_checkout;
+
+mod m20260926_000001_shipping;
 
 pub struct Migrator;
 
@@ -84,7 +86,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260919_000014_create_table_coupon_redemption::Migration),
             Box::new(m20260924_000009_global_customer_references::Migration),
             Box::new(m20260925_000001_checkout::Migration),
-
+            Box::new(m20260926_000001_shipping::Migration),
         ]
     }
 }

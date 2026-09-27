@@ -3,7 +3,10 @@
 use business::{
     domain::{enums::Role, marketplace::*, user::User},
     gateway::purchase_gateway::PurchaseGateway,
-    use_cases::purchase_use_case::PurchaseUseCase,
+    use_cases::{
+        checkout_quote_use_case::{CheckoutQuoteUseCase, QuoteRequest},
+        purchase_use_case::{CheckoutPurchaseInput, PurchaseUseCase},
+    },
 };
 use entity::audit_entity::{AuditUser, run_with_user};
 use migration::{Migrator, MigratorTrait};
@@ -116,6 +119,7 @@ INSERT INTO sku (id, uuid, tenant_id, product_id, code, variant_key, price_cents
 SELECT n, gen_random_uuid(), CASE WHEN n <= 3 THEN 1 ELSE 2 END, n, 'SKU-' || n, 'variant-' || n, n * 100, true, now(), now() FROM generate_series(1,5) n;
 INSERT INTO sku_stock (uuid, tenant_id, sku_id, quantity, reserved, created_at, updated_at)
 SELECT gen_random_uuid(), tenant_id, id, 10, 0, now(), now() FROM sku;
+INSERT INTO shipping_rate(uuid,tenant_id,uf,price_cents,created_at,updated_at) SELECT gen_random_uuid(),id,'SP',0,now(),now() FROM tenant;
 "#).await.unwrap();
 }
 
@@ -149,6 +153,8 @@ async fn split_purchase_retries_isolation_snapshots_and_atomicity() {
     fixtures(&db).await;
     let use_case = PurchaseUseCase::new(PurchaseGateway::new(db.clone()));
     let buyer = user(1, Role::Customer, None);
+    let quote_id = quote_input(&db, input()).await.unwrap().quote_id;
+    let concurrent_quote_id = quote_input(&db, input()).await.unwrap().quote_id;
     // Match the authentication middleware's tenant-less customer audit scope.
     let created = run_with_user(
         Some(AuditUser {
@@ -157,7 +163,7 @@ async fn split_purchase_retries_isolation_snapshots_and_atomicity() {
             tenant_id: None,
             enforce_tenant: true,
         }),
-        use_case.create(&buyer, "first", input()),
+        use_case.create_checkout(&buyer, "first", checkout(quote_id)),
     )
     .await
     .unwrap();
@@ -195,20 +201,25 @@ async fn split_purchase_retries_isolation_snapshots_and_atomicity() {
     assert_eq!(stock.try_get::<i64>("", "quantity").unwrap(), 50);
     assert_eq!(stock.try_get::<i64>("", "reserved").unwrap(), 0);
 
-    let replay = use_case.create(&buyer, "first", input()).await.unwrap();
+    let replay = use_case
+        .create_checkout(&buyer, "first", checkout(quote_id))
+        .await
+        .unwrap();
     assert!(replay.replayed);
     assert_eq!(replay.detail.purchase.id, detail.purchase.id);
     let mut changed = input();
     changed.items[0].quantity = 2;
     assert!(matches!(
-        use_case.create(&buyer, "first", changed).await,
+        use_case
+            .create_checkout(&buyer, "first", quote_input(&db, changed).await.unwrap())
+            .await,
         Err(PurchaseError::Conflict)
     ));
-    let concurrent_input_a = input();
-    let concurrent_input_b = input();
+    let concurrent_input_a = checkout(concurrent_quote_id);
+    let concurrent_input_b = checkout(concurrent_quote_id);
     let (a, b) = tokio::join!(
-        use_case.create(&buyer, "concurrent", concurrent_input_a),
-        use_case.create(&buyer, "concurrent", concurrent_input_b)
+        use_case.create_checkout(&buyer, "concurrent", concurrent_input_a),
+        use_case.create_checkout(&buyer, "concurrent", concurrent_input_b)
     );
     let (a, b) = (a.unwrap(), b.unwrap());
     assert_eq!(a.detail.purchase.id, b.detail.purchase.id);
@@ -265,7 +276,9 @@ async fn split_purchase_retries_isolation_snapshots_and_atomicity() {
     // purchase, payment, orders, addresses, items, allocations and histories.
     db.execute_unprepared("ALTER TABLE orders ADD CONSTRAINT test_reject_second_seller CHECK (tenant_id <> 2) NOT VALID;").await.unwrap();
     assert!(matches!(
-        use_case.create(&buyer, "rollback", input()).await,
+        use_case
+            .create_checkout(&buyer, "rollback", quote_input(&db, input()).await.unwrap())
+            .await,
         Err(PurchaseError::Persistence(_))
     ));
     assert_eq!(count(&db, "purchase").await, 2);
@@ -305,7 +318,7 @@ async fn split_purchase_retries_isolation_snapshots_and_atomicity() {
     assert_eq!(snapshot.orders[0].items[0].product_name, "Product 1");
     assert_eq!(
         use_case
-            .create(&buyer, "first", input())
+            .create_checkout(&buyer, "first", checkout(quote_id))
             .await
             .unwrap()
             .detail
@@ -318,7 +331,7 @@ async fn split_purchase_retries_isolation_snapshots_and_atomicity() {
         .await
         .unwrap();
     assert!(matches!(
-        use_case.create(&buyer, "inactive", input()).await,
+        create_with_quote(&use_case, &db, &buyer, "inactive", input()).await,
         Err(PurchaseError::Validation(_))
     ));
     db.execute_unprepared(
@@ -327,7 +340,7 @@ async fn split_purchase_retries_isolation_snapshots_and_atomicity() {
     .await
     .unwrap();
     assert!(matches!(
-        use_case.create(&buyer, "inactive-product", input()).await,
+        create_with_quote(&use_case, &db, &buyer, "inactive-product", input()).await,
         Err(PurchaseError::Validation(_))
     ));
     db.execute_unprepared(
@@ -336,7 +349,7 @@ async fn split_purchase_retries_isolation_snapshots_and_atomicity() {
     .await
     .unwrap();
     assert!(matches!(
-        use_case.create(&buyer, "missing-tax", input()).await,
+        create_with_quote(&use_case, &db, &buyer, "missing-tax", input()).await,
         Err(PurchaseError::Validation(_))
     ));
     db.execute_unprepared(
@@ -349,9 +362,45 @@ async fn split_purchase_retries_isolation_snapshots_and_atomicity() {
         item.quantity = i32::MAX;
     }
     assert!(matches!(
-        use_case.create(&buyer, "overflow", overflow).await,
+        create_with_quote(&use_case, &db, &buyer, "overflow", overflow).await,
         Err(PurchaseError::Validation(_))
     ));
     assert_eq!(count(&db, "purchase").await, 2);
     cleanup(root, db, schema).await;
+}
+
+fn checkout(quote_id: i64) -> CheckoutPurchaseInput {
+    CheckoutPurchaseInput {
+        quote_id,
+        email: "buyer@test.local".into(),
+        phone: "11999999999".into(),
+    }
+}
+async fn quote_input(
+    db: &DbConn,
+    input: CreatePurchaseInput,
+) -> Result<CheckoutPurchaseInput, PurchaseError> {
+    let quote = CheckoutQuoteUseCase::new(db.clone())
+        .create(
+            1,
+            QuoteRequest {
+                items: input.items,
+                address_id: None,
+                shipping_address: Some(input.shipping_address),
+                coupons: vec![],
+            },
+        )
+        .await?;
+    Ok(checkout(quote.id))
+}
+async fn create_with_quote(
+    use_case: &PurchaseUseCase,
+    db: &DbConn,
+    buyer: &User,
+    key: &str,
+    input: CreatePurchaseInput,
+) -> Result<CreatedPurchase, PurchaseError> {
+    use_case
+        .create_checkout(buyer, key, quote_input(db, input).await?)
+        .await
 }

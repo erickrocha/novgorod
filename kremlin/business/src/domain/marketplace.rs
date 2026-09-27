@@ -11,6 +11,7 @@ use std::collections::BTreeMap;
 pub enum PurchaseError {
     Validation(&'static str),
     DeliveryRateMissing(String),
+    ShippingUnavailable,
     NotFound,
     Forbidden,
     Conflict,
@@ -26,6 +27,7 @@ impl std::fmt::Display for PurchaseError {
         match self {
             Self::Validation(msg) => write!(f, "{msg}"),
             Self::DeliveryRateMissing(msg) => write!(f, "{msg}"),
+            Self::ShippingUnavailable => write!(f, "Shipping temporarily unavailable; retry later"),
             Self::NotFound => write!(f, "Not found"),
             Self::Forbidden => write!(f, "Forbidden"),
             Self::Conflict => write!(f, "Conflict"),
@@ -58,7 +60,7 @@ impl PurchaseAccess {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AddressInput {
     pub recipient: String,
@@ -105,14 +107,14 @@ impl AddressInput {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PurchaseItemInput {
     pub sku_id: i64,
     pub quantity: i32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CreatePurchaseInput {
     pub items: Vec<PurchaseItemInput>,

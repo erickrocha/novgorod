@@ -51,6 +51,10 @@ impl Modify for SecurityAddon {
 #[openapi(
     modifiers(&SecurityAddon),
     paths(
+        endpoints::checkout_quote_endpoint::quote,
+        endpoints::checkout_quote_endpoint::select_shipping,
+        endpoints::shipping_settings_endpoint::get,
+        endpoints::shipping_settings_endpoint::put,
         endpoints::tenant_endpoint::add,
         endpoints::tenant_endpoint::get_by_id,
         endpoints::tenant_endpoint::get_by_uuid,
@@ -316,6 +320,8 @@ struct ApiDoc;
 pub struct AppState {
     pub conn: Arc<DatabaseConnection>,
     pub storage: Arc<business::gateway::storage_gateway::StorageGateway>,
+    pub shipping: Arc<dyn business::gateway::shipping_provider_gateway::ShippingProviderGateway>,
+    pub shipping_keys: Arc<infrastructure::shipping_credentials::ShippingKeyRing>,
 }
 
 // ==================== Route Builders ====================
@@ -345,9 +351,19 @@ async fn start() -> anyhow::Result<()> {
     let storage = Arc::new(business::gateway::storage_gateway::StorageGateway::from_env().await);
     crate::infrastructure::sqs_consumer::spawn_sqs_consumer(connection.clone(), storage.clone());
 
+    let shipping_keys = Arc::new(
+        infrastructure::shipping_credentials::ShippingKeyRing::from_env()
+            .map_err(anyhow::Error::msg)?,
+    );
+    let shipping = Arc::new(
+        infrastructure::correios::Correios::new(connection.clone(), shipping_keys.clone())
+            .map_err(anyhow::Error::msg)?,
+    );
     let state = AppState {
         conn: Arc::new(connection),
         storage,
+        shipping,
+        shipping_keys,
     };
     crate::endpoints::checkout_payment_endpoint::spawn_payment_reconciliation(state.clone());
 
@@ -383,11 +399,17 @@ async fn start() -> anyhow::Result<()> {
         .merge(customer_routes(state.clone()))
         .merge(person_routes(state.clone()))
         .merge(order_routes(state.clone()))
-        .route("/webhooks/mercado-pago", post(endpoints::checkout_payment_endpoint::webhook))
+        .route(
+            "/webhooks/mercado-pago",
+            post(endpoints::checkout_payment_endpoint::webhook),
+        )
         .merge(cart_routes(state.clone()))
         .merge(marketing_routes(state.clone()))
         .merge(shipping_tax_routes(state.clone()))
         .nest("/tenant", tenant_routes(state.clone()))
+        .merge(routes::shipping_settings_routes::shipping_settings_routes(
+            state.clone(),
+        ))
         .nest("/user", user_routes(state.clone()))
         .nest("/api/public", web_store_routes())
         .layer(cors)
@@ -405,5 +427,21 @@ pub fn main() {
 
     if let Some(err) = result.err() {
         println!("Error: {err}");
+    }
+}
+
+#[cfg(test)]
+mod shipping_api_tests {
+    use super::*;
+    #[test]
+    fn shipping_endpoints_and_write_only_secrets_are_documented() {
+        let doc = serde_json::to_value(ApiDoc::openapi()).unwrap();
+        assert!(doc["paths"]["/checkout/quotes"]["post"].is_object());
+        assert!(doc["paths"]["/checkout/quotes/{id}/shipping-selection"]["post"].is_object());
+        assert!(doc["paths"]["/tenants/{tenantId}/shipping-settings"]["put"].is_object());
+        assert_eq!(
+            doc["components"]["schemas"]["CredentialsUpdate"]["properties"]["apiAccessCode"]["writeOnly"],
+            true
+        );
     }
 }

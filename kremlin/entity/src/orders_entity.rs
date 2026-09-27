@@ -22,6 +22,7 @@ pub struct Model {
     pub tax_total_cents: i64,
     pub total_cents: i64,
     pub coupon_id: Option<i64>,
+    pub shipping_snapshot: Option<Json>,
     pub coupon_code: Option<String>,
     pub placed_at: DateTime,
     pub created_at: DateTime,
@@ -43,27 +44,81 @@ pub enum Relation {
     PaymentAllocation,
 }
 impl RelationTrait for Relation {
- fn def(&self) -> RelationDef {
- match self {
-Self::Purchase => Entity::belongs_to(super::purchase_entity::Entity).from(Column::PurchaseId).to(super::purchase_entity::Column::Id).into(),
-Self::Customer => Entity::belongs_to(super::customer_entity::Entity).from(Column::CustomerId).to(super::customer_entity::Column::Id).into(),
-Self::Tenant => Entity::belongs_to(super::tenant_entity::Entity).from(Column::TenantId).to(super::tenant_entity::Column::Id).into(),
-Self::Coupon => Entity::belongs_to(super::coupon_entity::Entity).from(Column::CouponId).to(super::coupon_entity::Column::Id).into(),
-Self::OrderItem => Entity::has_many(super::order_item_entity::Entity).into(),
-Self::OrderAddress => Entity::has_many(super::order_address_entity::Entity).into(),
-Self::OrderStatusHistory => Entity::has_many(super::order_status_history_entity::Entity).into(),
-Self::CouponRedemption => Entity::has_many(super::coupon_redemption_entity::Entity).into(),
-Self::PaymentAllocation => Entity::has_many(super::payment_allocation_entity::Entity).into(),
+    fn def(&self) -> RelationDef {
+        match self {
+            Self::Purchase => Entity::belongs_to(super::purchase_entity::Entity)
+                .from(Column::PurchaseId)
+                .to(super::purchase_entity::Column::Id)
+                .into(),
+            Self::Customer => Entity::belongs_to(super::customer_entity::Entity)
+                .from(Column::CustomerId)
+                .to(super::customer_entity::Column::Id)
+                .into(),
+            Self::Tenant => Entity::belongs_to(super::tenant_entity::Entity)
+                .from(Column::TenantId)
+                .to(super::tenant_entity::Column::Id)
+                .into(),
+            Self::Coupon => Entity::belongs_to(super::coupon_entity::Entity)
+                .from(Column::CouponId)
+                .to(super::coupon_entity::Column::Id)
+                .into(),
+            Self::OrderItem => Entity::has_many(super::order_item_entity::Entity).into(),
+            Self::OrderAddress => Entity::has_many(super::order_address_entity::Entity).into(),
+            Self::OrderStatusHistory => {
+                Entity::has_many(super::order_status_history_entity::Entity).into()
+            }
+            Self::CouponRedemption => {
+                Entity::has_many(super::coupon_redemption_entity::Entity).into()
+            }
+            Self::PaymentAllocation => {
+                Entity::has_many(super::payment_allocation_entity::Entity).into()
+            }
+        }
+    }
 }
+impl Related<super::purchase_entity::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::Purchase.def()
+    }
 }
+impl Related<super::customer_entity::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::Customer.def()
+    }
 }
-impl Related<super::purchase_entity::Entity> for Entity { fn to() -> RelationDef { Relation::Purchase.def() } }
-impl Related<super::customer_entity::Entity> for Entity { fn to() -> RelationDef { Relation::Customer.def() } }
-impl Related<super::tenant_entity::Entity> for Entity { fn to() -> RelationDef { Relation::Tenant.def() } }
-impl Related<super::coupon_entity::Entity> for Entity { fn to() -> RelationDef { Relation::Coupon.def() } }
-impl Related<super::order_item_entity::Entity> for Entity { fn to() -> RelationDef { Relation::OrderItem.def() } }
-impl Related<super::order_address_entity::Entity> for Entity { fn to() -> RelationDef { Relation::OrderAddress.def() } }
-impl Related<super::order_status_history_entity::Entity> for Entity { fn to() -> RelationDef { Relation::OrderStatusHistory.def() } }
-impl Related<super::coupon_redemption_entity::Entity> for Entity { fn to() -> RelationDef { Relation::CouponRedemption.def() } }
-impl Related<super::payment_allocation_entity::Entity> for Entity { fn to() -> RelationDef { Relation::PaymentAllocation.def() } }
+impl Related<super::tenant_entity::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::Tenant.def()
+    }
+}
+impl Related<super::coupon_entity::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::Coupon.def()
+    }
+}
+impl Related<super::order_item_entity::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::OrderItem.def()
+    }
+}
+impl Related<super::order_address_entity::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::OrderAddress.def()
+    }
+}
+impl Related<super::order_status_history_entity::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::OrderStatusHistory.def()
+    }
+}
+impl Related<super::coupon_redemption_entity::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::CouponRedemption.def()
+    }
+}
+impl Related<super::payment_allocation_entity::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::PaymentAllocation.def()
+    }
+}
 crate::impl_auditable_before_save!(ActiveModel);

@@ -1,14 +1,14 @@
 use crate::domain::{enums::Role, marketplace::*, user::User};
-use crate::use_cases::checkout_quote_use_case::{CheckoutQuoteUseCase, QuoteResult};
 use crate::gateway::{
     order_address_gateway::OrderAddressGateway, order_item_gateway::OrderItemGateway,
     order_status_history_gateway::OrderStatusHistoryGateway, orders_gateway::OrdersGateway,
     payment_allocation_gateway::PaymentAllocationGateway, payment_gateway::PaymentGateway,
     purchase_gateway::PurchaseGateway,
 };
+use crate::use_cases::checkout_quote_use_case::{CheckoutQuoteUseCase, QuoteResult};
 use entity::{
-    order_address_entity, order_item_entity, order_status_history_entity, orders_entity,
-    payment_allocation_entity, payment_entity, purchase_entity, coupon_redemption_entity,
+    coupon_redemption_entity, order_address_entity, order_item_entity, order_status_history_entity,
+    orders_entity, payment_allocation_entity, payment_entity, purchase_entity,
 };
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, DbBackend, EntityTrait, QueryFilter, Set,
@@ -58,19 +58,38 @@ impl PurchaseUseCase {
         key: &str,
         input: CreatePurchaseInput,
     ) -> Result<CreatedPurchase, PurchaseError> {
-        self.create_internal(user, key, input, None).await
+        let _ = (user, key, input);
+        Err(PurchaseError::Validation(
+            "valid checkout shipping quote required",
+        ))
     }
 
-    pub async fn create_checkout(&self, user: &User, key: &str, checkout: CheckoutPurchaseInput) -> Result<CreatedPurchase, PurchaseError> {
+    pub async fn create_checkout(
+        &self,
+        user: &User,
+        key: &str,
+        checkout: CheckoutPurchaseInput,
+    ) -> Result<CreatedPurchase, PurchaseError> {
         let user_id = user.id.ok_or(PurchaseError::Forbidden)?;
         let customer = PurchaseGateway::customer_for_user(&self.gateway.db, user_id).await?;
-        let (request, quote) = CheckoutQuoteUseCase::load_any(&self.gateway.db, customer.id, checkout.quote_id).await?;
-        let input = CreatePurchaseInput { items: request.items, shipping_address: quote.shipping_address, billing_address: None };
+        let (request, quote) =
+            CheckoutQuoteUseCase::load_any(&self.gateway.db, customer.id, checkout.quote_id)
+                .await?;
+        let input = CreatePurchaseInput {
+            items: request.items,
+            shipping_address: quote.shipping_address,
+            billing_address: None,
+        };
         self.create_internal(user, key, input, Some(checkout)).await
     }
 
-    async fn create_internal(&self, user: &User, key: &str, input: CreatePurchaseInput,
-        checkout: Option<CheckoutPurchaseInput>) -> Result<CreatedPurchase, PurchaseError> {
+    async fn create_internal(
+        &self,
+        user: &User,
+        key: &str,
+        input: CreatePurchaseInput,
+        checkout: Option<CheckoutPurchaseInput>,
+    ) -> Result<CreatedPurchase, PurchaseError> {
         if user.role != Role::Customer {
             return Err(PurchaseError::Forbidden);
         }
@@ -80,8 +99,19 @@ impl PurchaseUseCase {
         let user_id = user.id.ok_or(PurchaseError::Forbidden)?;
         let input = input.normalize()?;
         let hash = if let Some(ref checkout) = checkout {
-            format!("{:x}", Sha256::digest(format!("{}:{}:{}:{}", input.request_hash(), checkout.quote_id, checkout.email, checkout.phone)))
-        } else { input.request_hash() };
+            format!(
+                "{:x}",
+                Sha256::digest(format!(
+                    "{}:{}:{}:{}",
+                    input.request_hash(),
+                    checkout.quote_id,
+                    checkout.email,
+                    checkout.phone
+                ))
+            )
+        } else {
+            input.request_hash()
+        };
         let tx = self.gateway.db.begin().await?;
         let customer = PurchaseGateway::customer_for_user(&tx, user_id).await?;
         let access = PurchaseAccess::Customer {
@@ -117,23 +147,88 @@ impl PurchaseUseCase {
         }
 
         let quote: Option<QuoteResult> = if let Some(ref checkout) = checkout {
-            let (request, stored) = CheckoutQuoteUseCase::load(&tx, customer.id, checkout.quote_id).await?;
-            if checkout.email.trim().is_empty() || checkout.email.len() > 500 || !checkout.email.contains('@')
-                || checkout.phone.trim().len() < 8 || checkout.phone.len() > 20 {
+            let (request, stored) =
+                CheckoutQuoteUseCase::load(&tx, customer.id, checkout.quote_id).await?;
+            if checkout.email.trim().is_empty()
+                || checkout.email.len() > 500
+                || !checkout.email.contains('@')
+                || checkout.phone.trim().len() < 8
+                || checkout.phone.len() > 20
+            {
                 return Err(PurchaseError::Validation("invalid order contact"));
             }
             // Serialize all reservations for each coupon before rechecking limits.
             for seller in &stored.sellers {
                 if let Some(coupon_id) = seller.coupon_id {
-                    tx.query_one_raw(Statement::from_sql_and_values(DbBackend::Postgres,
-                        "SELECT pg_advisory_xact_lock($1)", [coupon_id.into()])).await?;
+                    tx.query_one_raw(Statement::from_sql_and_values(
+                        DbBackend::Postgres,
+                        "SELECT pg_advisory_xact_lock($1)",
+                        [coupon_id.into()],
+                    ))
+                    .await?;
                 }
             }
-            let current = CheckoutQuoteUseCase::calculate(&tx, customer.id, &request).await?;
-            if current.items != stored.items || current.sellers != stored.sellers || current.shipping_address != stored.shipping_address
-                || current.total_cents != stored.total_cents { return Err(PurchaseError::Conflict); }
+            // Lock inputs before reading them, including absent shipping settings via the tenant row.
+            // Carrier requests only happen during quote creation, never under these locks.
+            for item in &stored.items {
+                tx.query_all_raw(Statement::from_sql_and_values(DbBackend::Postgres,
+                    "SELECT s.id FROM sku s JOIN product p ON p.id=s.product_id WHERE s.id=$1 FOR SHARE OF s,p", [item.sku_id.into()])).await?;
+                let stock = tx
+                    .query_one_raw(Statement::from_sql_and_values(
+                        DbBackend::Postgres,
+                        "SELECT quantity, reserved FROM sku_stock WHERE sku_id=$1 FOR UPDATE",
+                        [item.sku_id.into()],
+                    ))
+                    .await?
+                    .ok_or(PurchaseError::Validation("stock unavailable"))?;
+                if i64::from(stock.try_get::<i32>("", "quantity")?)
+                    - i64::from(stock.try_get::<i32>("", "reserved")?)
+                    < i64::from(item.quantity)
+                {
+                    return Err(PurchaseError::Validation("insufficient stock"));
+                }
+            }
+            for seller in &stored.sellers {
+                tx.query_one_raw(Statement::from_sql_and_values(
+                    DbBackend::Postgres,
+                    "SELECT id FROM tenant WHERE id=$1 FOR SHARE",
+                    [seller.tenant_id.into()],
+                ))
+                .await?;
+                tx.query_all_raw(Statement::from_sql_and_values(
+                    DbBackend::Postgres,
+                    "SELECT tenant_id FROM tenant_shipping_settings WHERE tenant_id=$1 FOR SHARE",
+                    [seller.tenant_id.into()],
+                ))
+                .await?;
+                tx.query_all_raw(Statement::from_sql_and_values(
+                    DbBackend::Postgres,
+                    "SELECT id FROM shipping_rate WHERE tenant_id=$1 FOR SHARE",
+                    [seller.tenant_id.into()],
+                ))
+                .await?;
+                if let Some(id) = seller.coupon_id {
+                    tx.query_one_raw(Statement::from_sql_and_values(
+                        DbBackend::Postgres,
+                        "SELECT id FROM coupon WHERE id=$1 FOR SHARE",
+                        [id.into()],
+                    ))
+                    .await?;
+                }
+            }
+            if let Some(id) = request.address_id {
+                tx.query_one_raw(Statement::from_sql_and_values(
+                    DbBackend::Postgres,
+                    "SELECT id FROM customer_address WHERE id=$1 FOR SHARE",
+                    [id.into()],
+                ))
+                .await?;
+            }
+            CheckoutQuoteUseCase::revalidate(&tx, customer.id, &request, &stored).await?;
             Some(stored)
-        } else { None };
+        } else {
+            None
+        };
 
         let tax_id = customer
             .cpf
@@ -190,10 +285,18 @@ impl PurchaseUseCase {
         let discount = quote.as_ref().map_or(0, |q| q.discount_cents);
         let shipping = quote.as_ref().map_or(0, |q| q.shipping_cents);
         let total = quote.as_ref().map_or(subtotal, |q| q.total_cents);
-        if quote.as_ref().is_some_and(|q| q.subtotal_cents != subtotal) { return Err(PurchaseError::Conflict); }
+        if quote.as_ref().is_some_and(|q| q.subtotal_cents != subtotal) {
+            return Err(PurchaseError::Conflict);
+        }
         let paid = checkout.is_some() && total == 0;
-        let order_email = checkout.as_ref().map(|c| c.email.trim().to_string()).or(Some(customer.email.clone()));
-        let order_phone = checkout.as_ref().map(|c| c.phone.trim().to_string()).or(customer.phone.clone());
+        let order_email = checkout
+            .as_ref()
+            .map(|c| c.email.trim().to_string())
+            .or(Some(customer.email.clone()));
+        let order_phone = checkout
+            .as_ref()
+            .map(|c| c.phone.trim().to_string())
+            .or(customer.phone.clone());
         let purchase = purchase_entity::ActiveModel {
             customer_id: Set(customer.id),
             customer_name: Set(customer.name.clone()),
@@ -234,7 +337,9 @@ impl PurchaseUseCase {
                 sum.checked_add(*item.total_cents.as_ref())
                     .ok_or(PurchaseError::Validation("amount overflow"))
             })?;
-            let pricing = quote.as_ref().and_then(|q| q.sellers.iter().find(|s| s.tenant_id == tenant_id));
+            let pricing = quote
+                .as_ref()
+                .and_then(|q| q.sellers.iter().find(|s| s.tenant_id == tenant_id));
             let seller_discount = pricing.map_or(0, |s| s.discount_cents);
             let seller_shipping = pricing.map_or(0, |s| s.shipping_cents);
             let total = seller_subtotal - seller_discount + seller_shipping;
@@ -267,6 +372,11 @@ impl PurchaseUseCase {
                     total_cents: Set(total),
                     coupon_id: Set(pricing.and_then(|s| s.coupon_id)),
                     coupon_code: Set(pricing.and_then(|s| s.coupon_code.clone())),
+                    shipping_snapshot: Set(pricing
+                        .and_then(|s| s.shipping.as_ref())
+                        .map(serde_json::to_value)
+                        .transpose()
+                        .map_err(|_| PurchaseError::Validation("invalid shipping snapshot"))?),
                     placed_at: Set(chrono::Utc::now().naive_utc()),
                     ..Default::default()
                 },
@@ -279,9 +389,15 @@ impl PurchaseUseCase {
                      (if paid { "redeemed" } else { "reserved" }).into(),
                      (chrono::Utc::now().naive_utc() + chrono::Duration::minutes(15)).into()])).await?;
                 if paid {
-                    coupon_redemption_entity::ActiveModel { tenant_id: Set(Some(tenant_id)), coupon_id: Set(coupon_id),
-                        order_id: Set(order.id), customer_id: Set(customer.id), ..Default::default() }
-                        .insert(&tx).await?;
+                    coupon_redemption_entity::ActiveModel {
+                        tenant_id: Set(Some(tenant_id)),
+                        coupon_id: Set(coupon_id),
+                        order_id: Set(order.id),
+                        customer_id: Set(customer.id),
+                        ..Default::default()
+                    }
+                    .insert(&tx)
+                    .await?;
                 }
             }
             for mut item in items {
@@ -349,7 +465,9 @@ impl PurchaseUseCase {
             let updated = tx.execute_raw(Statement::from_sql_and_values(DbBackend::Postgres,
                 "UPDATE checkout_quote SET purchase_id=$1 WHERE id=$2 AND customer_id=$3 AND purchase_id IS NULL AND expires_at > CURRENT_TIMESTAMP",
                 [purchase.id.into(), checkout.quote_id.into(), customer.id.into()])).await?;
-            if updated.rows_affected() != 1 { return Err(PurchaseError::Conflict); }
+            if updated.rows_affected() != 1 {
+                return Err(PurchaseError::Conflict);
+            }
         }
         let detail = PurchaseGateway::detail(&tx, access, purchase.id).await?;
         tx.commit().await?;

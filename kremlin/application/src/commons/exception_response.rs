@@ -7,6 +7,7 @@ pub type HttpResponse<T> = Result<T, ExceptionResponse>;
 
 #[derive(Debug)]
 pub enum ExceptionResponse {
+    ServiceUnavailable,
     Unauthorized(Locale, ErrorKey),
 
     Forbidden(Locale, ErrorKey),
@@ -23,6 +24,13 @@ pub enum ExceptionResponse {
 impl IntoResponse for ExceptionResponse {
     fn into_response(self) -> axum::http::Response<axum::body::Body> {
         let (status, payload) = match self {
+            Self::ServiceUnavailable => (
+                axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                ErrorResponseJson::new(
+                    "shipping_unavailable".into(),
+                    "Shipping temporarily unavailable; retry later".into(),
+                ),
+            ),
             ExceptionResponse::Unauthorized(locale, key) => (
                 axum::http::StatusCode::UNAUTHORIZED,
                 ErrorResponseJson::new(key.as_str().to_string(), translate(locale, key)),

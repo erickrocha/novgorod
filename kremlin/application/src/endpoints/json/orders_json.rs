@@ -1,6 +1,6 @@
-use serde::{Deserialize, Serialize};
-use utoipa::{ToSchema, IntoParams};
 use crate::commons::pagination::PageQuery;
+use serde::{Deserialize, Serialize};
+use utoipa::{IntoParams, ToSchema};
 
 #[derive(Debug, Clone, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
@@ -44,6 +44,7 @@ pub struct OrdersJson {
     pub tax_total_cents: i64,
     pub total_cents: i64,
     pub coupon_id: Option<i64>,
+    pub shipping_snapshot: Option<business::domain::shipping::ShippingSnapshot>,
     pub coupon_code: Option<String>,
     pub placed_at: chrono::NaiveDateTime,
     pub created_at: chrono::NaiveDateTime,
@@ -169,76 +170,88 @@ pub struct PaymentAllocationJson {
     pub updated_at: chrono::NaiveDateTime,
 }
 
-
 #[derive(Debug, Clone, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct OrderDetailJson {
- #[serde(flatten)]
- pub order: OrdersJson,
- pub items: Vec<OrderItemJson>,
- pub addresses: Vec<OrderAddressJson>,
- pub allocations: Vec<PaymentAllocationJson>,
+    #[serde(flatten)]
+    pub order: OrdersJson,
+    pub items: Vec<OrderItemJson>,
+    pub addresses: Vec<OrderAddressJson>,
+    pub allocations: Vec<PaymentAllocationJson>,
 }
 #[derive(Debug, Clone, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct PaymentDetailJson {
- #[serde(flatten)]
- pub payment: PaymentJson,
- pub card: Option<CreditCardDetailsJson>,
+    #[serde(flatten)]
+    pub payment: PaymentJson,
+    pub card: Option<CreditCardDetailsJson>,
 }
 #[derive(Debug, Clone, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct PurchaseDetailJson {
- #[serde(flatten)]
- pub purchase: PurchaseJson,
- pub orders: Vec<OrderDetailJson>,
- pub payments: Vec<PaymentDetailJson>,
+    #[serde(flatten)]
+    pub purchase: PurchaseJson,
+    pub orders: Vec<OrderDetailJson>,
+    pub payments: Vec<PaymentDetailJson>,
 }
 #[derive(Debug, Clone, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AddressInputJson {
- pub recipient: String,
- pub address_line1: String,
- pub address_line2: Option<String>,
- pub locality: String,
- pub administrative_area: String,
- pub postal_code: String,
- pub country_code: String,
+    pub recipient: String,
+    pub address_line1: String,
+    pub address_line2: Option<String>,
+    pub locality: String,
+    pub administrative_area: String,
+    pub postal_code: String,
+    pub country_code: String,
 }
 #[derive(Debug, Clone, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PurchaseItemInputJson {
- pub sku_id: i64,
- pub quantity: i32,
+    pub sku_id: i64,
+    pub quantity: i32,
 }
-/// Prices come from the catalog. No inventory is reserved or card charged.
-/// Shipping, discounts and taxes are zero in this persistence phase.
+/// Legacy input retained for internal compatibility. Customer checkout requires CheckoutPurchaseJson.
 #[derive(Debug, Clone, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CreatePurchaseInputJson {
- pub items: Vec<PurchaseItemInputJson>,
- pub shipping_address: AddressInputJson,
- pub billing_address: Option<AddressInputJson>,
+    pub items: Vec<PurchaseItemInputJson>,
+    pub shipping_address: AddressInputJson,
+    pub billing_address: Option<AddressInputJson>,
 }
 #[derive(Debug, Clone, Deserialize, IntoParams)]
 #[serde(rename_all = "camelCase")]
 pub struct OrdersPageQuery {
- pub page: Option<u64>,
- #[serde(alias = "page_size")]
- pub page_size: Option<u64>,
- pub q: Option<String>,
- #[serde(alias = "sort_by")]
- pub sort_by: Option<String>,
- #[serde(alias = "sort_dir")]
- pub sort_dir: Option<String>,
- pub status: Option<String>,
- #[serde(alias = "tenant_id")]
- pub tenant_id: Option<i64>,
- #[serde(alias = "customer_id")]
- pub customer_id: Option<i64>,
+    pub page: Option<u64>,
+    #[serde(alias = "page_size")]
+    pub page_size: Option<u64>,
+    pub q: Option<String>,
+    #[serde(alias = "sort_by")]
+    pub sort_by: Option<String>,
+    #[serde(alias = "sort_dir")]
+    pub sort_dir: Option<String>,
+    pub status: Option<String>,
+    #[serde(alias = "tenant_id")]
+    pub tenant_id: Option<i64>,
+    #[serde(alias = "customer_id")]
+    pub customer_id: Option<i64>,
 }
 impl OrdersPageQuery {
- pub fn to_page_query(&self) -> PageQuery {
- PageQuery { page: self.page, page_size: self.page_size, q: self.q.clone(), sort_by: self.sort_by.clone(), sort_dir: self.sort_dir.clone() }
- }
+    pub fn to_page_query(&self) -> PageQuery {
+        PageQuery {
+            page: self.page,
+            page_size: self.page_size,
+            q: self.q.clone(),
+            sort_by: self.sort_by.clone(),
+            sort_dir: self.sort_dir.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CheckoutPurchaseJson {
+    pub quote_id: i64,
+    pub email: String,
+    pub phone: String,
 }

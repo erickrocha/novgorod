@@ -1,92 +1,226 @@
-use crate::{domain::marketplace::{AddressInput, CreatePurchaseInput, PurchaseError, PurchaseItemInput}, gateway::purchase_gateway::PurchaseGateway};
+use crate::domain::shipping::*;
+use crate::gateway::{shipping_provider_gateway::*, shipping_settings_gateway};
+use crate::{
+    domain::marketplace::{AddressInput, CreatePurchaseInput, PurchaseError, PurchaseItemInput},
+    gateway::purchase_gateway::PurchaseGateway,
+};
 use chrono::{Duration, NaiveDateTime, Utc};
-use entity::{checkout_quote_entity, coupon_entity, coupon_redemption_entity, customer_address_entity, shipping_rate_entity};
-use sea_orm::{ActiveModelTrait, ColumnTrait, ConnectionTrait, DbBackend, DbConn, EntityTrait, PaginatorTrait, QueryFilter, Set, Statement};
+use entity::{
+    checkout_quote_entity, coupon_entity, coupon_redemption_entity, customer_address_entity,
+    shipping_rate_entity,
+};
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, DbBackend, DbConn, EntityTrait, PaginatorTrait,
+    QueryFilter, Set, Statement,
+};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct SellerCoupon { pub tenant_id: i64, pub code: String }
+pub struct SellerCoupon {
+    pub tenant_id: i64,
+    pub code: String,
+}
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct QuoteRequest {
     pub items: Vec<PurchaseItemInput>,
     pub address_id: Option<i64>,
     pub shipping_address: Option<AddressInput>,
-    #[serde(default)] pub coupons: Vec<SellerCoupon>,
+    #[serde(default)]
+    pub coupons: Vec<SellerCoupon>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct QuoteItem {
-    pub sku_id: i64, pub tenant_id: i64, pub name: String,
-    pub quantity: i32, pub unit_price_cents: i64, pub total_cents: i64,
+    pub sku_id: i64,
+    pub tenant_id: i64,
+    pub name: String,
+    pub quantity: i32,
+    pub unit_price_cents: i64,
+    pub total_cents: i64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SellerQuote {
-    pub tenant_id: i64, pub subtotal_cents: i64, pub discount_cents: i64,
-    pub shipping_cents: i64, pub total_cents: i64,
-    pub coupon_id: Option<i64>, pub coupon_code: Option<String>,
+    pub tenant_id: i64,
+    pub subtotal_cents: i64,
+    pub discount_cents: i64,
+    pub shipping_cents: i64,
+    pub total_cents: i64,
+    pub coupon_id: Option<i64>,
+    pub coupon_code: Option<String>,
+    #[serde(default)]
+    pub shipping: Option<ShippingSnapshot>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct QuoteResult {
-    pub id: i64, pub expires_at: NaiveDateTime,
+    pub id: i64,
+    pub expires_at: NaiveDateTime,
     pub shipping_address: AddressInput,
-    pub items: Vec<QuoteItem>, pub sellers: Vec<SellerQuote>,
-    pub subtotal_cents: i64, pub discount_cents: i64,
-    pub shipping_cents: i64, pub total_cents: i64,
+    pub items: Vec<QuoteItem>,
+    pub sellers: Vec<SellerQuote>,
+    pub subtotal_cents: i64,
+    pub discount_cents: i64,
+    pub shipping_cents: i64,
+    pub total_cents: i64,
 }
 
-pub struct CheckoutQuoteUseCase { db: DbConn }
+pub struct CheckoutQuoteUseCase {
+    db: DbConn,
+    provider: Option<Arc<dyn ShippingProviderGateway>>,
+}
 impl CheckoutQuoteUseCase {
-    pub fn new(db: DbConn) -> Self { Self { db } }
+    pub fn new(db: DbConn) -> Self {
+        Self { db, provider: None }
+    }
 
-    pub async fn create(&self, user_id: i64, request: QuoteRequest) -> Result<QuoteResult, PurchaseError> {
+    pub fn with_provider(db: DbConn, provider: Arc<dyn ShippingProviderGateway>) -> Self {
+        Self {
+            db,
+            provider: Some(provider),
+        }
+    }
+
+    pub async fn select(
+        &self,
+        user_id: i64,
+        id: i64,
+        selections: Vec<ShippingSelection>,
+    ) -> Result<QuoteResult, PurchaseError> {
         let customer = PurchaseGateway::customer_for_user(&self.db, user_id).await?;
-        let mut quote = Self::calculate(&self.db, customer.id, &request).await?;
-        let expiry = Utc::now().naive_utc() + Duration::minutes(15);
+        let (request, mut quote) = Self::load(&self.db, customer.id, id).await?;
+        Self::revalidate(&self.db, customer.id, &request, &quote).await?;
+        quote.select(selections)?;
         let record = checkout_quote_entity::ActiveModel {
             customer_id: Set(customer.id),
-            request: Set(serde_json::to_value(&request).map_err(|_| PurchaseError::Validation("invalid quote"))?),
-            result: Set(serde_json::to_value(&quote).map_err(|_| PurchaseError::Validation("invalid quote"))?),
-            expires_at: Set(expiry), created_at: Set(Utc::now().naive_utc()),
+            request: Set(serde_json::to_value(request)
+                .map_err(|_| PurchaseError::Validation("invalid quote"))?),
+            result: Set(serde_json::to_value(&quote)
+                .map_err(|_| PurchaseError::Validation("invalid quote"))?),
+            expires_at: Set(quote.expires_at),
+            created_at: Set(Utc::now().naive_utc()),
             ..Default::default()
-        }.insert(&self.db).await?;
+        }
+        .insert(&self.db)
+        .await?;
         quote.id = record.id;
-        quote.expires_at = expiry;
         Ok(quote)
     }
 
-    pub async fn load<C: ConnectionTrait>(db: &C, customer_id: i64, id: i64) -> Result<(QuoteRequest, QuoteResult), PurchaseError> {
+    pub async fn revalidate<C: ConnectionTrait>(
+        db: &C,
+        customer_id: i64,
+        request: &QuoteRequest,
+        stored: &QuoteResult,
+    ) -> Result<(), PurchaseError> {
+        let current = Self::calculate_inner(db, customer_id, request, None, Some(stored)).await?;
+        if current.items != stored.items
+            || current.sellers != stored.sellers
+            || current.shipping_address != stored.shipping_address
+            || current.total_cents != stored.total_cents
+        {
+            return Err(PurchaseError::Conflict);
+        }
+        Ok(())
+    }
+
+    pub async fn create(
+        &self,
+        user_id: i64,
+        request: QuoteRequest,
+    ) -> Result<QuoteResult, PurchaseError> {
+        let customer = PurchaseGateway::customer_for_user(&self.db, user_id).await?;
+        let mut quote = Self::calculate_inner(
+            &self.db,
+            customer.id,
+            &request,
+            self.provider.as_deref(),
+            None,
+        )
+        .await?;
+        let expiry = Utc::now().naive_utc() + Duration::minutes(15);
+        let record = checkout_quote_entity::ActiveModel {
+            customer_id: Set(customer.id),
+            request: Set(serde_json::to_value(&request)
+                .map_err(|_| PurchaseError::Validation("invalid quote"))?),
+            result: Set(serde_json::to_value(&quote)
+                .map_err(|_| PurchaseError::Validation("invalid quote"))?),
+            expires_at: Set(expiry),
+            created_at: Set(Utc::now().naive_utc()),
+            ..Default::default()
+        }
+        .insert(&self.db)
+        .await?;
+        quote.id = record.id;
+        quote.expires_at = record.expires_at;
+        Ok(quote)
+    }
+
+    pub async fn load<C: ConnectionTrait>(
+        db: &C,
+        customer_id: i64,
+        id: i64,
+    ) -> Result<(QuoteRequest, QuoteResult), PurchaseError> {
         let (request, result) = Self::load_any(db, customer_id, id).await?;
-        if result.expires_at <= Utc::now().naive_utc() { return Err(PurchaseError::Conflict); }
+        if result.expires_at <= Utc::now().naive_utc() {
+            return Err(PurchaseError::Conflict);
+        }
         Ok((request, result))
     }
 
-    pub async fn load_any<C: ConnectionTrait>(db: &C, customer_id: i64, id: i64) -> Result<(QuoteRequest, QuoteResult), PurchaseError> {
-        let record = checkout_quote_entity::Entity::find_by_id(id).one(db).await?
+    pub async fn load_any<C: ConnectionTrait>(
+        db: &C,
+        customer_id: i64,
+        id: i64,
+    ) -> Result<(QuoteRequest, QuoteResult), PurchaseError> {
+        let record = checkout_quote_entity::Entity::find_by_id(id)
+            .one(db)
+            .await?
             .ok_or(PurchaseError::NotFound)?;
-        if record.customer_id != customer_id { return Err(PurchaseError::NotFound); }
-        let request = serde_json::from_value(record.request).map_err(|_| PurchaseError::Validation("invalid quote"))?;
-        let mut result: QuoteResult = serde_json::from_value(record.result).map_err(|_| PurchaseError::Validation("invalid quote"))?;
+        if record.customer_id != customer_id {
+            return Err(PurchaseError::NotFound);
+        }
+        let request = serde_json::from_value(record.request)
+            .map_err(|_| PurchaseError::Validation("invalid quote"))?;
+        let mut result: QuoteResult = serde_json::from_value(record.result)
+            .map_err(|_| PurchaseError::Validation("invalid quote"))?;
         result.id = id;
         result.expires_at = record.expires_at;
         Ok((request, result))
     }
 
-    pub async fn calculate<C: ConnectionTrait>(db: &C, customer_id: i64, request: &QuoteRequest) -> Result<QuoteResult, PurchaseError> {
+    pub async fn calculate<C: ConnectionTrait>(
+        db: &C,
+        customer_id: i64,
+        request: &QuoteRequest,
+    ) -> Result<QuoteResult, PurchaseError> {
+        Self::calculate_inner(db, customer_id, request, None, None).await
+    }
+    async fn calculate_inner<C: ConnectionTrait>(
+        db: &C,
+        customer_id: i64,
+        request: &QuoteRequest,
+        provider: Option<&dyn ShippingProviderGateway>,
+        stored: Option<&QuoteResult>,
+    ) -> Result<QuoteResult, PurchaseError> {
         if request.address_id.is_some() == request.shipping_address.is_some() {
             return Err(PurchaseError::Validation("choose one delivery address"));
         }
         let address = if let Some(id) = request.address_id {
-            let saved = customer_address_entity::Entity::find_by_id(id).one(db).await?
-                .filter(|a| a.customer_id == customer_id).ok_or(PurchaseError::NotFound)?;
+            let saved = customer_address_entity::Entity::find_by_id(id)
+                .one(db)
+                .await?
+                .filter(|a| a.customer_id == customer_id)
+                .ok_or(PurchaseError::NotFound)?;
             AddressInput {
                 recipient: saved.recipient,
                 address_line1: saved.address_line1.unwrap_or_default(),
@@ -96,49 +230,220 @@ impl CheckoutQuoteUseCase {
                 postal_code: saved.postal_code.unwrap_or_default(),
                 country_code: saved.country_code.unwrap_or_default(),
             }
-        } else { request.shipping_address.clone().expect("checked address") };
-        let normalized = CreatePurchaseInput { items: request.items.clone(), shipping_address: address, billing_address: None }.normalize()?;
-        let address = normalized.shipping_address;
-        if address.country_code != "BR" || address.administrative_area.len() != 2 || !address.administrative_area.bytes().all(|c| c.is_ascii_uppercase()) {
-            return Err(PurchaseError::Validation("Brazilian delivery address required"));
+        } else {
+            request.shipping_address.clone().expect("checked address")
+        };
+        let normalized = CreatePurchaseInput {
+            items: request.items.clone(),
+            shipping_address: address,
+            billing_address: None,
         }
+        .normalize()?;
+        let mut address = normalized.shipping_address;
+        address.postal_code = normalize_cep(&address.postal_code)?;
+        if address.country_code != "BR"
+            || address.administrative_area.len() != 2
+            || !address
+                .administrative_area
+                .bytes()
+                .all(|c| c.is_ascii_uppercase())
+        {
+            return Err(PurchaseError::Validation(
+                "Brazilian delivery address required",
+            ));
+        }
+        let mut inputs = BTreeMap::<i64, Vec<(entity::sku_entity::Model, i32)>>::new();
         let mut items = Vec::new();
         let mut seller_subtotals = BTreeMap::<i64, i64>::new();
         for line in normalized.items {
             let (sku, product, _) = PurchaseGateway::catalog(db, line.sku_id).await?;
-            let tenant_id = sku.tenant_id.ok_or(PurchaseError::Validation("seller required"))?;
-            let total_cents = i64::from(sku.price_cents).checked_mul(i64::from(line.quantity)).ok_or(PurchaseError::Validation("amount overflow"))?;
-            *seller_subtotals.entry(tenant_id).or_default() = seller_subtotals.get(&tenant_id).copied().unwrap_or(0)
-                .checked_add(total_cents).ok_or(PurchaseError::Validation("amount overflow"))?;
-            items.push(QuoteItem { sku_id: sku.id, tenant_id, name: product.name, quantity: line.quantity,
-                unit_price_cents: i64::from(sku.price_cents), total_cents });
+            let tenant_id = sku
+                .tenant_id
+                .ok_or(PurchaseError::Validation("seller required"))?;
+            let total_cents = i64::from(sku.price_cents)
+                .checked_mul(i64::from(line.quantity))
+                .ok_or(PurchaseError::Validation("amount overflow"))?;
+            *seller_subtotals.entry(tenant_id).or_default() = seller_subtotals
+                .get(&tenant_id)
+                .copied()
+                .unwrap_or(0)
+                .checked_add(total_cents)
+                .ok_or(PurchaseError::Validation("amount overflow"))?;
+            inputs
+                .entry(tenant_id)
+                .or_default()
+                .push((sku.clone(), line.quantity));
+            items.push(QuoteItem {
+                sku_id: sku.id,
+                tenant_id,
+                name: product.name,
+                quantity: line.quantity,
+                unit_price_cents: i64::from(sku.price_cents),
+                total_cents,
+            });
         }
         let mut codes = BTreeMap::new();
         for coupon in &request.coupons {
-            if coupon.code.trim().is_empty() || coupon.code.len() > 40 || codes.insert(coupon.tenant_id, coupon.code.trim().to_uppercase()).is_some() {
+            if coupon.code.trim().is_empty()
+                || coupon.code.len() > 40
+                || codes
+                    .insert(coupon.tenant_id, coupon.code.trim().to_uppercase())
+                    .is_some()
+            {
                 return Err(PurchaseError::Validation("invalid seller coupon"));
             }
         }
-        if codes.keys().any(|id| !seller_subtotals.contains_key(id)) { return Err(PurchaseError::Validation("coupon seller absent")); }
+        if codes.keys().any(|id| !seller_subtotals.contains_key(id)) {
+            return Err(PurchaseError::Validation("coupon seller absent"));
+        }
         let mut sellers = Vec::new();
         let mut totals = (0_i64, 0_i64, 0_i64, 0_i64);
         for (tenant_id, subtotal_cents) in seller_subtotals {
-            let shipping = shipping_rate_entity::Entity::find()
-                .filter(shipping_rate_entity::Column::TenantId.eq(tenant_id))
-                .filter(shipping_rate_entity::Column::Uf.eq(&address.administrative_area))
-                .one(db).await?;
-            let shipping = match shipping {
-                Some(s) => s,
-                None => {
-                    let tenant = entity::tenant_entity::Entity::find_by_id(tenant_id).one(db).await?;
-                    let seller_name = tenant.map(|t| t.business_name).unwrap_or_else(|| format!("Vendedor {}", tenant_id));
-                    return Err(PurchaseError::DeliveryRateMissing(format!(
-                        "O vendedor {} não entrega para o estado {}.",
-                        seller_name, address.administrative_area
-                    )));
+            let (version, config) = shipping_settings_gateway::configuration(db, tenant_id).await?;
+            let seller_inputs = inputs.get(&tenant_id).ok_or(PurchaseError::Conflict)?;
+            let mut parcel = Parcel::default();
+            let measurements: Vec<_> = seller_inputs
+                .iter()
+                .map(|(sku, q)| {
+                    (
+                        sku.id,
+                        *q,
+                        sku.weight_g,
+                        sku.length_mm,
+                        sku.width_mm,
+                        sku.height_mm,
+                    )
+                })
+                .collect();
+            if config.mode == ShippingMode::Correios {
+                for (sku, quantity) in seller_inputs {
+                    parcel.add_item(
+                        sku.weight_g,
+                        sku.length_mm,
+                        sku.width_mm,
+                        sku.height_mm,
+                        *quantity,
+                    )?;
                 }
+                parcel = parcel.packaged(&config.packaging)?;
+            }
+            let fixed = if config.mode == ShippingMode::Fixed {
+                let rate = shipping_rate_entity::Entity::find()
+                    .filter(shipping_rate_entity::Column::TenantId.eq(tenant_id))
+                    .filter(shipping_rate_entity::Column::Uf.eq(&address.administrative_area))
+                    .one(db)
+                    .await?
+                    .ok_or_else(|| {
+                        PurchaseError::DeliveryRateMissing(format!(
+                            "Seller {tenant_id} does not deliver to {}",
+                            address.administrative_area
+                        ))
+                    })?;
+                if rate.price_cents < 0 {
+                    return Err(PurchaseError::Validation("invalid shipping rate"));
+                }
+                Some(i64::from(rate.price_cents))
+            } else {
+                None
             };
-            if shipping.price_cents < 0 { return Err(PurchaseError::Validation("invalid shipping rate")); }
+            let inputs_hash = format!(
+                "{:x}",
+                Sha256::digest(
+                    serde_json::to_vec(&(&measurements, &config, fixed))
+                        .map_err(|_| PurchaseError::Validation("invalid shipping inputs"))?
+                )
+            );
+            let mut snapshot = ShippingSnapshot {
+                configuration_version: version,
+                mode: config.mode,
+                origin_cep: config.origin_cep.clone(),
+                destination_cep: address.postal_code.clone(),
+                parcel: (config.mode == ShippingMode::Correios).then_some(parcel.clone()),
+                inputs_hash,
+                options: Vec::new(),
+                selected_option: ShippingOption {
+                    id: String::new(),
+                    provider: String::new(),
+                    service_code: String::new(),
+                    service_name: String::new(),
+                    price_cents: 0,
+                    transit_days: None,
+                },
+            };
+            let shipping_metadata;
+            let shipping_cents;
+            if let Some(stored) = stored {
+                let seller = stored
+                    .sellers
+                    .iter()
+                    .find(|s| s.tenant_id == tenant_id)
+                    .ok_or(PurchaseError::Conflict)?;
+                if let Some(old) = &seller.shipping {
+                    snapshot.options = old.options.clone();
+                    snapshot.selected_option = old.selected_option.clone();
+                    if &snapshot != old
+                        || !old.options.contains(&old.selected_option)
+                        || old.selected_option.price_cents != seller.shipping_cents
+                    {
+                        return Err(PurchaseError::Conflict);
+                    }
+                } else if config.mode != ShippingMode::Fixed
+                    || fixed != Some(seller.shipping_cents)
+                    || version != 0
+                {
+                    return Err(PurchaseError::Conflict);
+                }
+                shipping_metadata = seller.shipping.clone();
+                shipping_cents = seller.shipping_cents;
+            } else {
+                let mut options = if let Some(price) = fixed {
+                    vec![ShippingOption {
+                        id: uuid::Uuid::new_v4().to_string(),
+                        provider: "fixed".into(),
+                        service_code: "fixed".into(),
+                        service_name: "Entrega".into(),
+                        price_cents: price,
+                        transit_days: None,
+                    }]
+                } else {
+                    provider
+                        .ok_or(PurchaseError::ShippingUnavailable)?
+                        .quote(ShippingRequest {
+                            tenant_id,
+                            configuration_version: version,
+                            origin_cep: config
+                                .origin_cep
+                                .clone()
+                                .ok_or(PurchaseError::Validation("shipping origin required"))?,
+                            destination_cep: address.postal_code.clone(),
+                            parcel,
+                            services: config.services.clone(),
+                        })
+                        .await
+                        .map_err(|e| match e {
+                            ShippingProviderError::UnsupportedParcel => PurchaseError::Validation(
+                                "parcel unsupported by Correios; parcel splitting is unavailable",
+                            ),
+                            ShippingProviderError::NoDelivery => PurchaseError::Validation(
+                                "no shipping service available for this address",
+                            ),
+                            _ => PurchaseError::ShippingUnavailable,
+                        })?
+                };
+                if options.is_empty() {
+                    return Err(PurchaseError::Validation(
+                        "seller has no available shipping service",
+                    ));
+                }
+                if options.iter().any(|o| o.price_cents < 0) {
+                    return Err(PurchaseError::ShippingUnavailable);
+                }
+                sort_options(&mut options);
+                snapshot.selected_option = options[0].clone();
+                snapshot.options = options;
+                shipping_cents = snapshot.selected_option.price_cents;
+                shipping_metadata = Some(snapshot);
+            }
             let mut discount_cents = 0_i64;
             let mut coupon_id = None;
             let mut coupon_code = None;
@@ -147,10 +452,16 @@ impl CheckoutQuoteUseCase {
                     .filter(coupon_entity::Column::TenantId.eq(tenant_id))
                     .filter(coupon_entity::Column::Code.eq(code))
                     .filter(coupon_entity::Column::Active.eq(true))
-                    .one(db).await?.ok_or(PurchaseError::Validation("coupon unavailable"))?;
+                    .one(db)
+                    .await?
+                    .ok_or(PurchaseError::Validation("coupon unavailable"))?;
                 let now = Utc::now().naive_utc();
-                if coupon.starts_at.is_some_and(|v| v > now) || coupon.expires_at.is_some_and(|v| v <= now)
-                    || coupon.min_order_cents.is_some_and(|v| subtotal_cents < i64::from(v)) {
+                if coupon.starts_at.is_some_and(|v| v > now)
+                    || coupon.expires_at.is_some_and(|v| v <= now)
+                    || coupon
+                        .min_order_cents
+                        .is_some_and(|v| subtotal_cents < i64::from(v))
+                {
                     return Err(PurchaseError::Validation("coupon unavailable"));
                 }
                 let redeemed = coupon_redemption_entity::Entity::find()
@@ -158,31 +469,179 @@ impl CheckoutQuoteUseCase {
                 let reserved = db.query_one_raw(Statement::from_sql_and_values(DbBackend::Postgres,
                     "SELECT COUNT(*) AS total, COUNT(*) FILTER (WHERE customer_id=$2) AS customer FROM checkout_coupon_reservation WHERE coupon_id=$1 AND status='reserved' AND expires_at > CURRENT_TIMESTAMP",
                     [coupon.id.into(), customer_id.into()])).await?.ok_or(PurchaseError::Validation("reservation count failed"))?;
-                let total_uses = redeemed.clone().count(db).await? + reserved.try_get::<i64>("", "total")? as u64;
-                let customer_uses = redeemed.filter(coupon_redemption_entity::Column::CustomerId.eq(customer_id)).count(db).await?
+                let total_uses = redeemed.clone().count(db).await?
+                    + reserved.try_get::<i64>("", "total")? as u64;
+                let customer_uses = redeemed
+                    .filter(coupon_redemption_entity::Column::CustomerId.eq(customer_id))
+                    .count(db)
+                    .await?
                     + reserved.try_get::<i64>("", "customer")? as u64;
-                if coupon.max_uses.is_some_and(|v| total_uses >= v as u64) || coupon.max_uses_per_customer.is_some_and(|v| customer_uses >= v as u64) {
+                if coupon.max_uses.is_some_and(|v| total_uses >= v as u64)
+                    || coupon
+                        .max_uses_per_customer
+                        .is_some_and(|v| customer_uses >= v as u64)
+                {
                     return Err(PurchaseError::Validation("coupon exhausted"));
                 }
                 discount_cents = match coupon.coupon_type.as_str() {
-                    "PERCENTAGE" if (0..=100).contains(&coupon.value) => (subtotal_cents * i64::from(coupon.value) + 50) / 100,
+                    "PERCENTAGE" if (0..=100).contains(&coupon.value) => {
+                        subtotal_cents
+                            .checked_mul(i64::from(coupon.value))
+                            .and_then(|v| v.checked_add(50))
+                            .ok_or(PurchaseError::Validation("amount overflow"))?
+                            / 100
+                    }
                     "FIXED" if coupon.value >= 0 => i64::from(coupon.value),
                     _ => return Err(PurchaseError::Validation("invalid coupon")),
-                }.min(subtotal_cents);
+                }
+                .min(subtotal_cents);
                 coupon_id = Some(coupon.id);
                 coupon_code = Some(coupon.code);
             }
-            let shipping_cents = i64::from(shipping.price_cents);
-            let total_cents = subtotal_cents - discount_cents + shipping_cents;
-            totals.0 = totals.0.checked_add(subtotal_cents).ok_or(PurchaseError::Validation("amount overflow"))?;
-            totals.1 = totals.1.checked_add(discount_cents).ok_or(PurchaseError::Validation("amount overflow"))?;
-            totals.2 = totals.2.checked_add(shipping_cents).ok_or(PurchaseError::Validation("amount overflow"))?;
-            totals.3 = totals.3.checked_add(total_cents).ok_or(PurchaseError::Validation("amount overflow"))?;
-            sellers.push(SellerQuote { tenant_id, subtotal_cents, discount_cents, shipping_cents, total_cents, coupon_id, coupon_code });
+            let total_cents = (subtotal_cents - discount_cents)
+                .checked_add(shipping_cents)
+                .ok_or(PurchaseError::Validation("amount overflow"))?;
+            totals.0 = totals
+                .0
+                .checked_add(subtotal_cents)
+                .ok_or(PurchaseError::Validation("amount overflow"))?;
+            totals.1 = totals
+                .1
+                .checked_add(discount_cents)
+                .ok_or(PurchaseError::Validation("amount overflow"))?;
+            totals.2 = totals
+                .2
+                .checked_add(shipping_cents)
+                .ok_or(PurchaseError::Validation("amount overflow"))?;
+            totals.3 = totals
+                .3
+                .checked_add(total_cents)
+                .ok_or(PurchaseError::Validation("amount overflow"))?;
+            sellers.push(SellerQuote {
+                tenant_id,
+                subtotal_cents,
+                discount_cents,
+                shipping_cents,
+                total_cents,
+                coupon_id,
+                coupon_code,
+                shipping: shipping_metadata,
+            });
         }
-        if sellers.is_empty() { return Err(PurchaseError::Validation("empty cart")); }
-        Ok(QuoteResult { id: 0, expires_at: Utc::now().naive_utc(), shipping_address: address,
-            items, sellers, subtotal_cents: totals.0, discount_cents: totals.1,
-            shipping_cents: totals.2, total_cents: totals.3 })
+        if sellers.is_empty() {
+            return Err(PurchaseError::Validation("empty cart"));
+        }
+        Ok(QuoteResult {
+            id: 0,
+            expires_at: Utc::now().naive_utc(),
+            shipping_address: address,
+            items,
+            sellers,
+            subtotal_cents: totals.0,
+            discount_cents: totals.1,
+            shipping_cents: totals.2,
+            total_cents: totals.3,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ShippingSelection {
+    pub tenant_id: i64,
+    pub option_id: String,
+}
+impl QuoteResult {
+    pub fn select(&mut self, selections: Vec<ShippingSelection>) -> Result<(), PurchaseError> {
+        let count = selections.len();
+        let selections: BTreeMap<_, _> = selections
+            .into_iter()
+            .map(|s| (s.tenant_id, s.option_id))
+            .collect();
+        if selections.len() != count || count != self.sellers.len() {
+            return Err(PurchaseError::Validation(
+                "one shipping selection per seller required",
+            ));
+        }
+        let mut sellers = self.sellers.clone();
+        let mut shipping = 0_i64;
+        let mut total = 0_i64;
+        for seller in &mut sellers {
+            let id = selections
+                .get(&seller.tenant_id)
+                .ok_or(PurchaseError::Validation("missing seller selection"))?;
+            let snapshot = seller.shipping.as_mut().ok_or(PurchaseError::Conflict)?;
+            snapshot.selected_option = snapshot
+                .options
+                .iter()
+                .find(|o| &o.id == id)
+                .cloned()
+                .ok_or(PurchaseError::Validation("unknown shipping option"))?;
+            seller.shipping_cents = snapshot.selected_option.price_cents;
+            seller.total_cents = (seller.subtotal_cents - seller.discount_cents)
+                .checked_add(seller.shipping_cents)
+                .ok_or(PurchaseError::Validation("amount overflow"))?;
+            shipping = shipping
+                .checked_add(seller.shipping_cents)
+                .ok_or(PurchaseError::Validation("amount overflow"))?;
+            total = total
+                .checked_add(seller.total_cents)
+                .ok_or(PurchaseError::Validation("amount overflow"))?;
+        }
+        self.sellers = sellers;
+        self.shipping_cents = shipping;
+        self.total_cents = total;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod shipping_tests {
+    use super::*;
+    #[test]
+    fn selection_recalculates_totals_and_rejects_invalid_sets_atomically() {
+        let mut quote: QuoteResult = serde_json::from_value(serde_json::json!({
+            "id":1,"expiresAt":"2026-09-26T12:00:00","shippingAddress":{"recipient":"Buyer","addressLine1":"A","addressLine2":null,"locality":"City","administrativeArea":"SP","postalCode":"01001000","countryCode":"BR"},
+            "items":[],"sellers":[{"tenantId":1,"subtotalCents":1000,"discountCents":100,"shippingCents":200,"totalCents":1100,"couponId":null,"couponCode":null,
+            "shipping":{"configurationVersion":1,"mode":"correios","originCep":"01001000","destinationCep":"01001000","parcel":null,"inputsHash":"hash",
+            "options":[{"id":"a","provider":"correios","serviceCode":"A","serviceName":"A","priceCents":200,"transitDays":5},{"id":"b","provider":"correios","serviceCode":"B","serviceName":"B","priceCents":300,"transitDays":2}],
+            "selectedOption":{"id":"a","provider":"correios","serviceCode":"A","serviceName":"A","priceCents":200,"transitDays":5}}}],
+            "subtotalCents":1000,"discountCents":100,"shippingCents":200,"totalCents":1100
+        })).unwrap();
+        let old = quote.clone();
+        for selections in [
+            vec![],
+            vec![ShippingSelection {
+                tenant_id: 2,
+                option_id: "b".into(),
+            }],
+            vec![ShippingSelection {
+                tenant_id: 1,
+                option_id: "fake".into(),
+            }],
+            vec![
+                ShippingSelection {
+                    tenant_id: 1,
+                    option_id: "a".into(),
+                },
+                ShippingSelection {
+                    tenant_id: 1,
+                    option_id: "b".into(),
+                },
+            ],
+        ] {
+            assert!(quote.select(selections).is_err());
+            assert_eq!(quote, old);
+        }
+        quote
+            .select(vec![ShippingSelection {
+                tenant_id: 1,
+                option_id: "b".into(),
+            }])
+            .unwrap();
+        assert_eq!(quote.total_cents, 1200);
+        assert_eq!(quote.shipping_cents, 300);
+        assert_eq!(quote.expires_at, old.expires_at);
+        assert_eq!(quote.discount_cents, 100);
     }
 }
