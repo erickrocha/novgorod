@@ -61,6 +61,7 @@ export const CheckoutPage = () => {
   const [payment, setPayment] = useState<PaymentState | null>(null);
   const [paymentMethod, setPaymentMethod] = useState<'credit_card'>('credit_card');
   const [busy, setBusy] = useState(false);
+  const [shippingBusy, setShippingBusy] = useState(false);
   const [error, setError] = useState('');
 
   const completeSavedAddresses = useMemo(() => {
@@ -211,6 +212,27 @@ export const CheckoutPage = () => {
       setError(errorText(e));
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function handleSelectShipping(tenantId: number, optionId: string) {
+    if (!quote || shippingBusy) return;
+    setShippingBusy(true);
+    setError('');
+    try {
+      const selections = quote.sellers.map(s => ({
+        tenantId: s.tenantId,
+        optionId: s.tenantId === tenantId ? optionId : (s.shipping?.selectedOption.id || ''),
+      }));
+      const updated = await checkoutService.selectShipping(quote.id, selections);
+      setQuote(updated);
+      if (updated.totalCents > 0) {
+        checkoutService.paymentConfig().then(cfg => setPublicKey(cfg.publicKey)).catch(() => {});
+      }
+    } catch (e) {
+      setError(errorText(e));
+    } finally {
+      setShippingBusy(false);
     }
   }
 
@@ -560,11 +582,86 @@ export const CheckoutPage = () => {
               </section>
             )}
 
-            {/* Step 4: Payment */}
+            {/* Step 4: Shipping Selection */}
+            {quote && quote.sellers.some(s => s.shipping && s.shipping.options.length > 0) && (
+              <section className={box}>
+                <div className="flex items-center justify-between">
+                  <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
+                    <span className="flex h-7 w-7 items-center justify-center rounded-full bg-amber-600 text-white text-xs font-bold">4</span>
+                    <Truck className="h-5 w-5 text-amber-600" />
+                    Opções de entrega
+                  </h2>
+                  {shippingBusy && (
+                    <span className="text-xs text-amber-700 animate-pulse font-medium">Atualizando frete…</span>
+                  )}
+                </div>
+
+                <div className="space-y-4 pt-1">
+                  {quote.sellers.map(seller => {
+                    const options = seller.shipping?.options || [];
+                    if (options.length === 0) return null;
+                    const selectedId = seller.shipping?.selectedOption?.id;
+
+                    return (
+                      <div key={seller.tenantId} className="space-y-2">
+                        {quote.sellers.length > 1 && (
+                          <h3 className="text-sm font-bold text-slate-800">
+                            {sellerName(seller.tenantId)}
+                          </h3>
+                        )}
+                        <fieldset className="space-y-2">
+                          <legend className="sr-only">Opções de entrega para {sellerName(seller.tenantId)}</legend>
+                          {options.map(opt => {
+                            const isSelected = selectedId === opt.id;
+                            return (
+                              <label
+                                key={opt.id}
+                                className={`flex items-center justify-between p-3.5 rounded-2xl border cursor-pointer transition-colors ${
+                                  isSelected
+                                    ? 'border-amber-600 bg-amber-50/40 ring-1 ring-amber-600'
+                                    : 'border-slate-200 hover:border-slate-300'
+                                } ${shippingBusy ? 'opacity-60 cursor-not-allowed' : ''}`}
+                              >
+                                <div className="flex items-center gap-3">
+                                  <input
+                                    type="radio"
+                                    name={`shipping-option-${seller.tenantId}`}
+                                    value={opt.id}
+                                    checked={isSelected}
+                                    disabled={shippingBusy}
+                                    onChange={() => handleSelectShipping(seller.tenantId, opt.id)}
+                                    className="text-amber-600 focus:ring-amber-500"
+                                  />
+                                  <div>
+                                    <span className="font-bold text-sm text-slate-900">{opt.serviceName || opt.serviceCode}</span>
+                                    {opt.transitDays != null && (
+                                      <p className="text-xs text-slate-500 mt-0.5">
+                                        Em até {opt.transitDays} {opt.transitDays === 1 ? 'dia útil' : 'dias úteis'}
+                                      </p>
+                                    )}
+                                  </div>
+                                </div>
+                                <span className="font-semibold text-sm text-slate-900">
+                                  {opt.priceCents === 0 ? 'Grátis' : money(opt.priceCents)}
+                                </span>
+                              </label>
+                            );
+                          })}
+                        </fieldset>
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
+            )}
+
+            {/* Step 5: Payment */}
             {quote && (
               <section className={box}>
                 <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
-                  <span className="flex h-7 w-7 items-center justify-center rounded-full bg-amber-600 text-white text-xs font-bold">4</span>
+                  <span className="flex h-7 w-7 items-center justify-center rounded-full bg-amber-600 text-white text-xs font-bold">
+                    {quote.sellers.some(s => s.shipping && s.shipping.options.length > 0) ? '5' : '4'}
+                  </span>
                   <CreditCard className="h-5 w-5 text-amber-600" />
                   Pagamento
                 </h2>
@@ -646,7 +743,12 @@ export const CheckoutPage = () => {
                       </div>
                     )}
                     <div className="flex justify-between text-slate-600">
-                      <span>Frete:</span>
+                      <span>
+                        Frete
+                        {seller.shipping?.selectedOption?.serviceName
+                          ? ` (${seller.shipping.selectedOption.serviceName})`
+                          : ''}:
+                      </span>
                       <span>{money(seller.shippingCents)}</span>
                     </div>
                     <div className="flex justify-between font-semibold text-slate-900 pt-1">

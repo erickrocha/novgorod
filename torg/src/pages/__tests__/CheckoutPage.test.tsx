@@ -102,7 +102,24 @@ const mockQuote: CheckoutQuote = {
     { skuId: 101, tenantId: 10, name: 'Vinho Tinto Reserva', quantity: 2, unitPriceCents: 10000, totalCents: 20000 },
   ],
   sellers: [
-    { tenantId: 10, subtotalCents: 20000, discountCents: 2000, shippingCents: 1500, totalCents: 19500, couponCode: 'VINHO10' },
+    {
+      tenantId: 10,
+      subtotalCents: 20000,
+      discountCents: 2000,
+      shippingCents: 1500,
+      totalCents: 19500,
+      couponCode: 'VINHO10',
+      shipping: {
+        configurationVersion: 1,
+        mode: 'correios',
+        destinationCep: '90000000',
+        options: [
+          { id: 'opt-pac', provider: 'correios', serviceCode: '04510', serviceName: 'PAC', priceCents: 1500, transitDays: 5 },
+          { id: 'opt-sedex', provider: 'correios', serviceCode: '04014', serviceName: 'SEDEX', priceCents: 2800, transitDays: 2 },
+        ],
+        selectedOption: { id: 'opt-pac', provider: 'correios', serviceCode: '04510', serviceName: 'PAC', priceCents: 1500, transitDays: 5 },
+      },
+    },
   ],
   subtotalCents: 20000,
   discountCents: 2000,
@@ -331,4 +348,70 @@ describe('CheckoutPage', () => {
       expect(screen.getByText(/#999/)).toBeInTheDocument();
     });
   });
+
+  it('allows buyer to select an alternative shipping option and recalculates totals', async () => {
+    const updatedQuote: CheckoutQuote = {
+      ...mockQuote,
+      id: 56,
+      shippingCents: 2800,
+      totalCents: 20800,
+      sellers: [
+        {
+          ...mockQuote.sellers[0],
+          shippingCents: 2800,
+          totalCents: 20800,
+          shipping: {
+            ...mockQuote.sellers[0].shipping!,
+            selectedOption: mockQuote.sellers[0].shipping!.options[1],
+          },
+        },
+      ],
+    };
+
+    vi.spyOn(authService, 'me').mockResolvedValue(mockCustomer);
+    vi.spyOn(checkoutService, 'quote').mockResolvedValue(mockQuote);
+    vi.spyOn(checkoutService, 'selectShipping').mockResolvedValue(updatedQuote);
+    vi.spyOn(checkoutService, 'paymentConfig').mockResolvedValue({ publicKey: 'TEST_MP_PUBLIC_KEY' });
+
+    const store = createTestStore({
+      auth: { token: 'mock-jwt-token', user: null, customer: null, isAuthenticated: true, loading: false },
+      cart: { items: [mockCartItem], isOpen: false },
+    });
+
+    render(
+      <Provider store={store}>
+        <MemoryRouter initialEntries={['/checkout']}>
+          <Routes>
+            <Route path="/checkout" element={<CheckoutPage />} />
+          </Routes>
+        </MemoryRouter>
+      </Provider>
+    );
+
+    const calcBtn = await screen.findByRole('button', { name: /Calcular total com frete/i });
+    await waitFor(() => expect(calcBtn).not.toBeDisabled());
+    fireEvent.click(calcBtn);
+
+    // Shipping options are rendered
+    await waitFor(() => {
+      expect(screen.getByText('Opções de entrega')).toBeInTheDocument();
+      expect(screen.getByText('PAC')).toBeInTheDocument();
+      expect(screen.getByText('SEDEX')).toBeInTheDocument();
+      expect(screen.getByText(/Em até 5 dias úteis/)).toBeInTheDocument();
+      expect(screen.getByText(/Em até 2 dias úteis/)).toBeInTheDocument();
+    });
+
+    // Select SEDEX
+    const sedexRadio = screen.getByDisplayValue('opt-sedex');
+    fireEvent.click(sedexRadio);
+
+    await waitFor(() => {
+      expect(checkoutService.selectShipping).toHaveBeenCalledWith(55, [
+        { tenantId: 10, optionId: 'opt-sedex' },
+      ]);
+      expect(screen.getByText(/Frete \(SEDEX\):/)).toBeInTheDocument();
+      expect(screen.getAllByText(/208,00/).length).toBeGreaterThan(0);
+    });
+  });
 });
+

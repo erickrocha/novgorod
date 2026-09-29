@@ -9,12 +9,45 @@ export interface DeliveryAddress {
   postalCode: string;
   countryCode: string;
 }
+export interface ShippingOption {
+  id: string;
+  provider: string;
+  serviceCode: string;
+  serviceName: string;
+  priceCents: number;
+  transitDays?: number;
+}
+
+export interface ShippingSnapshot {
+  configurationVersion: number;
+  mode: 'fixed' | 'correios';
+  originCep?: string | null;
+  destinationCep: string;
+  options: ShippingOption[];
+  selectedOption: ShippingOption;
+}
+
+export interface ShippingSelection {
+  tenantId: number;
+  optionId: string;
+}
+
+export interface SellerQuote {
+  tenantId: number;
+  subtotalCents: number;
+  discountCents: number;
+  shippingCents: number;
+  totalCents: number;
+  couponCode?: string;
+  shipping?: ShippingSnapshot;
+}
+
 export interface CheckoutQuote {
   id: number;
   expiresAt: string;
   shippingAddress: DeliveryAddress;
   items: Array<{ skuId: number; tenantId: number; name: string; quantity: number; unitPriceCents: number; totalCents: number }>;
-  sellers: Array<{ tenantId: number; subtotalCents: number; discountCents: number; shippingCents: number; totalCents: number; couponCode?: string }>;
+  sellers: SellerQuote[];
   subtotalCents: number;
   discountCents: number;
   shippingCents: number;
@@ -32,6 +65,9 @@ export interface PaymentState { purchaseId: number; status: string; reference?: 
 const checkoutService = {
   async quote(input: { items: Array<{ skuId: number; quantity: number }>; addressId?: number; shippingAddress?: DeliveryAddress; coupons: Array<{ tenantId: number; code: string }> }) {
     return (await apiClient.post<CheckoutQuote>('/checkout/quotes', input)).data;
+  },
+  async selectShipping(quoteId: number, selections: ShippingSelection[]) {
+    return (await apiClient.post<CheckoutQuote>(`/checkout/quotes/${quoteId}/shipping-selection`, selections)).data;
   },
   async createPurchase(quoteId: number, email: string, phone: string) {
     const key = crypto.randomUUID();

@@ -29,6 +29,7 @@
 - **Migraton:** should be simple and declarative. Should use the SeaORM migration framework.
 - **Error Handling:** Using `.unwrap()` in production code is strictly prohibited. Always propagate errors using `Result` and the `?` operator.
 - **Dependencies:** Do not add new crates to `Cargo.toml` without explicit permission.
+- **Tests:** All tests should be placed in test folder. One file per struct, for example shipping.rs shipping_test.rs. coupon_use_case.rs should have a test file named coupon_use_case_test.rs
 
 
 ## Project Architecture

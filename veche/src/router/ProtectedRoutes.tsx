@@ -35,6 +35,7 @@ import PersonAddressForm from "@/pages/Profile/PersonAddressForm";
 import Campaigns from "@/pages/Marketing/Campaigns";
 import Coupons from "@/pages/Marketing/Coupons";
 import ShippingRates from "@/pages/Operations/ShippingRates";
+import { ShippingSettings } from "@/pages/Operations/ShippingSettings";
 import TaxRules from "@/pages/Operations/TaxRules";
 import Inventory from "@/pages/Operations/Inventory";
 import ProductCategories from "@/pages/Catalog/ProductCategories";
@@ -92,6 +93,7 @@ export const ProtectedRoutes = () => (
                 {/* Operations & Settings */}
                 <Route path="/operations/inventory" element={<Inventory />} />
                 <Route path="/operations/shipping-rates" element={<ShippingRates />} />
+                <Route path="/operations/shipping-settings" element={<ShippingSettings />} />
                 <Route path="/operations/tax-rules" element={<TaxRules />} />
 
                 <Route path="/system-settings/provinces" element={<SysAdminOnly><Locations kind="provinces" /></SysAdminOnly>} />

@@ -450,5 +450,45 @@ export interface AvatarPresignResponse {
   cdnUrl?: string | null;
 }
 
+export type ShippingMode = "fixed" | "correios";
+
+export interface ShippingServiceConfig {
+  code: string;
+  name: string;
+}
+
+export interface ShippingPackagingConfig {
+  weightG: number;
+  lengthMm: number;
+  widthMm: number;
+  heightMm: number;
+}
+
+export interface ShippingConfig {
+  mode: ShippingMode;
+  originCep?: string | null;
+  services: ShippingServiceConfig[];
+  packaging: ShippingPackagingConfig;
+}
+
+export interface ShippingSettingsResponse {
+  configuration: ShippingConfig;
+  version: number;
+  credentialsConfigured: boolean;
+}
+
+export interface CorreiosCredentialsUpdate {
+  username?: string;
+  apiAccessCode?: string;
+  postingCard?: string;
+  contract?: string;
+  regionalIdentifier?: string;
+}
+
+export interface ShippingSettingsUpdate {
+  configuration: ShippingConfig;
+  credentials?: CorreiosCredentialsUpdate;
+}
+
 
 

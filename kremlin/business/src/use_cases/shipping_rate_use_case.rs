@@ -40,11 +40,7 @@ impl ShippingRateUseCase {
         Some(ShippingRateEntityMapper::from_model(entity))
     }
 
-    pub async fn update(
-        &self,
-        id: i64,
-        mut shipping_rate: ShippingRate,
-    ) -> Option<ShippingRate> {
+    pub async fn update(&self,id: i64,mut shipping_rate: ShippingRate) -> Option<ShippingRate> {
         shipping_rate.id = Some(id);
         let entity = self.gateway.persist(shipping_rate).await.map_err(|e| {
             log::error!("Failed to update shipping rate: {}", e);
@@ -59,3 +55,8 @@ impl ShippingRateUseCase {
         Some(())
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/use_cases/shipping_rate_use_case_test.rs"]
+mod tests;
+
