@@ -75,11 +75,11 @@ docker ps --filter "name=novgorod_postgres"
 
 Certifique-se de que o arquivo `kremlin/.env` contenha as chaves de criptografia para credenciais de frete:
 ```dotenv
-SHIPPING_ENCRYPTION_KEYS={"v1":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}
+SHIPPING_ENCRYPTION_KEYS='{"v1":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}'
 SHIPPING_ACTIVE_KEY_VERSION=v1
 CORREIOS_ENVIRONMENT=homologation
 ```
-> *Nota*: A chave hexadecimal de 64 caracteres acima serve para desenvolvimento e testes locais.
+> *Nota*: Use aspas simples (`'...'`) em volta do JSON de `SHIPPING_ENCRYPTION_KEYS` no `.env` para que o parser do `dotenvy` não remova as aspas duplas internas. A chave hexadecimal de 64 caracteres acima é a chave interna do sistema usada para criptografar as credenciais em repouso (AES-256-GCM) em desenvolvimento e testes locais; não é uma credencial gerada no site dos Correios.
 
 ### 2.3 Iniciar as Aplicações
 
