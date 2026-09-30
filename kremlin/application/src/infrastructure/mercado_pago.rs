@@ -118,6 +118,10 @@ impl PaymentProviderGateway for MercadoPago {
         let body = response.json().await.map_err(|e| ProviderError(e.to_string()))?;
         self.normalized(body)
     }
+
+    async fn search(&self, external_reference: &str) -> Result<Option<ProviderResult>, ProviderError> {
+        self.search(external_reference).await
+    }
 }
 
 #[cfg(test)]

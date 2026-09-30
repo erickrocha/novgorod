@@ -35,4 +35,5 @@ pub mod web_store_endpoint;
 pub mod welcome_endpoint;
 
 pub mod shipping_settings_endpoint;
+pub mod payment_settings_endpoint;
 pub mod warehouse_endpoint;

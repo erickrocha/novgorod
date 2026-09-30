@@ -55,6 +55,8 @@ impl Modify for SecurityAddon {
         endpoints::checkout_quote_endpoint::select_shipping,
         endpoints::shipping_settings_endpoint::get,
         endpoints::shipping_settings_endpoint::put,
+        endpoints::payment_settings_endpoint::get,
+        endpoints::payment_settings_endpoint::put,
         endpoints::tenant_endpoint::add,
         endpoints::tenant_endpoint::get_by_id,
         endpoints::tenant_endpoint::get_by_uuid,
@@ -288,6 +290,11 @@ impl Modify for SecurityAddon {
             endpoints::json::web_store_json::WebStoreSkuJson,
             endpoints::json::web_store_json::WebStoreSkuAttributeValueJson,
             endpoints::json::web_store_json::WebStoreAttributeJson,
+            endpoints::payment_settings_endpoint::PaymentSettingsResponse,
+            endpoints::payment_settings_endpoint::PaymentSettingsUpdate,
+            endpoints::payment_settings_endpoint::PaymentCredentialsUpdate,
+            endpoints::payment_settings_endpoint::MercadoPagoCredentialsUpdate,
+            endpoints::payment_settings_endpoint::PagSeguroCredentialsUpdate,
         ),
     ),
     tags(
@@ -331,6 +338,7 @@ pub struct AppState {
     pub storage: Arc<business::gateway::storage_gateway::StorageGateway>,
     pub shipping: Arc<dyn business::gateway::shipping_provider_gateway::ShippingProviderGateway>,
     pub shipping_keys: Arc<infrastructure::shipping_credentials::ShippingKeyRing>,
+    pub payment_keys: Arc<infrastructure::payment_credentials::PaymentKeyRing>,
 }
 
 // ==================== Route Builders ====================
@@ -364,6 +372,10 @@ async fn start() -> anyhow::Result<()> {
         infrastructure::shipping_credentials::ShippingKeyRing::from_env()
             .map_err(anyhow::Error::msg)?,
     );
+    let payment_keys = Arc::new(
+        infrastructure::payment_credentials::PaymentKeyRing::from_env()
+            .map_err(anyhow::Error::msg)?,
+    );
     let shipping = Arc::new(
         infrastructure::correios::Correios::new(connection.clone(), shipping_keys.clone())
             .map_err(anyhow::Error::msg)?,
@@ -373,6 +385,7 @@ async fn start() -> anyhow::Result<()> {
         storage,
         shipping,
         shipping_keys,
+        payment_keys,
     };
     crate::endpoints::checkout_payment_endpoint::spawn_payment_reconciliation(state.clone());
 
@@ -412,11 +425,18 @@ async fn start() -> anyhow::Result<()> {
             "/webhooks/mercado-pago",
             post(endpoints::checkout_payment_endpoint::webhook),
         )
+        .route(
+            "/webhooks/pagseguro",
+            post(endpoints::checkout_payment_endpoint::pagseguro_webhook),
+        )
         .merge(cart_routes(state.clone()))
         .merge(marketing_routes(state.clone()))
         .merge(shipping_tax_routes(state.clone()))
         .nest("/tenant", tenant_routes(state.clone()))
         .merge(routes::shipping_settings_routes::shipping_settings_routes(
+            state.clone(),
+        ))
+        .merge(routes::payment_settings_routes::payment_settings_routes(
             state.clone(),
         ))
         .nest("/user", user_routes(state.clone()))

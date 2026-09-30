@@ -47,6 +47,9 @@ pub struct ProviderError(pub String);
 pub trait PaymentProviderGateway: Send + Sync {
     async fn charge(&self, request: ChargeRequest) -> Result<ProviderResult, ProviderError>;
     async fn status(&self, reference: &str) -> Result<ProviderResult, ProviderError>;
+    async fn search(&self, _external_reference: &str) -> Result<Option<ProviderResult>, ProviderError> {
+        Ok(None)
+    }
 }
 
 #[cfg(test)]

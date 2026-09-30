@@ -11,3 +11,4 @@ pub mod user_routes;
 pub mod web_store_routes;
 
 pub mod shipping_settings_routes;
+pub mod payment_settings_routes;

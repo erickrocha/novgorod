@@ -71,6 +71,7 @@
       "inventory": "Estoque",
       "shippingRates": "Tabelas de Frete",
       "shippingSettings": "Configurações de Frete",
+      "paymentSettings": "Configurações de Pagamento",
       "taxRules": "Regras Tributárias",
       "catalog": "Catálogo",
       "categories": "Categorias",
@@ -995,6 +996,19 @@
       "applyPreset": "Preencher Exemplo SP",
       "presetSuccess": "Tabela de exemplo aplicada com sucesso!",
       "presetConfirm": "Deseja carregar a tabela padrão sugerida (SP Capital, SP Interior, RJ/MG/ES, Sul, Centro-Oeste, Nordeste Capitais/Interior, Norte)?"
+    },
+    "paymentSettings": {
+      "title": "Configurações de Pagamento",
+      "selectTenant": "Selecionar Tenant",
+      "tenant": "Tenant",
+      "chooseTenant": "Selecione um tenant...",
+      "saveSuccess": "Configurações de pagamento salvas com sucesso.",
+      "providerSelection": "Provedor de Pagamento",
+      "providerDescription": "Escolha qual gateway de pagamento será utilizado nas vendas deste lojista.",
+      "mercadoPagoDesc": "Checkout transparente via cartão com conciliação automática.",
+      "pagseguroDesc": "Gateway PagBank com criptografia no navegador e conciliação direta.",
+      "credentialsConfigured": "Credenciais configuradas e salvas com segurança",
+      "credentialsNotConfigured": "Nenhuma credencial cadastrada para este tenant (usando padrão global)"
     },
     "shippingSettings": {
       "title": "Configurações de Frete",

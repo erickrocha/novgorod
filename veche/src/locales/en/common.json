@@ -101,6 +101,7 @@
       "inventory": "Inventory",
       "shippingRates": "Shipping Rates",
       "shippingSettings": "Shipping Settings",
+      "paymentSettings": "Payment Settings",
       "taxRules": "Tax Rules",
       "systemSettings": "System Settings",
       "provinces": "Provinces",
@@ -1522,6 +1523,19 @@
       "applyPreset": "Load SP Example Preset",
       "presetSuccess": "Preset shipping rates loaded successfully!",
       "presetConfirm": "Load suggested standard rate preset (SP Capital, SP Interior, RJ/MG/ES, South, Central-West, Northeast, North)?"
+    },
+    "paymentSettings": {
+      "title": "Payment Settings",
+      "selectTenant": "Select Tenant",
+      "tenant": "Tenant",
+      "chooseTenant": "Select a tenant...",
+      "saveSuccess": "Payment settings saved successfully.",
+      "providerSelection": "Payment Provider",
+      "providerDescription": "Choose which payment gateway will be used for orders of this seller.",
+      "mercadoPagoDesc": "Transparent credit card checkout with automatic reconciliation.",
+      "pagseguroDesc": "PagBank gateway with client-side card encryption and direct reconciliation.",
+      "credentialsConfigured": "Credentials configured and securely stored",
+      "credentialsNotConfigured": "No credentials registered for this tenant (using global default)"
     },
     "shippingSettings": {
       "title": "Shipping Settings",

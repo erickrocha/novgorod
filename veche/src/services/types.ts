@@ -520,5 +520,38 @@ export interface ShippingSettingsUpdate {
   credentials?: CorreiosCredentialsUpdate;
 }
 
+export type PaymentProvider = "mercado_pago" | "pagseguro";
+
+export interface MercadoPagoCredentialsUpdate {
+  accessToken?: string;
+  publicKey?: string;
+  collectorId?: number;
+  webhookSecret?: string;
+}
+
+export interface PagSeguroCredentialsUpdate {
+  token?: string;
+  publicKey?: string;
+  environment?: string;
+}
+
+export interface PaymentCredentialsUpdate {
+  mercadoPago?: MercadoPagoCredentialsUpdate;
+  pagseguro?: PagSeguroCredentialsUpdate;
+}
+
+export interface PaymentSettingsResponse {
+  provider: PaymentProvider;
+  version: number;
+  credentialsConfigured: boolean;
+  publicKey?: string | null;
+  environment?: string | null;
+}
+
+export interface PaymentSettingsUpdate {
+  provider: PaymentProvider;
+  credentials?: PaymentCredentialsUpdate;
+}
+
 
 

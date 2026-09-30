@@ -84,6 +84,7 @@ const navItems: NavItem[] = [
       { name: "Inventory", key: "inventory", path: "/operations/inventory" },
       { name: "Shipping Rates", key: "shippingRates", path: "/operations/shipping-rates" },
       { name: "Shipping Settings", key: "shippingSettings", path: "/operations/shipping-settings" },
+      { name: "Payment Settings", key: "paymentSettings", path: "/operations/payment-settings" },
       { name: "Tax Rules", key: "taxRules", path: "/operations/tax-rules" },
     ],
   },

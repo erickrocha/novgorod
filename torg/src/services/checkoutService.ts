@@ -73,8 +73,8 @@ const checkoutService = {
     const key = crypto.randomUUID();
     return (await apiClient.post<Purchase>('/purchases', { quoteId, email, phone }, { headers: { 'Idempotency-Key': key } })).data;
   },
-  async paymentConfig() {
-    return (await apiClient.get<{ publicKey: string }>('/checkout/payment-config')).data;
+  async paymentConfig(params?: { tenantId?: number }) {
+    return (await apiClient.get<{ provider?: string; publicKey: string }>('/checkout/payment-config', { params })).data;
   },
   async submit(purchaseId: number, input: { token: string; paymentMethodId: string; issuerId?: string; installments: number }) {
     return (await apiClient.post<PaymentState>(`/purchases/${purchaseId}/payments/submit`, input)).data;

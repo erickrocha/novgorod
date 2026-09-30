@@ -12,6 +12,7 @@ import cartReducer from "./cartSlice";
 import operationReducer from "./operationSlice";
 import marketingReducer from "./marketingSlice";
 import shippingSettingsReducer from "./shippingSettingsSlice";
+import paymentSettingsReducer from "./paymentSettingsSlice";
 
 export const store = configureStore({
   reducer: {
@@ -27,6 +28,7 @@ export const store = configureStore({
     operation: operationReducer,
     marketing: marketingReducer,
     shippingSettings: shippingSettingsReducer,
+    paymentSettings: paymentSettingsReducer,
   },
 });
 
