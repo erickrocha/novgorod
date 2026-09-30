@@ -10,3 +10,10 @@ Este diretório contém os roteiros de teste, guias de validação passo a passo
   - Passo a passo para testar a tela de configuração do lojista no painel (`veche`).
   - Passo a passo para testar a cotação e seleção de frete (PAC/SEDEX) na loja (`torg`).
   - Testes de casos de erro, limites de pacotes e chamadas diretas via cURL.
+
+- [**Guia de Teste de Pagamento com Cartão de Crédito (Passo a Passo)**](./how-to-test-card-payment.md)
+  - Roteiro completo de validação da integração com Mercado Pago (SDK transparente).
+  - Tabela com números de cartões de teste do Mercado Pago Sandbox (Aprovação, Recusa, Análise).
+  - Passo a passo para testar o checkout de ponta a ponta no Storefront (`torg`).
+  - Validação de regras de negócio (isenção de cartão para total R$ 0,00, persistência de metadados).
+  - Consultas SQL para auditoria no banco de dados e testes via cURL.
