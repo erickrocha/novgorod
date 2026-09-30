@@ -15,7 +15,8 @@ import DataGrid from "@/components/data-grid/DataGrid";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { fetchTenants } from "@/store/tenantSlice";
 import { skuStockService } from "@/services/skuStockService";
-import type { PageQueryParams, SkuStock, SkuStockInput } from "@/services/types";
+import { warehouseService } from "@/services/warehouseService";
+import type { PageQueryParams, SkuStock, SkuStockInput, Warehouse } from "@/services/types";
 import { ROLES } from "@/utils/enums";
 
 export default function Inventory() {
@@ -30,6 +31,7 @@ export default function Inventory() {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
 
   // Modal State
   const [modalOpen, setModalOpen] = useState(false);
@@ -38,10 +40,17 @@ export default function Inventory() {
   const [formError, setFormError] = useState<string | null>(null);
   const [formData, setFormData] = useState<{
     skuId: number;
+    warehouseId: number | null;
     quantity: number;
     reserved: number;
     tenantId: number | null;
-  }>({ skuId: 0, quantity: 0, reserved: 0, tenantId: user?.tenantId || null });
+  }>({
+    skuId: 0,
+    warehouseId: null,
+    quantity: 0,
+    reserved: 0,
+    tenantId: user?.tenantId || null,
+  });
 
   // Delete State
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
@@ -74,6 +83,9 @@ export default function Inventory() {
     queueMicrotask(() => {
       if (active) {
         loadData();
+        warehouseService.list().then((whs) => {
+          if (active) setWarehouses(whs);
+        }).catch(() => {});
       }
     });
     return () => {
@@ -104,6 +116,7 @@ export default function Inventory() {
     setFormError(null);
     setFormData({
       skuId: 0,
+      warehouseId: warehouses.find((w) => w.isDefault)?.id || null,
       quantity: 0,
       reserved: 0,
       tenantId: user?.tenantId || null,
@@ -116,6 +129,7 @@ export default function Inventory() {
     setFormError(null);
     setFormData({
       skuId: item.skuId,
+      warehouseId: item.warehouseId || null,
       quantity: item.quantity,
       reserved: item.reserved,
       tenantId: item.tenantId || null,
@@ -134,6 +148,7 @@ export default function Inventory() {
     try {
       const payload: SkuStockInput = {
         skuId: Number(formData.skuId),
+        warehouseId: formData.warehouseId,
         quantity: Number(formData.quantity),
         reserved: Number(formData.reserved),
         tenantId: formData.tenantId,
@@ -181,6 +196,21 @@ export default function Inventory() {
           #{row.original.skuId}
         </span>
       ),
+    },
+    {
+      header: t("operations.inventory.warehouseCol", "CD / Armazém"),
+      id: "warehouse",
+      cell: ({ row }) => {
+        const whId = row.original.warehouseId;
+        const wh = warehouses.find((w) => w.id === whId);
+        return wh ? (
+          <span className="text-xs font-medium text-gray-800 dark:text-gray-200">
+            {wh.name}
+          </span>
+        ) : (
+          <span className="text-xs text-gray-400">Padrão da Loja</span>
+        );
+      },
     },
     {
       accessorKey: "quantity",
@@ -366,6 +396,28 @@ export default function Inventory() {
               }
               placeholder="e.g. 201"
             />
+          </div>
+
+          <div>
+            <Label htmlFor="whSelect">Centro de Distribuição (CD / Armazém)</Label>
+            <select
+              id="whSelect"
+              className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 dark:border-gray-700 dark:bg-gray-900 dark:text-white/90"
+              value={formData.warehouseId || ""}
+              onChange={(e) =>
+                setFormData((prev) => ({
+                  ...prev,
+                  warehouseId: e.target.value ? Number(e.target.value) : null,
+                }))
+              }
+            >
+              <option value="">Padrão da Loja / Nenhum</option>
+              {warehouses.map((w) => (
+                <option key={w.id} value={w.id}>
+                  {w.name} ({w.city}/{w.uf} - CEP {w.originCep})
+                </option>
+              ))}
+            </select>
           </div>
 
           <div className="grid grid-cols-2 gap-4">

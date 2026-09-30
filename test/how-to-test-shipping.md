@@ -246,3 +246,46 @@ curl -X POST http://localhost:8080/checkout/quotes/55/shipping-selection \
   ]'
 ```
 > Retorna status `201 Created` com o novo ID de cotação e os totais recalculados.
+
+---
+
+## 7. Cenário de Teste 5: Nova Matriz de Frete Fixo por Faixa de CEP (Capital vs Interior) e CDs
+
+### Objetivo
+Testar a nova estrutura de frete fixo regional avançada:
+- Armazém/CD de Origem
+- Diferenciação por faixa de CEP (Capital vs. Interior de SP)
+- Cobrança de peso excedente (pacote base até 2kg, acréscimo por kg excedente)
+- Frete grátis para pedidos acima do valor mínimo estipulado
+
+### Passo a Passo no Painel do Lojista (`veche`):
+1. Acesse o **Veche** em **Operações** → **Tabelas de Frete** (`/operacoes/tabelas-frete`).
+2. Clique no botão **"Centros de Distribuição (CDs)"** e cadastre um CD:
+   - Nome: `CD Matriz São Paulo`
+   - CEP de Origem: `01310-100` (Av. Paulista, SP)
+   - Cidade / UF: `São Paulo` / `SP`
+   - Marque como `Armazém Padrão` e clique em **"Adicionar CD"**.
+3. Na listagem de taxas de frete, clique no botão **"Preencher Exemplo SP"**:
+   - O sistema carrega as 8 regiões padrão sugeridas (SP Capital, SP Interior e Litoral, RJ/MG/ES, Sul, Centro-Oeste, Nordeste Capitais, Nordeste Interior e Norte) com valores, prazos e regras de peso.
+4. Verifique as faixas cadastradas:
+   - **SP Capital**: CEP `01000-000` a `09999-999`, R$ 12,90, 1 a 2 dias úteis, base 2kg (+ R$ 5,00/kg excedente), frete grátis acima de R$ 199,00.
+   - **SP Interior**: CEP `11000-000` a `19999-999`, R$ 16,90, 2 a 4 dias úteis, base 2kg (+ R$ 5,00/kg excedente), frete grátis acima de R$ 249,00.
+
+### Passo a Passo no Storefront (`torg`):
+1. **Cotação para Capital (SP)**:
+   - No carrinho, adicione produtos leves (peso total < 2kg) somando R$ 100,00.
+   - No Checkout, informe o CEP de destino `01310-100` (Av. Paulista, Capital).
+   - Clique em **"Calcular total com frete"**.
+   - **Resultado Esperado**: Exibição da opção `SP (Capital e Grande SP)` no valor de **R$ 12,90** com prazo de `Em até 2 dias úteis`.
+2. **Cotação para Interior (SP)**:
+   - Altere o endereço para o CEP `14010-000` (Ribeirão Preto, Interior).
+   - Clique em **"Calcular total com frete"**.
+   - **Resultado Esperado**: Exibição da opção `SP (Interior e Litoral)` no valor de **R$ 16,90** com prazo de `Em até 4 dias úteis`.
+3. **Cotação com Peso Excedente (> 2kg)**:
+   - Aumente a quantidade dos itens até totalizar 3,5 kg (1,5 kg acima do limite base de 2 kg -> arredonda para 2 kg excedentes).
+   - Calcule novamente o frete para a Capital:
+   - **Resultado Esperado**: Valor base de R$ 12,90 + (2 kg * R$ 5,00) = **R$ 22,90**.
+4. **Cotação com Frete Grátis**:
+   - Aumente o valor do subtotal de produtos para mais de R$ 199,00 (ex: R$ 200,00).
+   - Calcule o frete para a Capital:
+   - **Resultado Esperado**: Valor do frete zerado com selo **"Grátis"** em verde e valor total do pedido sem taxa de entrega.

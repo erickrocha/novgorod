@@ -14,6 +14,7 @@ pub struct SkuStock {
     pub uuid: Option<String>,
     pub tenant_id: Option<i64>,
     pub sku_id: i64,
+    pub warehouse_id: Option<i64>,
     pub quantity: i32,
     pub reserved: i32,
     pub created_at: Option<NaiveDateTime>,
@@ -37,6 +38,7 @@ impl EntityMapper<SkuStock, Model, ActiveModel> for SkuStockEntityMapper {
             },
             tenant_id: Set(d.tenant_id),
             sku_id: Set(d.sku_id),
+            warehouse_id: Set(d.warehouse_id),
             quantity: Set(d.quantity),
             reserved: Set(d.reserved),
             created_at: match d.created_at {
@@ -58,6 +60,7 @@ impl EntityMapper<SkuStock, Model, ActiveModel> for SkuStockEntityMapper {
             uuid: Some(uuid_to_string(e.uuid)),
             tenant_id: e.tenant_id,
             sku_id: e.sku_id,
+            warehouse_id: e.warehouse_id,
             quantity: e.quantity,
             reserved: e.reserved,
             created_at: Some(e.created_at),

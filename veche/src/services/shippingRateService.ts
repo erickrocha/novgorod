@@ -17,4 +17,7 @@ export const shippingRateService = {
   async update(id: number, data: ShippingRateInput) {
     return (await api.put<ShippingRate>(`/shipping-rates/${id}`, data)).data;
   },
+  async delete(id: number) {
+    return (await api.delete(`/shipping-rates/${id}`)).data;
+  },
 };

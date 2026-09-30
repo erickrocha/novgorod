@@ -2,35 +2,51 @@ use crate::commons::pagination::PageQuery;
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct SkuStockJson {
-    pub id: i64,
-    pub uuid: String,
-    pub tenant_id: Option<i64>,
-    pub sku_id: i64,
-    pub warehouse_id: Option<i64>,
-    pub quantity: i32,
-    pub reserved: i32,
-    pub created_at: Option<chrono::NaiveDateTime>,
-    pub created_by: Option<String>,
-    pub updated_at: Option<chrono::NaiveDateTime>,
-    pub updated_by: Option<String>,
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct SkuStockInputJson {
+pub struct WarehouseJson {
+    pub id: i64,
+    pub uuid: String,
     pub tenant_id: Option<i64>,
-    pub sku_id: i64,
-    pub warehouse_id: Option<i64>,
-    pub quantity: i32,
-    pub reserved: Option<i32>,
+    pub name: String,
+    pub origin_cep: String,
+    pub street: Option<String>,
+    pub number: Option<String>,
+    pub complement: Option<String>,
+    pub district: Option<String>,
+    pub city: String,
+    pub uf: String,
+    pub is_default: bool,
+    pub active: bool,
+    pub created_at: Option<chrono::NaiveDateTime>,
+    pub updated_at: Option<chrono::NaiveDateTime>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct WarehouseInputJson {
+    pub tenant_id: Option<i64>,
+    pub name: String,
+    pub origin_cep: String,
+    pub street: Option<String>,
+    pub number: Option<String>,
+    pub complement: Option<String>,
+    pub district: Option<String>,
+    pub city: String,
+    pub uf: String,
+    #[serde(default)]
+    pub is_default: bool,
+    #[serde(default = "default_true")]
+    pub active: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, IntoParams)]
 #[serde(rename_all = "camelCase")]
-pub struct SkuStockPageQuery {
+pub struct WarehousePageQuery {
     pub page: Option<u64>,
     #[serde(alias = "page_size")]
     pub page_size: Option<u64>,
@@ -39,15 +55,10 @@ pub struct SkuStockPageQuery {
     pub sort_by: Option<String>,
     #[serde(alias = "sort_dir")]
     pub sort_dir: Option<String>,
-    #[serde(alias = "sku_id")]
-    pub sku_id: Option<i64>,
-    #[serde(alias = "tenant_id")]
-    pub tenant_id: Option<i64>,
-    #[serde(alias = "warehouse_id")]
-    pub warehouse_id: Option<i64>,
+    pub uf: Option<String>,
 }
 
-impl SkuStockPageQuery {
+impl WarehousePageQuery {
     pub fn to_page_query(&self) -> PageQuery {
         PageQuery {
             page: self.page,

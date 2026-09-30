@@ -21,6 +21,7 @@ use crate::endpoints::json::sku_stock_json::SkuStockJson;
 use crate::endpoints::json::tax_rule_json::TaxRuleJson;
 use crate::endpoints::json::tenant_json::TenantJson;
 use crate::endpoints::json::user_json::UserJson;
+use crate::endpoints::json::warehouse_json::WarehouseJson;
 use business::domain::access_token::AccessToken;
 use business::domain::campaign::Campaign;
 use business::domain::campaign_target::CampaignTarget;
@@ -49,6 +50,7 @@ use business::domain::sku_stock::SkuStock;
 use business::domain::tax_rule::TaxRule;
 use business::domain::tenant::Tenant;
 use business::domain::user::User;
+use business::domain::warehouse::Warehouse;
 use crate::endpoints::json::product_json::ProductJson;
 
 pub trait Mapper<T, U> {
@@ -509,8 +511,17 @@ impl Mapper<ShippingRate, ShippingRateJson> for ShippingRateMapper {
             id: t.id.unwrap_or_default(),
             uuid: t.uuid.unwrap_or_default(),
             tenant_id: t.tenant_id,
+            origin_warehouse_id: t.origin_warehouse_id,
+            region_name: t.region_name,
             uf: t.uf,
+            destination_cep_start: t.destination_cep_start,
+            destination_cep_end: t.destination_cep_end,
             price_cents: t.price_cents,
+            transit_days_min: t.transit_days_min,
+            transit_days_max: t.transit_days_max,
+            max_weight_g: t.max_weight_g,
+            extra_weight_per_kg_cents: t.extra_weight_per_kg_cents,
+            free_shipping_threshold_cents: t.free_shipping_threshold_cents,
             created_at: t.created_at,
             updated_at: t.updated_at,
         }
@@ -521,8 +532,17 @@ impl Mapper<ShippingRate, ShippingRateJson> for ShippingRateMapper {
             id: if u.id > 0 { Some(u.id) } else { None },
             uuid: if u.uuid.is_empty() { None } else { Some(u.uuid) },
             tenant_id: u.tenant_id,
+            origin_warehouse_id: u.origin_warehouse_id,
+            region_name: u.region_name,
             uf: u.uf,
+            destination_cep_start: u.destination_cep_start,
+            destination_cep_end: u.destination_cep_end,
             price_cents: u.price_cents,
+            transit_days_min: u.transit_days_min,
+            transit_days_max: u.transit_days_max,
+            max_weight_g: u.max_weight_g,
+            extra_weight_per_kg_cents: u.extra_weight_per_kg_cents,
+            free_shipping_threshold_cents: u.free_shipping_threshold_cents,
             created_at: u.created_at,
             created_by: None,
             updated_at: u.updated_at,
@@ -1043,6 +1063,7 @@ impl Mapper<SkuStock, SkuStockJson> for SkuStockMapper {
             uuid: t.uuid.unwrap_or_default(),
             tenant_id: t.tenant_id,
             sku_id: t.sku_id,
+            warehouse_id: t.warehouse_id,
             quantity: t.quantity,
             reserved: t.reserved,
             created_at: t.created_at,
@@ -1058,12 +1079,58 @@ impl Mapper<SkuStock, SkuStockJson> for SkuStockMapper {
             uuid: if u.uuid.is_empty() { None } else { Some(u.uuid) },
             tenant_id: u.tenant_id,
             sku_id: u.sku_id,
+            warehouse_id: u.warehouse_id,
             quantity: u.quantity,
             reserved: u.reserved,
             created_at: u.created_at,
             created_by: u.created_by,
             updated_at: u.updated_at,
             updated_by: u.updated_by,
+        }
+    }
+}
+
+pub struct WarehouseMapper;
+impl Mapper<Warehouse, WarehouseJson> for WarehouseMapper {
+    fn json(t: Warehouse) -> WarehouseJson {
+        WarehouseJson {
+            id: t.id.unwrap_or_default(),
+            uuid: t.uuid.unwrap_or_default(),
+            tenant_id: t.tenant_id,
+            name: t.name,
+            origin_cep: t.origin_cep,
+            street: t.street,
+            number: t.number,
+            complement: t.complement,
+            district: t.district,
+            city: t.city,
+            uf: t.uf,
+            is_default: t.is_default,
+            active: t.active,
+            created_at: t.created_at,
+            updated_at: t.updated_at,
+        }
+    }
+
+    fn domain(u: WarehouseJson) -> Warehouse {
+        Warehouse {
+            id: if u.id > 0 { Some(u.id) } else { None },
+            uuid: if u.uuid.is_empty() { None } else { Some(u.uuid) },
+            tenant_id: u.tenant_id,
+            name: u.name,
+            origin_cep: u.origin_cep,
+            street: u.street,
+            number: u.number,
+            complement: u.complement,
+            district: u.district,
+            city: u.city,
+            uf: u.uf,
+            is_default: u.is_default,
+            active: u.active,
+            created_at: u.created_at,
+            created_by: None,
+            updated_at: u.updated_at,
+            updated_by: None,
         }
     }
 }

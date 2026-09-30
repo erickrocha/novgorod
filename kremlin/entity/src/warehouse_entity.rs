@@ -7,7 +7,7 @@ pub struct Entity;
 
 impl EntityName for Entity {
     fn table_name(&self) -> &'static str {
-        "shipping_rate"
+        "warehouse"
     }
 }
 
@@ -16,17 +16,16 @@ pub struct Model {
     pub id: i64,
     pub uuid: Uuid,
     pub tenant_id: Option<i64>,
-    pub origin_warehouse_id: Option<i64>,
-    pub region_name: Option<String>,
+    pub name: String,
+    pub origin_cep: String,
+    pub street: Option<String>,
+    pub number: Option<String>,
+    pub complement: Option<String>,
+    pub district: Option<String>,
+    pub city: String,
     pub uf: String,
-    pub destination_cep_start: Option<String>,
-    pub destination_cep_end: Option<String>,
-    pub price_cents: i32,
-    pub transit_days_min: i32,
-    pub transit_days_max: i32,
-    pub max_weight_g: Option<i32>,
-    pub extra_weight_per_kg_cents: Option<i32>,
-    pub free_shipping_threshold_cents: Option<i32>,
+    pub is_default: bool,
+    pub active: bool,
     pub created_at: DateTime,
     pub created_by: Option<String>,
     pub updated_at: DateTime,
@@ -38,17 +37,16 @@ pub enum Column {
     Id,
     Uuid,
     TenantId,
-    OriginWarehouseId,
-    RegionName,
+    Name,
+    OriginCep,
+    Street,
+    Number,
+    Complement,
+    District,
+    City,
     Uf,
-    DestinationCepStart,
-    DestinationCepEnd,
-    PriceCents,
-    TransitDaysMin,
-    TransitDaysMax,
-    MaxWeightG,
-    ExtraWeightPerKgCents,
-    FreeShippingThresholdCents,
+    IsDefault,
+    Active,
     CreatedAt,
     CreatedBy,
     UpdatedAt,
@@ -70,7 +68,8 @@ impl PrimaryKeyTrait for PrimaryKey {
 #[derive(Copy, Clone, Debug, EnumIter)]
 pub enum Relation {
     Tenant,
-    Warehouse,
+    SkuStock,
+    ShippingRate,
 }
 
 impl ColumnTrait for Column {
@@ -80,17 +79,16 @@ impl ColumnTrait for Column {
             Self::Id => ColumnType::BigInteger.def(),
             Self::Uuid => ColumnType::Uuid.def().unique(),
             Self::TenantId => ColumnType::BigInteger.def(),
-            Self::OriginWarehouseId => ColumnType::BigInteger.def().null(),
-            Self::RegionName => ColumnType::String(StringLen::N(100u32)).def().null(),
+            Self::Name => ColumnType::String(StringLen::N(100u32)).def(),
+            Self::OriginCep => ColumnType::String(StringLen::N(8u32)).def(),
+            Self::Street => ColumnType::String(StringLen::N(255u32)).def().null(),
+            Self::Number => ColumnType::String(StringLen::N(50u32)).def().null(),
+            Self::Complement => ColumnType::String(StringLen::N(100u32)).def().null(),
+            Self::District => ColumnType::String(StringLen::N(100u32)).def().null(),
+            Self::City => ColumnType::String(StringLen::N(100u32)).def(),
             Self::Uf => ColumnType::String(StringLen::N(2u32)).def(),
-            Self::DestinationCepStart => ColumnType::String(StringLen::N(8u32)).def().null(),
-            Self::DestinationCepEnd => ColumnType::String(StringLen::N(8u32)).def().null(),
-            Self::PriceCents => ColumnType::Integer.def(),
-            Self::TransitDaysMin => ColumnType::Integer.def(),
-            Self::TransitDaysMax => ColumnType::Integer.def(),
-            Self::MaxWeightG => ColumnType::Integer.def().null(),
-            Self::ExtraWeightPerKgCents => ColumnType::Integer.def().null(),
-            Self::FreeShippingThresholdCents => ColumnType::Integer.def().null(),
+            Self::IsDefault => ColumnType::Boolean.def(),
+            Self::Active => ColumnType::Boolean.def(),
             Self::CreatedAt => ColumnType::DateTime.def(),
             Self::CreatedBy => ColumnType::String(StringLen::N(255u32)).def().null(),
             Self::UpdatedAt => ColumnType::DateTime.def(),
@@ -106,10 +104,8 @@ impl RelationTrait for Relation {
                 .from(Column::TenantId)
                 .to(super::tenant_entity::Column::Id)
                 .into(),
-            Self::Warehouse => Entity::belongs_to(super::warehouse_entity::Entity)
-                .from(Column::OriginWarehouseId)
-                .to(super::warehouse_entity::Column::Id)
-                .into(),
+            Self::SkuStock => Entity::has_many(super::sku_stock_entity::Entity).into(),
+            Self::ShippingRate => Entity::has_many(super::shipping_rate_entity::Entity).into(),
         }
     }
 }
@@ -120,9 +116,15 @@ impl Related<super::tenant_entity::Entity> for Entity {
     }
 }
 
-impl Related<super::warehouse_entity::Entity> for Entity {
+impl Related<super::sku_stock_entity::Entity> for Entity {
     fn to() -> RelationDef {
-        Relation::Warehouse.def()
+        Relation::SkuStock.def()
+    }
+}
+
+impl Related<super::shipping_rate_entity::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::ShippingRate.def()
     }
 }
 

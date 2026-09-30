@@ -35,3 +35,4 @@ pub use super::payment_entity::Entity as PaymentEntity;
 pub use super::credit_card_details_entity::Entity as CreditCardDetailsEntity;
 pub use super::payment_transaction_entity::Entity as PaymentTransactionEntity;
 pub use super::payment_allocation_entity::Entity as PaymentAllocationEntity;
+pub use super::warehouse_entity::Entity as WarehouseEntity;

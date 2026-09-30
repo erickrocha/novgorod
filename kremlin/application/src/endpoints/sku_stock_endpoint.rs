@@ -104,6 +104,10 @@ pub async fn paged(
         query = query.filter(sku_stock_entity::Column::SkuId.eq(sku_id));
     }
 
+    if let Some(warehouse_id) = params.warehouse_id {
+        query = query.filter(sku_stock_entity::Column::WarehouseId.eq(warehouse_id));
+    }
+
     let sort_col = match norm.sort_by.to_ascii_lowercase().as_str() {
         "skuid" | "sku_id" => sku_stock_entity::Column::SkuId,
         "quantity" => sku_stock_entity::Column::Quantity,
@@ -244,6 +248,7 @@ pub async fn add(
         uuid: String::new(),
         tenant_id: Some(tenant_id),
         sku_id: input.sku_id,
+        warehouse_id: input.warehouse_id,
         quantity: input.quantity,
         reserved: input.reserved.unwrap_or(0),
         created_at: None,
@@ -312,6 +317,7 @@ pub async fn update(
         uuid: existing.uuid.unwrap_or_default(),
         tenant_id: existing.tenant_id,
         sku_id: input.sku_id,
+        warehouse_id: input.warehouse_id.or(existing.warehouse_id),
         quantity: input.quantity,
         reserved: input.reserved.unwrap_or(existing.reserved),
         created_at: existing.created_at,

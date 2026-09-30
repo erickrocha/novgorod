@@ -119,13 +119,42 @@ export interface PageQueryParams {
   [key: string]: unknown;
 }
 
+// ==================== Warehouse ====================
+export interface Warehouse {
+  id: number;
+  uuid?: string;
+  tenantId?: number | null;
+  name: string;
+  originCep: string;
+  street?: string | null;
+  number?: string | null;
+  complement?: string | null;
+  district?: string | null;
+  city: string;
+  uf: string;
+  isDefault: boolean;
+  active: boolean;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}
+export type WarehouseInput = Omit<Warehouse, "id" | "uuid" | "createdAt" | "updatedAt">;
+
 // ==================== Shipping Rate ====================
 export interface ShippingRate {
   id: number;
   uuid?: string;
   tenantId?: number | null;
+  originWarehouseId?: number | null;
+  regionName?: string | null;
   uf: string;
+  destinationCepStart?: string | null;
+  destinationCepEnd?: string | null;
   priceCents: number;
+  transitDaysMin?: number;
+  transitDaysMax?: number;
+  maxWeightG?: number | null;
+  extraWeightPerKgCents?: number | null;
+  freeShippingThresholdCents?: number | null;
   createdAt?: string | null;
   updatedAt?: string | null;
 }
@@ -362,6 +391,7 @@ export interface SkuStock {
   uuid?: string;
   tenantId?: number | null;
   skuId: number;
+  warehouseId?: number | null;
   quantity: number;
   reserved: number;
   createdAt?: string | null;

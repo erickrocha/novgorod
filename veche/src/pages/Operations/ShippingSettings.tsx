@@ -361,8 +361,10 @@ export function ShippingSettings() {
                       )}
                     </span>
                     <span className="block text-xs text-gray-500 dark:text-gray-400">
-                      Uses flat shipping rates configured per state under
-                      Shipping Rates
+                      {t(
+                        "operations.shippingSettings.fixedHelp",
+                        "Uses flat shipping rates configured per state under Shipping Rates"
+                      )}
                     </span>
                   </div>
                 </div>
@@ -401,7 +403,10 @@ export function ShippingSettings() {
                       )}
                     </span>
                     <span className="block text-xs text-gray-500 dark:text-gray-400">
-                      Calculates live price and transit times via Correios API
+                      {t(
+                        "operations.shippingSettings.correiosHelp",
+                        "Calculates live price and transit times via Correios API"
+                      )}
                     </span>
                   </div>
                 </div>
@@ -480,8 +485,14 @@ export function ShippingSettings() {
                     autoComplete="off"
                     placeholder={
                       settings?.credentialsConfigured
-                        ? "•••••••• (unchanged)"
-                        : "Meu Correios username"
+                        ? t(
+                            "operations.shippingSettings.unchangedPlaceholder",
+                            "•••••••• (unchanged)"
+                          )
+                        : t(
+                            "operations.shippingSettings.usernamePlaceholder",
+                            "Meu Correios username"
+                          )
                     }
                     {...register("credentials.username")}
                   />
@@ -500,8 +511,14 @@ export function ShippingSettings() {
                     autoComplete="off"
                     placeholder={
                       settings?.credentialsConfigured
-                        ? "•••••••• (unchanged)"
-                        : "API access code"
+                        ? t(
+                            "operations.shippingSettings.unchangedPlaceholder",
+                            "•••••••• (unchanged)"
+                          )
+                        : t(
+                            "operations.shippingSettings.apiAccessCodePlaceholder",
+                            "API access code"
+                          )
                     }
                     {...register("credentials.apiAccessCode")}
                   />
@@ -519,8 +536,14 @@ export function ShippingSettings() {
                     autoComplete="off"
                     placeholder={
                       settings?.credentialsConfigured
-                        ? "•••••••• (unchanged)"
-                        : "Posting card number"
+                        ? t(
+                            "operations.shippingSettings.unchangedPlaceholder",
+                            "•••••••• (unchanged)"
+                          )
+                        : t(
+                            "operations.shippingSettings.postingCardPlaceholder",
+                            "Posting card number"
+                          )
                     }
                     {...register("credentials.postingCard")}
                   />
@@ -538,8 +561,14 @@ export function ShippingSettings() {
                     autoComplete="off"
                     placeholder={
                       settings?.credentialsConfigured
-                        ? "•••••••• (unchanged)"
-                        : "Contract number"
+                        ? t(
+                            "operations.shippingSettings.unchangedPlaceholder",
+                            "•••••••• (unchanged)"
+                          )
+                        : t(
+                            "operations.shippingSettings.contractPlaceholder",
+                            "Contract number"
+                          )
                     }
                     {...register("credentials.contract")}
                   />
@@ -557,8 +586,14 @@ export function ShippingSettings() {
                     autoComplete="off"
                     placeholder={
                       settings?.credentialsConfigured
-                        ? "•• (unchanged)"
-                        : "e.g. 72"
+                        ? t(
+                            "operations.shippingSettings.unchangedShortPlaceholder",
+                            "•• (unchanged)"
+                          )
+                        : t(
+                            "operations.shippingSettings.regionalIdentifierPlaceholder",
+                            "e.g. 72"
+                          )
                     }
                     {...register("credentials.regionalIdentifier")}
                   />
@@ -647,7 +682,10 @@ export function ShippingSettings() {
             "operations.shippingSettings.packaging",
             "Packaging Allowances"
           )}
-          desc="Additional package weight and box dimensions to add to item measurements"
+          desc={t(
+            "operations.shippingSettings.packagingDesc",
+            "Additional package weight and box dimensions to add to item measurements"
+          )}
         >
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
             <div>

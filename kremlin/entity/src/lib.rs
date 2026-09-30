@@ -36,3 +36,4 @@ pub mod payment_entity;
 pub mod credit_card_details_entity;
 pub mod payment_transaction_entity;
 pub mod payment_allocation_entity;
+pub mod warehouse_entity;

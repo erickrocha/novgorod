@@ -11,6 +11,7 @@
             uuid,
             tenant_id: Some(1),
             sku_id: 100,
+            warehouse_id: Some(10),
             quantity: 50,
             reserved: 5,
             created_at: now,
@@ -22,6 +23,7 @@
         assert_eq!(domain.id, Some(5));
         assert_eq!(domain.uuid, Some(uuid_to_string(uuid)));
         assert_eq!(domain.sku_id, 100);
+        assert_eq!(domain.warehouse_id, Some(10));
         assert_eq!(domain.quantity, 50);
         assert_eq!(domain.reserved, 5);
 

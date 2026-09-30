@@ -44,3 +44,4 @@ pub mod payment_transaction;
 pub mod purchase;
 
 pub mod shipping;
+pub mod warehouse;

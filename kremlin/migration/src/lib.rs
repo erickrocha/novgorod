@@ -41,6 +41,7 @@ mod m20260924_000009_global_customer_references;
 mod m20260925_000001_checkout;
 
 mod m20260926_000001_shipping;
+mod m20260929_000001_multi_warehouse_shipping_matrix;
 
 pub struct Migrator;
 
@@ -87,6 +88,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260924_000009_global_customer_references::Migration),
             Box::new(m20260925_000001_checkout::Migration),
             Box::new(m20260926_000001_shipping::Migration),
+            Box::new(m20260929_000001_multi_warehouse_shipping_matrix::Migration),
         ]
     }
 }

@@ -1,10 +1,12 @@
 import { cn } from "@/utils";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 import { Dropdown } from "../ui/dropdown/Dropdown";
 import { DropdownItem } from "../ui/dropdown/DropdownItem";
 
 export default function NotificationDropdown() {
+  const { t } = useTranslation("common", { keyPrefix: "header.notifications" });
   const [isOpen, setIsOpen] = useState(false);
   const [notifying, setNotifying] = useState(true);
 
@@ -58,7 +60,7 @@ export default function NotificationDropdown() {
       >
         <div className="mb-3 flex items-center justify-between border-b border-gray-100 pb-3 dark:border-gray-700">
           <h5 className="text-lg font-semibold text-gray-800 dark:text-gray-200">
-            Notification
+            {t("title", "Notification")}
           </h5>
           <button
             onClick={toggleDropdown}
@@ -377,7 +379,7 @@ export default function NotificationDropdown() {
           to="/"
           className="mt-3 block rounded-lg border border-gray-300 bg-white px-4 py-2 text-center text-sm font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700"
         >
-          View All Notifications
+          {t("viewAll", "View All Notifications")}
         </Link>
       </Dropdown>
     </div>

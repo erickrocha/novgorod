@@ -69,6 +69,18 @@ export const saveShippingRate = createAsyncThunk(
   },
 );
 
+export const deleteShippingRate = createAsyncThunk(
+  "operation/deleteShippingRate",
+  async (id: number, { rejectWithValue }) => {
+    try {
+      await shippingRateService.delete(id);
+      return id;
+    } catch (error) {
+      return rejectWithValue(getApiErrorMessage(error, "Failed to delete shipping rate"));
+    }
+  },
+);
+
 // Tax Rules
 export const fetchTaxRulesPaged = createAsyncThunk(
   "operation/fetchTaxRulesPaged",

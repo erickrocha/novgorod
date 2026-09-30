@@ -7,8 +7,17 @@
             id: Some(1),
             uuid: Some("a1a2a3a4-b1b2-c1c2-d1d2-d3d4d5d6d7d8".to_string()),
             tenant_id: Some(10),
+            origin_warehouse_id: Some(2),
+            region_name: Some("SP Capital".to_string()),
             uf: "SP".to_string(),
+            destination_cep_start: Some("01000000".to_string()),
+            destination_cep_end: Some("09999999".to_string()),
             price_cents: 2500,
+            transit_days_min: 1,
+            transit_days_max: 2,
+            max_weight_g: Some(2000),
+            extra_weight_per_kg_cents: Some(500),
+            free_shipping_threshold_cents: Some(19900),
             created_at: Some(now),
             updated_at: Some(now),
             created_by: None,
@@ -17,11 +26,19 @@
 
         let json = ShippingRateMapper::json(domain.clone());
         assert_eq!(json.uf, "SP");
+        assert_eq!(json.region_name.as_deref(), Some("SP Capital"));
+        assert_eq!(json.destination_cep_start.as_deref(), Some("01000000"));
+        assert_eq!(json.transit_days_min, 1);
+        assert_eq!(json.transit_days_max, 2);
         assert_eq!(json.price_cents, 2500);
         assert_eq!(json.tenant_id, Some(10));
 
         let back_to_domain = ShippingRateMapper::domain(json);
         assert_eq!(back_to_domain.uf, domain.uf);
+        assert_eq!(back_to_domain.region_name, domain.region_name);
+        assert_eq!(back_to_domain.destination_cep_start, domain.destination_cep_start);
+        assert_eq!(back_to_domain.transit_days_min, domain.transit_days_min);
+        assert_eq!(back_to_domain.transit_days_max, domain.transit_days_max);
         assert_eq!(back_to_domain.price_cents, domain.price_cents);
     }
 
@@ -145,6 +162,7 @@
             uuid: Some("f1a2a3a4-b1b2-c1c2-d1d2-d3d4d5d6d7d8".to_string()),
             tenant_id: Some(1),
             sku_id: 20,
+            warehouse_id: Some(3),
             quantity: 150,
             reserved: 10,
             created_at: None,
@@ -155,10 +173,12 @@
         let json = SkuStockMapper::json(domain.clone());
         assert_eq!(json.quantity, 150);
         assert_eq!(json.reserved, 10);
+        assert_eq!(json.warehouse_id, Some(3));
 
         let back = SkuStockMapper::domain(json);
         assert_eq!(back.quantity, domain.quantity);
         assert_eq!(back.reserved, domain.reserved);
+        assert_eq!(back.warehouse_id, domain.warehouse_id);
     }
 
     #[test]
@@ -248,4 +268,38 @@
         assert_eq!(back.id, domain.id);
         assert_eq!(back.person_id, domain.person_id);
         assert_eq!(back.locality, domain.locality);
+    }
+
+    #[test]
+    fn test_warehouse_mapper() {
+        let domain = Warehouse {
+            id: Some(42),
+            uuid: Some("d1d2d3d4-e5e6-f7f8-a1a2-b3b4b5b6b7b8".to_string()),
+            tenant_id: Some(1),
+            name: "CD São Paulo Principal".to_string(),
+            origin_cep: "01310100".to_string(),
+            street: Some("Av Paulista".to_string()),
+            number: Some("1000".to_string()),
+            complement: Some("Andar 5".to_string()),
+            district: Some("Bela Vista".to_string()),
+            city: "São Paulo".to_string(),
+            uf: "SP".to_string(),
+            is_default: true,
+            active: true,
+            created_at: None,
+            created_by: None,
+            updated_at: None,
+            updated_by: None,
+        };
+        let json = WarehouseMapper::json(domain.clone());
+        assert_eq!(json.id, 42);
+        assert_eq!(json.name, "CD São Paulo Principal");
+        assert_eq!(json.origin_cep, "01310100");
+        assert!(json.is_default);
+
+        let back = WarehouseMapper::domain(json);
+        assert_eq!(back.id, domain.id);
+        assert_eq!(back.name, domain.name);
+        assert_eq!(back.origin_cep, domain.origin_cep);
+        assert_eq!(back.is_default, domain.is_default);
     }

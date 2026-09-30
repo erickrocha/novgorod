@@ -458,7 +458,7 @@ export function Customers() {
                 Addresses for {selectedCustomer?.name}
               </h3>
               <p className="text-xs text-gray-500 dark:text-gray-400">
-                Delivery and billing locations on file.
+                {t("customers.manageAddressesSubtitle", "Delivery and billing locations on file.")}
               </p>
             </div>
           </div>
@@ -468,7 +468,7 @@ export function Customers() {
               startIcon={<Plus size={14} />}
               onClick={() => setShowAddAddress(true)}
             >
-              Add Address
+              {t("customers.addAddress", "Add Address")}
             </Button>
           )}
         </div>
@@ -482,14 +482,14 @@ export function Customers() {
         {showAddAddress ? (
           <form onSubmit={handleSaveAddress} className="space-y-3 border-t border-gray-100 dark:border-gray-800 pt-4">
             <h4 className="text-sm font-semibold text-gray-800 dark:text-gray-200">
-              New Address
+              {t("customers.newAddress", "New Address")}
             </h4>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div>
-                <Label htmlFor="recipient">Recipient Name</Label>
+                <Label htmlFor="recipient">{t("customers.recipientName", "Recipient Name")}</Label>
                 <Input
                   id="recipient"
-                  placeholder="Recipient Name"
+                  placeholder={t("customers.recipientName", "Recipient Name")}
                   value={newAddress.recipient}
                   onChange={(e) =>
                     setNewAddress({ ...newAddress, recipient: e.target.value })
@@ -498,7 +498,7 @@ export function Customers() {
                 />
               </div>
               <div>
-                <Label htmlFor="postalCode">Postal Code / CEP</Label>
+                <Label htmlFor="postalCode">{t("customers.postalCodeCep", "Postal Code / CEP")}</Label>
                 <Input
                   id="postalCode"
                   placeholder="00000-000"
@@ -514,10 +514,10 @@ export function Customers() {
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div>
-                <Label htmlFor="addressLine1">Address Line 1</Label>
+                <Label htmlFor="addressLine1">{t("customers.addressLine1", "Address Line 1")}</Label>
                 <Input
                   id="addressLine1"
-                  placeholder="Street name, number"
+                  placeholder={t("customers.addressLine1Placeholder", "Street name, number")}
                   value={newAddress.addressLine1 || ""}
                   onChange={(e) =>
                     setNewAddress({ ...newAddress, addressLine1: e.target.value })
@@ -526,10 +526,10 @@ export function Customers() {
                 />
               </div>
               <div>
-                <Label htmlFor="addressLine2">Address Line 2 (Optional)</Label>
+                <Label htmlFor="addressLine2">{t("customers.addressLine2", "Address Line 2 (Optional)")}</Label>
                 <Input
                   id="addressLine2"
-                  placeholder="Apt, suite, neighborhood"
+                  placeholder={t("customers.addressLine2Placeholder", "Apt, suite, neighborhood")}
                   value={newAddress.addressLine2 || ""}
                   onChange={(e) =>
                     setNewAddress({ ...newAddress, addressLine2: e.target.value })
@@ -543,7 +543,7 @@ export function Customers() {
             {/* Country (20%), State/UF (30%), City (50%) matching Tenant & Person Address standard */}
             <div className="grid grid-cols-1 md:grid-cols-10 gap-3 items-end">
               <div className="md:col-span-2">
-                <Label>Country</Label>
+                <Label>{t("customers.country", "Country")}</Label>
                 <div className="flex h-11 items-center px-1">
                   <Radio
                     id="customer-country-br"
@@ -563,20 +563,20 @@ export function Customers() {
                 </div>
               </div>
               <div className="md:col-span-3">
-                <Label htmlFor="customerStateProvince">State / Province</Label>
+                <Label htmlFor="customerStateProvince">{t("customers.stateProvince", "State / Province")}</Label>
                 <FilterableCombobox
                   id="customerStateProvince"
                   value={newAddress.administrativeArea || ""}
                   options={provinceOptions}
                   onChange={handleProvinceChange}
-                  placeholder="Select state..."
+                  placeholder={t("customers.selectState", "Select state...")}
                   loading={loadingProvinces}
-                  emptyText="No state found"
+                  emptyText={t("customers.noStateFound", "No state found")}
                   required
                 />
               </div>
               <div className="md:col-span-5">
-                <Label htmlFor="customerCity">City</Label>
+                <Label htmlFor="customerCity">{t("customers.city", "City")}</Label>
                 <FilterableCombobox
                   id="customerCity"
                   value={newAddress.locality || ""}
@@ -586,17 +586,17 @@ export function Customers() {
                   }
                   placeholder={
                     !newAddress.administrativeArea
-                      ? "Select state first..."
+                      ? t("customers.selectStateFirst", "Select state first...")
                       : loadingCities
-                      ? "Loading cities..."
-                      : "Select or search city..."
+                      ? t("customers.loadingCities", "Loading cities...")
+                      : t("customers.selectOrSearchCity", "Select or search city...")
                   }
                   disabled={!newAddress.administrativeArea}
                   loading={loadingCities}
                   emptyText={
                     loadingCities
-                      ? "Loading cities..."
-                      : "No city found"
+                      ? t("customers.loadingCities", "Loading cities...")
+                      : t("customers.noCityFound", "No city found")
                   }
                   required
                 />
@@ -605,7 +605,7 @@ export function Customers() {
 
             <div className="pt-2">
               <Switch
-                label="Default delivery address"
+                label={t("customers.defaultDeliveryAddress", "Default delivery address")}
                 checked={newAddress.isDefault}
                 onChange={(checked) =>
                   setNewAddress({ ...newAddress, isDefault: checked })
@@ -619,10 +619,10 @@ export function Customers() {
                 variant="outline"
                 onClick={() => setShowAddAddress(false)}
               >
-                Cancel
+                {t("common.cancel", "Cancel")}
               </Button>
               <Button type="submit" disabled={savingAddress}>
-                {savingAddress ? "Saving…" : "Save Address"}
+                {savingAddress ? t("common.saving", "Saving…") : t("customers.saveAddress", "Save Address")}
               </Button>
             </div>
           </form>
@@ -630,11 +630,11 @@ export function Customers() {
           <div className="space-y-3 max-h-96 overflow-y-auto pr-1">
             {loadingAddresses ? (
               <div className="py-8 text-center text-sm text-gray-500">
-                Loading addresses…
+                {t("customers.loadingAddresses", "Loading addresses…")}
               </div>
             ) : addresses.length === 0 ? (
               <div className="py-8 text-center text-sm text-gray-500">
-                No delivery addresses recorded for this customer.
+                {t("customers.noAddressesRecorded", "No delivery addresses recorded for this customer.")}
               </div>
             ) : (
               addresses.map((addr) => (
@@ -649,7 +649,7 @@ export function Customers() {
                       </span>
                       {addr.isDefault && (
                         <Badge size="sm" color="success">
-                          Default
+                          {t("customers.defaultBadge", "Default")}
                         </Badge>
                       )}
                     </div>

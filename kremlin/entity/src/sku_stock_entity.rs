@@ -17,6 +17,7 @@ pub struct Model {
     pub uuid: Uuid,
     pub tenant_id: Option<i64>,
     pub sku_id: i64,
+    pub warehouse_id: Option<i64>,
     pub quantity: i32,
     pub reserved: i32,
     pub created_at: DateTime,
@@ -31,6 +32,7 @@ pub enum Column {
     Uuid,
     TenantId,
     SkuId,
+    WarehouseId,
     Quantity,
     Reserved,
     CreatedAt,
@@ -54,6 +56,7 @@ impl PrimaryKeyTrait for PrimaryKey {
 #[derive(Copy, Clone, Debug, EnumIter)]
 pub enum Relation {
     Sku,
+    Warehouse,
 }
 
 impl ColumnTrait for Column {
@@ -64,6 +67,7 @@ impl ColumnTrait for Column {
             Self::Uuid => ColumnType::Uuid.def().unique(),
             Self::TenantId => ColumnType::Integer.def(),
             Self::SkuId => ColumnType::Integer.def(),
+            Self::WarehouseId => ColumnType::BigInteger.def().null(),
             Self::Quantity => ColumnType::Integer.def(),
             Self::Reserved => ColumnType::Integer.def(),
             Self::CreatedAt => ColumnType::DateTime.def(),
@@ -84,6 +88,10 @@ impl RelationTrait for Relation {
                     super::sku_entity::Column::Id,
                 ))
                 .into(),
+            Self::Warehouse => Entity::belongs_to(super::warehouse_entity::Entity)
+                .from(Column::WarehouseId)
+                .to(super::warehouse_entity::Column::Id)
+                .into(),
         }
     }
 }
@@ -91,6 +99,12 @@ impl RelationTrait for Relation {
 impl Related<super::sku_entity::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::Sku.def()
+    }
+}
+
+impl Related<super::warehouse_entity::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::Warehouse.def()
     }
 }
 

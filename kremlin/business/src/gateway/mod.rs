@@ -40,3 +40,4 @@ pub mod user_gateway;
 
 pub mod shipping_provider_gateway;
 pub mod shipping_settings_gateway;
+pub mod warehouse_gateway;

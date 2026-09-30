@@ -499,6 +499,7 @@ pub async fn import(
                 uuid: NotSet,
                 tenant_id: Set(Some(tenant_id)),
                 sku_id: Set(sku_id),
+                warehouse_id: NotSet,
                 quantity: Set(stock_qty),
                 reserved: Set(0),
                 created_at: NotSet,

@@ -641,9 +641,15 @@ export const CheckoutPage = () => {
                                     )}
                                   </div>
                                 </div>
-                                <span className="font-semibold text-sm text-slate-900">
-                                  {opt.priceCents === 0 ? 'Grátis' : money(opt.priceCents)}
-                                </span>
+                                {opt.priceCents === 0 ? (
+                                  <span className="font-bold text-xs uppercase px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 tracking-wide">
+                                    Grátis
+                                  </span>
+                                ) : (
+                                  <span className="font-semibold text-sm text-slate-900">
+                                    {money(opt.priceCents)}
+                                  </span>
+                                )}
                               </label>
                             );
                           })}

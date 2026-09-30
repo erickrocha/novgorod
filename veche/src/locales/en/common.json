@@ -37,7 +37,10 @@
     "yes": "Yes",
     "no": "No",
     "success": "Success",
-    "error": "Error"
+    "error": "Error",
+    "validatingSession": "Validating session...",
+    "description": "Description",
+    "deleting": "Deleting…"
   },
   "signin": {
     "emailPlaceholder": "john.smith@mail.com"
@@ -348,7 +351,16 @@
       "title": "Impression & Data Traffic",
       "totalRevenue": "Total Revenue",
       "sales": "Sales",
-      "revenue": "Revenue"
+      "revenue": "Revenue",
+      "impression": "Impression",
+      "traffic": "Traffic",
+      "monthly": "Monthly",
+      "quarterly": "Quarterly",
+      "annually": "Annually",
+      "series": {
+        "impression": "Impression",
+        "dataTraffic": "Data Traffic"
+      }
     },
     "featuredCampaign": {
       "title": "Featured Campaigns",
@@ -1366,7 +1378,9 @@
       "saveAddress": "Save Address",
       "saving": "Saving...",
       "addressSaved": "Address saved successfully.",
-      "addressDeleted": "Address deleted successfully."
+      "addressDeleted": "Address deleted successfully.",
+      "countryCode": "Country",
+      "countryPlaceholder": "e.g. US"
     }
   },
   "customers": {
@@ -1401,7 +1415,31 @@
     "active": "Active",
     "inactive": "Inactive",
     "manageAddresses": "Manage Addresses",
-    "noCustomersFound": "No customers found."
+    "noCustomersFound": "No customers found.",
+    "manageAddressesTitle": "Delivery Addresses",
+    "manageAddressesSubtitle": "Delivery and billing locations on file.",
+    "addAddress": "Add Address",
+    "newAddress": "New Address",
+    "recipientName": "Recipient Name",
+    "postalCodeCep": "Postal Code / CEP",
+    "addressLine1": "Address Line 1",
+    "addressLine1Placeholder": "Street name, number",
+    "addressLine2": "Address Line 2 (Optional)",
+    "addressLine2Placeholder": "Apt, suite, neighborhood",
+    "country": "Country",
+    "stateProvince": "State / Province",
+    "selectState": "Select state...",
+    "noStateFound": "No state found",
+    "city": "City",
+    "selectStateFirst": "Select state first...",
+    "loadingCities": "Loading cities...",
+    "selectOrSearchCity": "Select or search city...",
+    "noCityFound": "No city found",
+    "defaultDeliveryAddress": "Default delivery address",
+    "defaultBadge": "Default",
+    "loadingAddresses": "Loading addresses…",
+    "noAddressesRecorded": "No delivery addresses recorded for this customer.",
+    "saveAddress": "Save Address"
   },
   "operations": {
     "inventory": {
@@ -1433,26 +1471,57 @@
       "lowStockBadge": "{count} Low Stock",
       "outOfStockBadge": "Out of Stock",
       "modalDesc": "Set available units and reservation balances for a SKU",
-      "availableToSell": "Available to Sell:"
+      "availableToSell": "Available to Sell:",
+      "warehouseCol": "DC / Warehouse",
+      "skuIdLabel": "SKU ID *",
+      "tenantLabel": "Tenant (SysAdmin only)",
+      "defaultTenant": "Default Tenant",
+      "updateStock": "Update Stock"
     },
     "shippingRates": {
       "title": "Shipping Rates",
-      "desc": "Manage state shipping fees",
+      "desc": "Manage regional shipping fees by postal code range, state, weight and transit times",
       "addRate": "Add Shipping Rate",
       "refresh": "Refresh",
       "emptyMessage": "No shipping rates configured.",
       "ufCol": "UF",
-      "priceCol": "Shipping Price",
+      "priceCol": "Base Price",
+      "regionCol": "Region / Service",
+      "cepRangeCol": "Postal Code Range",
+      "transitDaysCol": "Transit Time",
+      "weightLimitCol": "Base Weight",
+      "extraWeightCol": "Excess / kg",
+      "freeShippingCol": "Free Shipping From",
+      "warehouseCol": "CD / Origin",
       "tenantCol": "Tenant",
       "actionsCol": "Actions",
       "editRate": "Edit Shipping Rate",
       "newRate": "Add Shipping Rate",
-      "modalDesc": "Configure shipping price by state",
+      "modalDesc": "Configure regional pricing, CEP ranges, and weight excess thresholds",
       "ufLabel": "State / Province (UF)",
-      "priceLabel": "Shipping Price (BRL) *",
+      "priceLabel": "Base Shipping Price (BRL) *",
+      "regionLabel": "Region / Service Name",
+      "regionPlaceholder": "E.g. SP (Capital and Metro Area)",
+      "cepStartLabel": "Starting CEP (8 digits)",
+      "cepEndLabel": "Ending CEP (8 digits)",
+      "cepHelp": "Leave blank to apply to the entire state.",
+      "transitMinLabel": "Min Transit Days",
+      "transitMaxLabel": "Max Transit Days",
+      "maxWeightLabel": "Base Weight Limit (kg)",
+      "extraWeightLabel": "Charge per Excess kg (BRL/kg)",
+      "freeShippingLabel": "Free Shipping for orders above (BRL)",
+      "warehouseLabel": "Distribution Center (Origin CD)",
+      "allWarehouses": "Any Warehouse / Store Default",
+      "allUf": "Entire State",
       "saveRate": "Update Rate",
       "createRate": "Save Rate",
-      "updatedAtCol": "Last Updated"
+      "updatedAtCol": "Last Updated",
+      "deleteConfirmTitle": "Delete Shipping Rate",
+      "deleteConfirmDesc": "Are you sure you want to delete this regional shipping rate?",
+      "manageWarehouses": "Distribution Centers (CDs)",
+      "applyPreset": "Load SP Example Preset",
+      "presetSuccess": "Preset shipping rates loaded successfully!",
+      "presetConfirm": "Load suggested standard rate preset (SP Capital, SP Interior, RJ/MG/ES, South, Central-West, Northeast, North)?"
     },
     "shippingSettings": {
       "title": "Shipping Settings",
@@ -1486,7 +1555,17 @@
       "saving": "Saving...",
       "cancel": "Cancel",
       "savedSuccess": "Shipping settings saved successfully!",
-      "saveError": "Failed to save shipping settings"
+      "saveError": "Failed to save shipping settings",
+      "packagingDesc": "Additional package weight and box dimensions to add to item measurements",
+      "fixedHelp": "Uses flat shipping rates configured per state under Shipping Rates",
+      "correiosHelp": "Calculates live price and transit times via Correios API",
+      "unchangedPlaceholder": "•••••••• (unchanged)",
+      "unchangedShortPlaceholder": "•• (unchanged)",
+      "usernamePlaceholder": "Meu Correios username",
+      "apiAccessCodePlaceholder": "API access code",
+      "postingCardPlaceholder": "Posting card number",
+      "contractPlaceholder": "Contract number",
+      "regionalIdentifierPlaceholder": "e.g. 72"
     },
     "taxRules": {
       "title": "Tax Rules",
@@ -1525,7 +1604,9 @@
         "national": "0 - National",
         "foreignDirect": "1 - Foreign (Direct Import)",
         "foreignInternal": "2 - Foreign (Internal Market)"
-      }
+      },
+      "originState": "Origin State (UF)",
+      "destinationState": "Destination State (UF)"
     }
   },
   "locations": {

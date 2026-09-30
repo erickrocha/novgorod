@@ -6,8 +6,8 @@ use crate::endpoints::json::error_response_json::{
     BadRequestErrorJson, ForbiddenErrorJson, InternalServerErrorJson, NotFoundErrorJson,
     UnauthorizedErrorJson,
 };
-use crate::endpoints::json::shipping_rate_json::*;
-use crate::infrastructure::mapper::{Mapper, ShippingRateMapper};
+use crate::endpoints::json::warehouse_json::*;
+use crate::infrastructure::mapper::{Mapper, WarehouseMapper};
 use axum::http::StatusCode;
 use axum::{
     Json,
@@ -15,14 +15,14 @@ use axum::{
 };
 use business::commons::entity_mapper::EntityMapper;
 use business::domain::enums::Role;
-use business::domain::shipping_rate::{ShippingRate, ShippingRateEntityMapper};
 use business::domain::user::User;
-use business::gateway::shipping_rate_gateway::ShippingRateGateway;
+use business::domain::warehouse::{Warehouse, WarehouseEntityMapper};
+use business::gateway::warehouse_gateway::WarehouseGateway;
 use business::sea_orm::{
     ColumnTrait, Condition, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect,
 };
-use business::use_cases::shipping_rate_use_case::ShippingRateUseCase;
-use entity::shipping_rate_entity;
+use business::use_cases::warehouse_use_case::WarehouseUseCase;
+use entity::warehouse_entity;
 
 fn tenant_for_write(user: &User, requested: Option<i64>) -> Option<i64> {
     match user.role {
@@ -35,21 +35,23 @@ fn can_read_tenant(user: &User, tenant_id: Option<i64>) -> bool {
     user.role == Role::SysAdmin || (user.tenant_id.is_some() && user.tenant_id == tenant_id)
 }
 
-const SHIPPING_RATE_SORT_FIELDS: &[&str] = &[
+const WAREHOUSE_SORT_FIELDS: &[&str] = &[
     "id",
+    "name",
+    "originCep",
+    "origin_cep",
+    "city",
     "uf",
-    "priceCents",
-    "price_cents",
     "createdAt",
     "created_at",
 ];
 
 #[utoipa::path(
     get,
-    path = "/shipping-rates",
-    tag = "ShippingRate",
+    path = "/warehouses",
+    tag = "Warehouse",
     responses(
-        (status = 200, description = "List of shipping rates", body = [ShippingRateJson]),
+        (status = 200, description = "List of warehouses", body = [WarehouseJson]),
         (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
         (status = 403, description = "Forbidden", body = ForbiddenErrorJson),
         (status = 500, description = "Internal server error", body = InternalServerErrorJson),
@@ -58,20 +60,32 @@ const SHIPPING_RATE_SORT_FIELDS: &[&str] = &[
 )]
 pub async fn list_all(
     State(state): State<AppState>,
-    Extension(_current_user): Extension<User>,
-) -> Json<Vec<ShippingRateJson>> {
-    let usecase = ShippingRateUseCase::new(ShippingRateGateway::new(state.conn.as_ref().clone()));
-    let items = usecase.find_all().await;
-    Json(ShippingRateMapper::json_vec(items))
+    Extension(current_user): Extension<User>,
+) -> Json<Vec<WarehouseJson>> {
+    let mut query = warehouse_entity::Entity::find();
+    if current_user.role != Role::SysAdmin {
+        if let Some(id) = current_user.tenant_id {
+            query = query.filter(warehouse_entity::Column::TenantId.eq(id));
+        } else {
+            return Json(vec![]);
+        }
+    }
+    let rows = query
+        .order_by_asc(warehouse_entity::Column::Name)
+        .all(state.conn.as_ref())
+        .await
+        .unwrap_or_default();
+    let domains = WarehouseEntityMapper::from_models(rows);
+    Json(WarehouseMapper::json_vec(domains))
 }
 
 #[utoipa::path(
     get,
-    path = "/shipping-rates/paged",
-    tag = "ShippingRate",
-    params(ShippingRatePageQuery),
+    path = "/warehouses/paged",
+    tag = "Warehouse",
+    params(WarehousePageQuery),
     responses(
-        (status = 200, description = "Paged shipping rates", body = PagedResponse<ShippingRateJson>),
+        (status = 200, description = "Paged warehouses", body = PagedResponse<WarehouseJson>),
         (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
         (status = 403, description = "Forbidden", body = ForbiddenErrorJson),
         (status = 500, description = "Internal server error", body = InternalServerErrorJson),
@@ -81,54 +95,52 @@ pub async fn list_all(
 pub async fn paged(
     State(state): State<AppState>,
     Extension(current_user): Extension<User>,
-    Query(params): Query<ShippingRatePageQuery>,
-) -> Json<PagedResponse<ShippingRateJson>> {
+    Query(params): Query<WarehousePageQuery>,
+) -> Json<PagedResponse<WarehouseJson>> {
     let norm =
-        NormalizedPagination::new(&params.to_page_query(), SHIPPING_RATE_SORT_FIELDS, "uf");
-    let mut query = shipping_rate_entity::Entity::find();
+        NormalizedPagination::new(&params.to_page_query(), WAREHOUSE_SORT_FIELDS, "name");
+    let mut query = warehouse_entity::Entity::find();
 
     if current_user.role != Role::SysAdmin {
         if let Some(id) = current_user.tenant_id {
-            query = query.filter(shipping_rate_entity::Column::TenantId.eq(id));
+            query = query.filter(warehouse_entity::Column::TenantId.eq(id));
         } else {
             return Json(PagedResponse::empty(norm.page, norm.page_size));
         }
-    } else if let Some(tid) = params.tenant_id {
-        query = query.filter(shipping_rate_entity::Column::TenantId.eq(tid));
     }
 
     if let Some(ref uf) = params.uf {
-        query = query.filter(shipping_rate_entity::Column::Uf.eq(uf));
-    }
-
-    if let Some(wid) = params.origin_warehouse_id {
-        query = query.filter(shipping_rate_entity::Column::OriginWarehouseId.eq(wid));
+        query = query.filter(warehouse_entity::Column::Uf.eq(uf));
     }
 
     if let Some(ref q) = norm.q {
         let pattern = format!("%{}%", q);
         query = query.filter(
             Condition::any()
-                .add(shipping_rate_entity::Column::Uf.like(&pattern))
-                .add(shipping_rate_entity::Column::RegionName.like(&pattern)),
+                .add(warehouse_entity::Column::Name.like(&pattern))
+                .add(warehouse_entity::Column::OriginCep.like(&pattern))
+                .add(warehouse_entity::Column::City.like(&pattern))
+                .add(warehouse_entity::Column::Uf.like(&pattern)),
         );
     }
 
     let sort_col = match norm.sort_by.to_ascii_lowercase().as_str() {
-        "pricecents" | "price_cents" => shipping_rate_entity::Column::PriceCents,
-        "createdat" | "created_at" => shipping_rate_entity::Column::CreatedAt,
-        "id" => shipping_rate_entity::Column::Id,
-        _ => shipping_rate_entity::Column::Uf,
+        "origincep" | "origin_cep" => warehouse_entity::Column::OriginCep,
+        "city" => warehouse_entity::Column::City,
+        "uf" => warehouse_entity::Column::Uf,
+        "createdat" | "created_at" => warehouse_entity::Column::CreatedAt,
+        "id" => warehouse_entity::Column::Id,
+        _ => warehouse_entity::Column::Name,
     };
 
     query = if norm.sort_dir.is_descending() {
         query
             .order_by_desc(sort_col)
-            .order_by_desc(shipping_rate_entity::Column::Id)
+            .order_by_desc(warehouse_entity::Column::Id)
     } else {
         query
             .order_by_asc(sort_col)
-            .order_by_asc(shipping_rate_entity::Column::Id)
+            .order_by_asc(warehouse_entity::Column::Id)
     };
 
     let total = query.clone().count(state.conn.as_ref()).await.unwrap_or(0);
@@ -139,18 +151,18 @@ pub async fn paged(
         .await
         .unwrap_or_default();
 
-    let domains = ShippingRateEntityMapper::from_models(rows);
-    let items = ShippingRateMapper::json_vec(domains);
+    let domains = WarehouseEntityMapper::from_models(rows);
+    let items = WarehouseMapper::json_vec(domains);
     Json(PagedResponse::new(items, total, norm.page, norm.page_size))
 }
 
 #[utoipa::path(
     get,
-    path = "/shipping-rates/{id}",
-    tag = "ShippingRate",
-    params(("id" = i64, Path, description = "Shipping Rate ID")),
+    path = "/warehouses/{id}",
+    tag = "Warehouse",
+    params(("id" = i64, Path, description = "Warehouse ID")),
     responses(
-        (status = 200, description = "Shipping rate found", body = ShippingRateJson),
+        (status = 200, description = "Warehouse found", body = WarehouseJson),
         (status = 404, description = "Not found", body = NotFoundErrorJson),
         (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
         (status = 403, description = "Forbidden", body = ForbiddenErrorJson),
@@ -163,8 +175,8 @@ pub async fn get_by_id(
     Extension(locale): Extension<Locale>,
     Extension(current_user): Extension<User>,
     Path(id): Path<i64>,
-) -> HttpResponse<Json<ShippingRateJson>> {
-    let usecase = ShippingRateUseCase::new(ShippingRateGateway::new(state.conn.as_ref().clone()));
+) -> HttpResponse<Json<WarehouseJson>> {
+    let usecase = WarehouseUseCase::new(WarehouseGateway::new(state.conn.as_ref().clone()));
     let item = usecase
         .find_by_id(id)
         .await
@@ -180,16 +192,16 @@ pub async fn get_by_id(
         ));
     }
 
-    Ok(Json(ShippingRateMapper::json(item)))
+    Ok(Json(WarehouseMapper::json(item)))
 }
 
 #[utoipa::path(
     post,
-    path = "/shipping-rates",
-    tag = "ShippingRate",
-    request_body = ShippingRateInputJson,
+    path = "/warehouses",
+    tag = "Warehouse",
+    request_body = WarehouseInputJson,
     responses(
-        (status = 201, description = "Shipping rate created", body = ShippingRateJson),
+        (status = 201, description = "Warehouse created", body = WarehouseJson),
         (status = 400, description = "Bad request", body = BadRequestErrorJson),
         (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
         (status = 403, description = "Forbidden", body = ForbiddenErrorJson),
@@ -200,58 +212,63 @@ pub async fn get_by_id(
 pub async fn add(
     State(state): State<AppState>,
     Extension(locale): Extension<Locale>,
-    Extension(user): Extension<User>,
-    Json(input): Json<ShippingRateInputJson>,
-) -> HttpResponse<(StatusCode, Json<ShippingRateJson>)> {
-    let tenant_id = tenant_for_write(&user, input.tenant_id).ok_or(
-        ExceptionResponse::Forbidden(locale, ErrorKey::InvalidParameterValue),
-    )?;
+    Extension(current_user): Extension<User>,
+    Json(input): Json<WarehouseInputJson>,
+) -> HttpResponse<Json<WarehouseJson>> {
+    let tenant_id = tenant_for_write(&current_user, input.tenant_id);
 
-    if input.uf.trim().is_empty() || input.price_cents < 0 {
+    if input.name.trim().is_empty() {
         return Err(ExceptionResponse::BadRequest(
             locale,
             ErrorKey::InvalidParameterValue,
         ));
     }
 
-    let domain = ShippingRate {
+    let origin_cep = input.origin_cep.chars().filter(|c| c.is_ascii_digit()).collect::<String>();
+    if origin_cep.len() != 8 {
+        return Err(ExceptionResponse::BadRequest(
+            locale,
+            ErrorKey::InvalidParameterValue,
+        ));
+    }
+
+    let domain = Warehouse {
         id: None,
         uuid: None,
-        tenant_id: Some(tenant_id),
-        origin_warehouse_id: input.origin_warehouse_id,
-        region_name: input.region_name.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
+        tenant_id,
+        name: input.name.trim().to_string(),
+        origin_cep,
+        street: input.street.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
+        number: input.number.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
+        complement: input.complement.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
+        district: input.district.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
+        city: input.city.trim().to_string(),
         uf: input.uf.trim().to_uppercase(),
-        destination_cep_start: input.destination_cep_start.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
-        destination_cep_end: input.destination_cep_end.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
-        price_cents: input.price_cents,
-        transit_days_min: input.transit_days_min,
-        transit_days_max: input.transit_days_max,
-        max_weight_g: input.max_weight_g,
-        extra_weight_per_kg_cents: input.extra_weight_per_kg_cents,
-        free_shipping_threshold_cents: input.free_shipping_threshold_cents,
+        is_default: input.is_default,
+        active: input.active,
         created_at: None,
-        created_by: None,
+        created_by: Some(current_user.email),
         updated_at: None,
         updated_by: None,
     };
 
-    let usecase = ShippingRateUseCase::new(ShippingRateGateway::new(state.conn.as_ref().clone()));
-    let saved = usecase
-        .create(domain)
-        .await
-        .ok_or(ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
+    let usecase = WarehouseUseCase::new(WarehouseGateway::new(state.conn.as_ref().clone()));
+    let created = usecase.create(domain).await.ok_or(ExceptionResponse::BadRequest(
+        locale,
+        ErrorKey::InvalidParameterValue,
+    ))?;
 
-    Ok((StatusCode::CREATED, Json(ShippingRateMapper::json(saved))))
+    Ok(Json(WarehouseMapper::json(created)))
 }
 
 #[utoipa::path(
     put,
-    path = "/shipping-rates/{id}",
-    tag = "ShippingRate",
-    params(("id" = i64, Path, description = "Shipping Rate ID")),
-    request_body = ShippingRateInputJson,
+    path = "/warehouses/{id}",
+    tag = "Warehouse",
+    params(("id" = i64, Path, description = "Warehouse ID")),
+    request_body = WarehouseInputJson,
     responses(
-        (status = 200, description = "Shipping rate updated", body = ShippingRateJson),
+        (status = 200, description = "Warehouse updated", body = WarehouseJson),
         (status = 400, description = "Bad request", body = BadRequestErrorJson),
         (status = 404, description = "Not found", body = NotFoundErrorJson),
         (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
@@ -263,11 +280,11 @@ pub async fn add(
 pub async fn update(
     State(state): State<AppState>,
     Extension(locale): Extension<Locale>,
-    Extension(user): Extension<User>,
+    Extension(current_user): Extension<User>,
     Path(id): Path<i64>,
-    Json(input): Json<ShippingRateInputJson>,
-) -> HttpResponse<Json<ShippingRateJson>> {
-    let usecase = ShippingRateUseCase::new(ShippingRateGateway::new(state.conn.as_ref().clone()));
+    Json(input): Json<WarehouseInputJson>,
+) -> HttpResponse<Json<WarehouseJson>> {
+    let usecase = WarehouseUseCase::new(WarehouseGateway::new(state.conn.as_ref().clone()));
     let existing = usecase
         .find_by_id(id)
         .await
@@ -276,51 +293,61 @@ pub async fn update(
             ErrorKey::InvalidParameterValue,
         ))?;
 
-    if !can_read_tenant(&user, existing.tenant_id)
-        || tenant_for_write(&user, input.tenant_id.or(existing.tenant_id)) != existing.tenant_id
-        || input.price_cents < 0
-    {
-        return Err(ExceptionResponse::Forbidden(
+    if !can_read_tenant(&current_user, existing.tenant_id) {
+        return Err(ExceptionResponse::NotFound(
             locale,
             ErrorKey::InvalidParameterValue,
         ));
     }
 
-    if input.uf.trim().is_empty() {
+    let origin_cep = input.origin_cep.chars().filter(|c| c.is_ascii_digit()).collect::<String>();
+    if origin_cep.len() != 8 {
         return Err(ExceptionResponse::BadRequest(
             locale,
             ErrorKey::InvalidParameterValue,
         ));
     }
 
-    let mut updated = existing;
-    updated.origin_warehouse_id = input.origin_warehouse_id;
-    updated.region_name = input.region_name.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
-    updated.uf = input.uf.trim().to_uppercase();
-    updated.destination_cep_start = input.destination_cep_start.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
-    updated.destination_cep_end = input.destination_cep_end.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
-    updated.price_cents = input.price_cents;
-    updated.transit_days_min = input.transit_days_min;
-    updated.transit_days_max = input.transit_days_max;
-    updated.max_weight_g = input.max_weight_g;
-    updated.extra_weight_per_kg_cents = input.extra_weight_per_kg_cents;
-    updated.free_shipping_threshold_cents = input.free_shipping_threshold_cents;
+    let tenant_id = tenant_for_write(&current_user, input.tenant_id.or(existing.tenant_id));
 
-    let saved = usecase
-        .update(id, updated)
+    let domain = Warehouse {
+        id: Some(id),
+        uuid: existing.uuid,
+        tenant_id,
+        name: input.name.trim().to_string(),
+        origin_cep,
+        street: input.street.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
+        number: input.number.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
+        complement: input.complement.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
+        district: input.district.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
+        city: input.city.trim().to_string(),
+        uf: input.uf.trim().to_uppercase(),
+        is_default: input.is_default,
+        active: input.active,
+        created_at: existing.created_at,
+        created_by: existing.created_by,
+        updated_at: None,
+        updated_by: Some(current_user.email),
+    };
+
+    let updated = usecase
+        .update(id, domain)
         .await
-        .ok_or(ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
+        .ok_or(ExceptionResponse::BadRequest(
+            locale,
+            ErrorKey::InvalidParameterValue,
+        ))?;
 
-    Ok(Json(ShippingRateMapper::json(saved)))
+    Ok(Json(WarehouseMapper::json(updated)))
 }
 
 #[utoipa::path(
     delete,
-    path = "/shipping-rates/{id}",
-    tag = "ShippingRate",
-    params(("id" = i64, Path, description = "Shipping Rate ID")),
+    path = "/warehouses/{id}",
+    tag = "Warehouse",
+    params(("id" = i64, Path, description = "Warehouse ID")),
     responses(
-        (status = 204, description = "Shipping rate deleted"),
+        (status = 204, description = "Warehouse deleted"),
         (status = 404, description = "Not found", body = NotFoundErrorJson),
         (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
         (status = 403, description = "Forbidden", body = ForbiddenErrorJson),
@@ -334,7 +361,7 @@ pub async fn delete(
     Extension(current_user): Extension<User>,
     Path(id): Path<i64>,
 ) -> HttpResponse<StatusCode> {
-    let usecase = ShippingRateUseCase::new(ShippingRateGateway::new(state.conn.as_ref().clone()));
+    let usecase = WarehouseUseCase::new(WarehouseGateway::new(state.conn.as_ref().clone()));
     let existing = usecase
         .find_by_id(id)
         .await
@@ -360,4 +387,3 @@ pub async fn delete(
 
     Ok(StatusCode::NO_CONTENT)
 }
-
