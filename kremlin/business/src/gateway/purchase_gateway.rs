@@ -35,7 +35,7 @@ impl PurchaseGateway {
         Self { db }
     }
 
-    pub(crate) async fn customer_for_user<C: ConnectionTrait>(
+    pub async fn customer_for_user<C: ConnectionTrait>(
         db: &C,
         user_id: i64,
     ) -> Result<customer_entity::Model, PurchaseError> {

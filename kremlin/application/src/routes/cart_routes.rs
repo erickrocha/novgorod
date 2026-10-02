@@ -1,5 +1,6 @@
 use crate::AppState;
 use crate::authentication::authentication_middleware::authentication;
+use crate::authentication::cart_scope::cart_scope;
 use crate::endpoints::cart_endpoint as cart_ep;
 use crate::endpoints::cart_item_endpoint as item_ep;
 use axum::routing::{get, post, put};
@@ -19,5 +20,7 @@ pub fn cart_routes(state: AppState) -> Router<AppState> {
         .route("/cart-items", post(item_ep::add))
         .route("/cart-items/{id}", get(item_ep::get_by_id))
         .route("/cart-items/{id}", put(item_ep::update))
+        // added first = runs after `authentication`, which is added last and runs first
+        .route_layer(middleware::from_fn_with_state(state.clone(), cart_scope))
         .route_layer(middleware::from_fn_with_state(state, authentication))
 }

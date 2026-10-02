@@ -43,6 +43,7 @@
             administrative_area: Some("SP".to_string()),
             postal_code: Some("01310-100".to_string()),
             country_code: country_code.map(|s| s.to_string()),
+            listed: false,
             created_at: Utc::now().naive_utc(),
             created_by: None,
             updated_at: Utc::now().naive_utc(),

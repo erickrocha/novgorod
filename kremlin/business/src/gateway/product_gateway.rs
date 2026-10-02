@@ -172,20 +172,27 @@ impl ProductGateway {
         Ok((products, next_cursor, total as u64))
     }
 
-    pub async fn find_webstore_product_detail(&self, slug_or_id: &str) -> Result<Option<WebStoreProductDetailDto>, DbErr> {
-        let product_res = if let Ok(id) = slug_or_id.parse::<i64>() {
-            product_entity::Entity::find()
-                .filter(product_entity::Column::Id.eq(id))
-                .filter(product_entity::Column::Active.eq(true))
-                .one(&self.db)
-                .await?
+    /// Products of one tenant (SR-TEN-005); the filter is applied in the database.
+    pub async fn find_by_tenant(&self, tenant_id: i64) -> Result<Vec<product_entity::Model>, DbErr> {
+        ProductQuery::find()
+            .filter(product_entity::Column::TenantId.eq(tenant_id))
+            .order_by_asc(product_entity::Column::Name)
+            .all(&self.db)
+            .await
+    }
+
+    /// `tenant_id` set: a product of another tenant is not found (SR-TEN-005).
+    pub async fn find_webstore_product_detail(&self, slug_or_id: &str, tenant_id: Option<i64>) -> Result<Option<WebStoreProductDetailDto>, DbErr> {
+        let mut query = product_entity::Entity::find().filter(product_entity::Column::Active.eq(true));
+        query = if let Ok(id) = slug_or_id.parse::<i64>() {
+            query.filter(product_entity::Column::Id.eq(id))
         } else {
-            product_entity::Entity::find()
-                .filter(product_entity::Column::Slug.eq(slug_or_id))
-                .filter(product_entity::Column::Active.eq(true))
-                .one(&self.db)
-                .await?
+            query.filter(product_entity::Column::Slug.eq(slug_or_id))
         };
+        if let Some(tenant_id) = tenant_id {
+            query = query.filter(product_entity::Column::TenantId.eq(tenant_id));
+        }
+        let product_res = query.one(&self.db).await?;
 
         let product = match product_res {
             Some(p) => p,

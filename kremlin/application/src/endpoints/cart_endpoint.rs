@@ -1,4 +1,6 @@
 use crate::AppState;
+use crate::authentication::cart_scope::CartOwner;
+use crate::commons::tenant_context::TenantContext;
 use crate::commons::exception_response::{ExceptionResponse, HttpResponse};
 use crate::commons::i18n::{ErrorKey, Locale};
 use crate::commons::pagination::{NormalizedPagination, PagedResponse};
@@ -19,7 +21,7 @@ use business::domain::enums::Role;
 use business::domain::user::User;
 use business::gateway::cart_gateway::CartGateway;
 use business::sea_orm::{
-    ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect,
+    ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Select,
 };
 use business::use_cases::cart_use_case::CartUseCase;
 use entity::cart_entity;
@@ -33,6 +35,16 @@ fn tenant_for_write(user: &User, requested: Option<i64>) -> Option<i64> {
 
 fn can_read_tenant(user: &User, tenant_id: Option<i64>) -> bool {
     user.role == Role::SysAdmin || (user.tenant_id.is_some() && user.tenant_id == tenant_id)
+}
+
+/// Carts of one customer (SR-TEN-021), narrowed to the resolved tenant in store mode (SR-TEN-006);
+/// in marketplace mode there is no tenant filter.
+fn customer_carts(owner: i64, tenant: Option<i64>) -> Select<cart_entity::Entity> {
+    let query = cart_entity::Entity::find().filter(cart_entity::Column::CustomerId.eq(owner));
+    match tenant {
+        Some(tenant) => query.filter(cart_entity::Column::TenantId.eq(tenant)),
+        None => query,
+    }
 }
 
 const CART_SORT_FIELDS: &[&str] = &[
@@ -61,7 +73,16 @@ const CART_SORT_FIELDS: &[&str] = &[
 pub async fn list_all(
     State(state): State<AppState>,
     Extension(_current_user): Extension<User>,
+    Extension(owner): Extension<CartOwner>,
+    Extension(context): Extension<TenantContext>,
 ) -> Json<Vec<CartJson>> {
+    if let Some(customer) = owner.0 {
+        let rows = customer_carts(customer, context.tenant_id())
+            .all(state.conn.as_ref())
+            .await
+            .unwrap_or_default();
+        return Json(CartMapper::json_vec(CartEntityMapper::from_models(rows)));
+    }
     let usecase = CartUseCase::new(CartGateway::new(state.conn.as_ref().clone()));
     let items = usecase.find_all().await;
     Json(CartMapper::json_vec(items))
@@ -83,12 +104,16 @@ pub async fn list_all(
 pub async fn paged(
     State(state): State<AppState>,
     Extension(current_user): Extension<User>,
+    Extension(owner): Extension<CartOwner>,
+    Extension(context): Extension<TenantContext>,
     Query(params): Query<CartPageQuery>,
 ) -> Json<PagedResponse<CartJson>> {
     let norm = NormalizedPagination::new(&params.to_page_query(), CART_SORT_FIELDS, "id");
     let mut query = cart_entity::Entity::find();
 
-    if current_user.role != Role::SysAdmin {
+    if let Some(customer) = owner.0 {
+        query = customer_carts(customer, context.tenant_id());
+    } else if current_user.role != Role::SysAdmin {
         if let Some(id) = current_user.tenant_id {
             query = query.filter(cart_entity::Column::TenantId.eq(id));
         } else {
@@ -155,8 +180,24 @@ pub async fn get_by_id(
     State(state): State<AppState>,
     Extension(locale): Extension<Locale>,
     Extension(current_user): Extension<User>,
+    Extension(owner): Extension<CartOwner>,
+    Extension(context): Extension<TenantContext>,
     Path(id): Path<i64>,
 ) -> HttpResponse<Json<CartJson>> {
+    if let Some(customer) = owner.0 {
+        // another customer's cart, or another tenant's in store mode: not found
+        let row = customer_carts(customer, context.tenant_id())
+            .filter(cart_entity::Column::Id.eq(id))
+            .one(state.conn.as_ref())
+            .await
+            .ok()
+            .flatten()
+            .ok_or(ExceptionResponse::NotFound(
+                locale,
+                ErrorKey::InvalidParameterValue,
+            ))?;
+        return Ok(Json(CartMapper::json(CartEntityMapper::from_model(row))));
+    }
     let usecase = CartUseCase::new(CartGateway::new(state.conn.as_ref().clone()));
     let item = usecase
         .find_by_id(id)
@@ -194,11 +235,21 @@ pub async fn add(
     State(state): State<AppState>,
     Extension(locale): Extension<Locale>,
     Extension(user): Extension<User>,
+    Extension(owner): Extension<CartOwner>,
+    Extension(context): Extension<TenantContext>,
     Json(input): Json<CartInputJson>,
 ) -> HttpResponse<(StatusCode, Json<CartJson>)> {
-    let tenant_id = tenant_for_write(&user, input.tenant_id).ok_or(
-        ExceptionResponse::Forbidden(locale, ErrorKey::InvalidParameterValue),
-    )?;
+    // a Customer's cart belongs to the Customer; the tenant is the resolved one (optional), never
+    // taken from the request body or the JWT
+    let (tenant_id, customer_id) = match owner.0 {
+        Some(customer) => (context.tenant_id(), Some(customer)),
+        None => (
+            Some(tenant_for_write(&user, input.tenant_id).ok_or(
+                ExceptionResponse::Forbidden(locale, ErrorKey::InvalidParameterValue),
+            )?),
+            input.customer_id,
+        ),
+    };
 
     let status = input
         .status
@@ -208,8 +259,8 @@ pub async fn add(
     let domain = Cart {
         id: None,
         uuid: None,
-        tenant_id: Some(tenant_id),
-        customer_id: input.customer_id,
+        tenant_id,
+        customer_id,
         status,
         expires_at: input.expires_at,
         created_at: None,
@@ -247,20 +298,30 @@ pub async fn update(
     State(state): State<AppState>,
     Extension(locale): Extension<Locale>,
     Extension(user): Extension<User>,
+    Extension(owner): Extension<CartOwner>,
+    Extension(context): Extension<TenantContext>,
     Path(id): Path<i64>,
     Json(input): Json<CartInputJson>,
 ) -> HttpResponse<Json<CartJson>> {
     let usecase = CartUseCase::new(CartGateway::new(state.conn.as_ref().clone()));
-    let existing = usecase
-        .find_by_id(id)
-        .await
-        .ok_or(ExceptionResponse::NotFound(
-            locale,
-            ErrorKey::InvalidParameterValue,
-        ))?;
+    let existing = match owner.0 {
+        Some(customer) => customer_carts(customer, context.tenant_id())
+            .filter(cart_entity::Column::Id.eq(id))
+            .one(state.conn.as_ref())
+            .await
+            .ok()
+            .flatten()
+            .map(CartEntityMapper::from_model),
+        None => usecase.find_by_id(id).await,
+    }
+    .ok_or(ExceptionResponse::NotFound(
+        locale,
+        ErrorKey::InvalidParameterValue,
+    ))?;
 
-    if !can_read_tenant(&user, existing.tenant_id)
-        || tenant_for_write(&user, input.tenant_id.or(existing.tenant_id)) != existing.tenant_id
+    if owner.0.is_none()
+        && (!can_read_tenant(&user, existing.tenant_id)
+            || tenant_for_write(&user, input.tenant_id.or(existing.tenant_id)) != existing.tenant_id)
     {
         return Err(ExceptionResponse::Forbidden(
             locale,
@@ -269,7 +330,8 @@ pub async fn update(
     }
 
     let mut updated = existing;
-    if let Some(cid) = input.customer_id {
+    // the owner of a cart never changes through a Customer request
+    if let (Some(cid), None) = (input.customer_id, owner.0) {
         updated.customer_id = Some(cid);
     }
     if let Some(st) = input.status {
@@ -286,3 +348,7 @@ pub async fn update(
 
     Ok(Json(CartMapper::json(saved)))
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/endpoints/cart_endpoint_test.rs"]
+mod tests;

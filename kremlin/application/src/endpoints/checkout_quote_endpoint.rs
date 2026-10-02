@@ -35,6 +35,7 @@ pub async fn quote(
     State(state): State<AppState>,
     Extension(user): Extension<User>,
     Extension(locale): Extension<Locale>,
+    Extension(context): Extension<crate::commons::tenant_context::TenantContext>,
     Json(input): Json<QuoteRequest>,
 ) -> HttpResponse<(StatusCode, Json<QuoteResult>)> {
     if user.role != Role::Customer {
@@ -49,7 +50,7 @@ pub async fn quote(
     ))?;
     let result =
         CheckoutQuoteUseCase::with_provider(state.conn.as_ref().clone(), state.shipping.clone())
-            .create(user_id, input)
+            .create_scoped(user_id, input, context.tenant_id())
             .await
             .map_err(|e| error(locale, e))?;
     Ok((StatusCode::CREATED, Json(result)))
@@ -60,6 +61,7 @@ pub async fn select_shipping(
     State(state): State<AppState>,
     Extension(user): Extension<User>,
     Extension(locale): Extension<Locale>,
+    Extension(context): Extension<crate::commons::tenant_context::TenantContext>,
     axum::extract::Path(id): axum::extract::Path<i64>,
     Json(input): Json<Vec<business::use_cases::checkout_quote_use_case::ShippingSelection>>,
 ) -> HttpResponse<(StatusCode, Json<QuoteResult>)> {
@@ -73,9 +75,27 @@ pub async fn select_shipping(
         locale,
         ErrorKey::PurchaseForbidden,
     ))?;
+    ensure_quote_tenant(&state, id, context).await?;
     let result = CheckoutQuoteUseCase::new(state.conn.as_ref().clone())
         .select(user_id, id, input)
         .await
         .map_err(|e| error(locale, e))?;
     Ok((StatusCode::CREATED, Json(result)))
+}
+
+/// SR-TEN-007: with a Selector/Fixed context a quote holding items of another tenant is refused.
+pub(crate) async fn ensure_quote_tenant(
+    state: &AppState,
+    quote_id: i64,
+    context: crate::commons::tenant_context::TenantContext,
+) -> Result<(), ExceptionResponse> {
+    let Some(tenant_id) = context.tenant_id() else {
+        return Ok(());
+    };
+    match CheckoutQuoteUseCase::belongs_to_tenant(state.conn.as_ref(), quote_id, tenant_id).await {
+        Some(false) => Err(ExceptionResponse::CustomBadRequest(
+            "item of another tenant".into(),
+        )),
+        _ => Ok(()),
+    }
 }

@@ -219,3 +219,30 @@ fn test_shipping_matrix_cep_range_matching_and_specificity() {
     assert_eq!(best_fallback.id, 3);
     assert_eq!(best_fallback.price_cents, 2000);
 }
+
+#[test]
+fn quote_items_belong_to_a_tenant_only_when_all_of_them_do() {
+    let quote = |tenants: &[i64]| {
+        let items: Vec<_> = tenants
+            .iter()
+            .map(|t| {
+                serde_json::json!({
+                    "skuId": 1, "tenantId": t, "name": "n", "quantity": 1,
+                    "unitPriceCents": 100, "totalCents": 100
+                })
+            })
+            .collect();
+        serde_json::json!({
+            "id": 1, "expiresAt": "2026-10-02T00:00:00",
+            "shippingAddress": {
+                "recipient": "r", "addressLine1": "a", "addressLine2": null, "locality": "l",
+                "administrativeArea": "SP", "postalCode": "01310100", "countryCode": "BR"
+            },
+            "items": items, "sellers": [],
+            "subtotalCents": 0, "discountCents": 0, "shippingCents": 0, "totalCents": 0
+        })
+    };
+    assert!(quote_items_belong_to(&quote(&[7, 7]), 7));
+    assert!(!quote_items_belong_to(&quote(&[7, 8]), 7));
+    assert!(!quote_items_belong_to(&serde_json::json!({"broken": true}), 7));
+}

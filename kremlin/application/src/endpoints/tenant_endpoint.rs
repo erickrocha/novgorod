@@ -9,6 +9,7 @@ use crate::commons::pagination::PagedResponse;
 use crate::endpoints::json::tenant_json::TenantJson;
 use crate::infrastructure::mapper::{Mapper, TenantMapper};
 use axum::Json;
+use axum::extract::rejection::JsonRejection;
 use axum::extract::{Extension, Path, Query, State};
 use axum::http::StatusCode;
 use business::domain::enums::Role;
@@ -337,3 +338,86 @@ pub async fn update(
     ))?;
     Ok(Json(TenantMapper::json(tenant)))
 }
+
+#[derive(Debug, serde::Deserialize, serde::Serialize, utoipa::ToSchema)]
+pub struct ListingJson {
+    pub listed: bool,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum ListingAccess {
+    Allowed,
+    /// Same tenant but not a tenant admin (a `TenantUser`): refused, no existence leak.
+    Forbidden,
+    /// Another tenant or no tenant: reported as not found (`can_access_tenant` convention).
+    NotFound,
+}
+
+/// SR-TEN-019: SysAdmin may set any tenant, the `TenantOwner` of the tenant may set its own flag.
+fn listing_access(user: &User, tenant_id: i64) -> ListingAccess {
+    if user.role == Role::SysAdmin {
+        ListingAccess::Allowed
+    } else if user.tenant_id != Some(tenant_id) {
+        ListingAccess::NotFound
+    } else if user.role == Role::TenantOwner {
+        ListingAccess::Allowed
+    } else {
+        ListingAccess::Forbidden
+    }
+}
+
+#[utoipa::path(
+    put,
+    tag = "Tenant",
+    path = "/tenant/{id}/listing",
+    params(
+        ("id" = i64, Path, description = "Tenant ID")
+    ),
+    request_body = ListingJson,
+    responses(
+        (status = 200, description = "Listing flag updated", body = ListingJson),
+        (status = 400, description = "Bad request", body = BadRequestErrorJson),
+        (status = 404, description = "Tenant not found or not accessible", body = NotFoundErrorJson),
+        (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
+        (status = 403, description = "Forbidden", body = ForbiddenErrorJson),
+        (status = 500, description = "Internal server error", body = InternalServerErrorJson),
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn set_listing(
+    State(state): State<AppState>,
+    Extension(locale): Extension<Locale>,
+    Extension(current_user): Extension<User>,
+    Path(id): Path<i64>,
+    payload: Result<Json<ListingJson>, JsonRejection>,
+) -> HttpResponse<Json<ListingJson>> {
+    match listing_access(&current_user, id) {
+        ListingAccess::Allowed => {}
+        ListingAccess::Forbidden => {
+            return Err(ExceptionResponse::Forbidden(
+                locale,
+                ErrorKey::InvalidParameterValue,
+            ));
+        }
+        ListingAccess::NotFound => {
+            return Err(ExceptionResponse::NotFound(locale, ErrorKey::TenantNotFound));
+        }
+    }
+    let Json(body) = payload
+        .map_err(|_| ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
+    let changed = TenantGateway::new(state.conn.as_ref().clone())
+        .set_listed(id, body.listed)
+        .await
+        .map_err(|e| {
+            log::error!("Failed to set tenant listing flag: {e}");
+            ExceptionResponse::InternalServerError(locale, ErrorKey::TenantUpdateFailed)
+        })?;
+    if changed == 0 {
+        return Err(ExceptionResponse::NotFound(locale, ErrorKey::TenantNotFound));
+    }
+    Ok(Json(body))
+}
+
+#[cfg(test)]
+#[path = "../../tests/unit/endpoints/tenant_endpoint_test.rs"]
+mod listing_tests;

@@ -8,6 +8,7 @@ use sea_orm::prelude::async_trait::async_trait;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, DbConn, DbErr, DeleteResult, EntityTrait, QueryFilter,
 };
+use sea_orm::sea_query::Expr;
 
 pub struct TenantGateway {
     db: DbConn,
@@ -16,6 +17,18 @@ pub struct TenantGateway {
 impl TenantGateway {
     pub fn new(db: DbConn) -> Self {
         Self { db }
+    }
+}
+
+impl TenantGateway {
+    /// Sets only the listing flag (SR-TEN-019); returns the number of rows changed.
+    pub async fn set_listed(&self, id: i64, listed: bool) -> Result<u64, DbErr> {
+        let result = TenantQuery::update_many()
+            .col_expr(tenant_entity::Column::Listed, Expr::value(listed))
+            .filter(tenant_entity::Column::Id.eq(id))
+            .exec(&self.db)
+            .await?;
+        Ok(result.rows_affected)
     }
 }
 

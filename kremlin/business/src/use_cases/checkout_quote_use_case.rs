@@ -74,6 +74,13 @@ pub struct QuoteResult {
     pub total_cents: i64,
 }
 
+/// SR-TEN-007: true when every item of a stored quote result belongs to `tenant_id`.
+pub fn quote_items_belong_to(result: &serde_json::Value, tenant_id: i64) -> bool {
+    serde_json::from_value::<QuoteResult>(result.clone())
+        .map(|quote| quote.items.iter().all(|item| item.tenant_id == tenant_id))
+        .unwrap_or(false)
+}
+
 pub struct CheckoutQuoteUseCase {
     db: DbConn,
     provider: Option<Arc<dyn ShippingProviderGateway>>,
@@ -138,6 +145,26 @@ impl CheckoutQuoteUseCase {
         user_id: i64,
         request: QuoteRequest,
     ) -> Result<QuoteResult, PurchaseError> {
+        self.create_scoped(user_id, request, None).await
+    }
+
+    /// `Some(true/false)` whether the stored quote belongs to `tenant_id` (SR-TEN-007);
+    /// `None` when the quote does not exist (the caller's own lookup answers not found).
+    pub async fn belongs_to_tenant(db: &DbConn, quote_id: i64, tenant_id: i64) -> Option<bool> {
+        let record = checkout_quote_entity::Entity::find_by_id(quote_id)
+            .one(db)
+            .await
+            .ok()??;
+        Some(quote_items_belong_to(&record.result, tenant_id))
+    }
+
+    /// `tenant_id` set (Selector/Fixed context): every item must belong to that tenant (SR-TEN-007).
+    pub async fn create_scoped(
+        &self,
+        user_id: i64,
+        request: QuoteRequest,
+        tenant_id: Option<i64>,
+    ) -> Result<QuoteResult, PurchaseError> {
         let customer = PurchaseGateway::customer_for_user(&self.db, user_id).await?;
         let mut quote = Self::calculate_inner(
             &self.db,
@@ -147,6 +174,11 @@ impl CheckoutQuoteUseCase {
             None,
         )
         .await?;
+        if let Some(tenant_id) = tenant_id {
+            if quote.items.iter().any(|item| item.tenant_id != tenant_id) {
+                return Err(PurchaseError::Validation("item of another tenant"));
+            }
+        }
         let expiry = Utc::now().naive_utc() + Duration::minutes(15);
         let record = checkout_quote_entity::ActiveModel {
             customer_id: Set(customer.id),

@@ -53,9 +53,22 @@ impl ProductUseCase {
         self.gateway.find_webstore_products(tenant_id, query).await
     }
 
-    pub async fn find_webstore_product_detail(&self, slug_or_id: &str) -> Option<crate::domain::product::WebStoreProductDetailDto> {
+    pub async fn find_all_for_tenant(&self, tenant_id: Option<i64>) -> Vec<Product> {
+        let Some(tenant_id) = tenant_id else {
+            return self.find_all().await;
+        };
+        match self.gateway.find_by_tenant(tenant_id).await {
+            Ok(entities) => ProductEntityMapper::from_models(entities),
+            Err(e) => {
+                log::error!("[ProductUseCase::find_all_for_tenant] Failed to fetch products: {:?}", e.to_string());
+                Vec::new()
+            }
+        }
+    }
+
+    pub async fn find_webstore_product_detail(&self, slug_or_id: &str, tenant_id: Option<i64>) -> Option<crate::domain::product::WebStoreProductDetailDto> {
         log::info!("[ProductUseCase::find_webstore_product_detail] Fetching product detail for '{}'", slug_or_id);
-        match self.gateway.find_webstore_product_detail(slug_or_id).await {
+        match self.gateway.find_webstore_product_detail(slug_or_id, tenant_id).await {
             Ok(detail) => detail,
             Err(e) => {
                 log::error!("[ProductUseCase::find_webstore_product_detail] Error fetching product detail: {:?}", e.to_string());

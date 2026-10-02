@@ -1,5 +1,6 @@
 use crate::AppState;
 use crate::commons::pagination::PagedResponse;
+use crate::commons::tenant_context::TenantContext;
 use crate::endpoints::catalog_attribute_endpoint;
 use crate::endpoints::category_endpoint;
 use crate::endpoints::json::product_json::ProductJson;
@@ -15,19 +16,14 @@ use crate::infrastructure::mapper::{Mapper, ProductMapper};
 use axum::{
     Json,
     extract::{Extension, Path, Query, State},
-    http::{HeaderMap, StatusCode},
+    http::StatusCode,
 };
 use business::domain::enums::Role;
 use business::domain::user::User;
 use business::gateway::product_gateway::ProductGateway;
 use business::use_cases::product_use_case::ProductUseCase;
 
-fn build_dummy_user(headers: &HeaderMap) -> User {
-    let tenant_id = headers
-        .get("x-tenant-id")
-        .and_then(|h| h.to_str().ok())
-        .and_then(|s| s.parse::<i64>().ok());
-
+fn build_dummy_user(tenant_id: Option<i64>) -> User {
     User {
         id: None,
         uuid: None,
@@ -54,9 +50,12 @@ fn build_dummy_user(headers: &HeaderMap) -> User {
     ),
     security(("bearer_auth" = []))
 )]
-pub async fn products(state: State<AppState>) -> Json<Vec<ProductJson>> {
+pub async fn products(
+    state: State<AppState>,
+    Extension(context): Extension<TenantContext>,
+) -> Json<Vec<ProductJson>> {
     let use_case = ProductUseCase::new(ProductGateway::new(state.conn.as_ref().clone()));
-    let products = use_case.find_all().await;
+    let products = use_case.find_all_for_tenant(context.tenant_id()).await;
     Json(ProductMapper::json_vec(products))
 }
 
@@ -71,10 +70,10 @@ pub async fn products(state: State<AppState>) -> Json<Vec<ProductJson>> {
 )]
 pub async fn query_products(
     state: State<AppState>,
-    headers: HeaderMap,
+    Extension(context): Extension<TenantContext>,
     query: Query<WebStorePageQuery>,
 ) -> Result<Json<PagedResponse<WebStoreProductJson>>, StatusCode> {
-    let user = build_dummy_user(&headers);
+    let user = build_dummy_user(context.tenant_id());
     let use_case = ProductUseCase::new(ProductGateway::new(state.conn.as_ref().clone()));
 
     let search_query = business::domain::product::ProductSearchQuery {
@@ -139,10 +138,11 @@ pub async fn query_products(
 )]
 pub async fn product_detail(
     state: State<AppState>,
+    Extension(context): Extension<TenantContext>,
     Path(slug): Path<String>,
 ) -> Result<Json<WebStoreProductDetailJson>, StatusCode> {
     let use_case = ProductUseCase::new(ProductGateway::new(state.conn.as_ref().clone()));
-    let detail = use_case.find_webstore_product_detail(&slug).await;
+    let detail = use_case.find_webstore_product_detail(&slug, context.tenant_id()).await;
 
     match detail {
         Some(p) => {
@@ -227,18 +227,18 @@ pub async fn product_detail(
 // ==========================================
 pub async fn categories(
     state: State<AppState>,
-    headers: HeaderMap,
+    Extension(context): Extension<TenantContext>,
 ) -> Json<Vec<crate::endpoints::json::catalog_json::CategoryJson>> {
-    let user = build_dummy_user(&headers);
+    let user = build_dummy_user(context.tenant_id());
     category_endpoint::categories(state, Extension(user)).await
 }
 
 pub async fn categories_paged(
     state: State<AppState>,
-    headers: HeaderMap,
+    Extension(context): Extension<TenantContext>,
     query: Query<category_endpoint::CategoryPageQuery>,
 ) -> Json<crate::commons::pagination::PagedResponse<crate::endpoints::json::catalog_json::CategoryJson>> {
-    let user = build_dummy_user(&headers);
+    let user = build_dummy_user(context.tenant_id());
     category_endpoint::categories_paged(state, Extension(user), query).await
 }
 
@@ -247,18 +247,18 @@ pub async fn categories_paged(
 // ==========================================
 pub async fn skus(
     state: State<AppState>,
-    headers: HeaderMap,
+    Extension(context): Extension<TenantContext>,
 ) -> Json<Vec<crate::endpoints::json::catalog_json::SkuJson>> {
-    let user = build_dummy_user(&headers);
+    let user = build_dummy_user(context.tenant_id());
     sku_endpoint::skus(state, Extension(user)).await
 }
 
 pub async fn skus_paged(
     state: State<AppState>,
-    headers: HeaderMap,
+    Extension(context): Extension<TenantContext>,
     query: Query<sku_endpoint::SkuPageQuery>,
 ) -> Json<crate::commons::pagination::PagedResponse<crate::endpoints::json::catalog_json::SkuJson>> {
-    let user = build_dummy_user(&headers);
+    let user = build_dummy_user(context.tenant_id());
     sku_endpoint::skus_paged(state, Extension(user), query).await
 }
 
@@ -267,9 +267,9 @@ pub async fn skus_paged(
 // ==========================================
 pub async fn catalog_attributes(
     state: State<AppState>,
-    headers: HeaderMap,
+    Extension(context): Extension<TenantContext>,
 ) -> Json<Vec<crate::endpoints::json::catalog_json::CatalogAttributeJson>> {
-    let user = build_dummy_user(&headers);
+    let user = build_dummy_user(context.tenant_id());
     catalog_attribute_endpoint::attributes(state, Extension(user)).await
 }
 
@@ -278,9 +278,9 @@ pub async fn catalog_attributes(
 // ==========================================
 pub async fn product_categories(
     state: State<AppState>,
-    headers: HeaderMap,
+    Extension(context): Extension<TenantContext>,
 ) -> Json<Vec<crate::endpoints::json::product_category_json::ProductCategoryJson>> {
-    let user = build_dummy_user(&headers);
+    let user = build_dummy_user(context.tenant_id());
     product_category_endpoint::list_all(state, Extension(user)).await
 }
 
@@ -289,9 +289,9 @@ pub async fn product_categories(
 // ==========================================
 pub async fn sku_attributes(
     state: State<AppState>,
-    headers: HeaderMap,
+    Extension(context): Extension<TenantContext>,
 ) -> Json<Vec<crate::endpoints::json::sku_attribute_json::SkuAttributeJson>> {
-    let user = build_dummy_user(&headers);
+    let user = build_dummy_user(context.tenant_id());
     sku_attribute_endpoint::list_all(state, Extension(user)).await
 }
 
@@ -300,9 +300,9 @@ pub async fn sku_attributes(
 // ==========================================
 pub async fn sku_attribute_values(
     state: State<AppState>,
-    headers: HeaderMap,
+    Extension(context): Extension<TenantContext>,
 ) -> Json<Vec<crate::endpoints::json::sku_attribute_json::SkuAttributeJson>> {
-    let user = build_dummy_user(&headers);
+    let user = build_dummy_user(context.tenant_id());
     sku_attribute_endpoint::list_all(state, Extension(user)).await
 }
 
@@ -311,9 +311,9 @@ pub async fn sku_attribute_values(
 // ==========================================
 pub async fn sku_stocks(
     state: State<AppState>,
-    headers: HeaderMap,
+    Extension(context): Extension<TenantContext>,
 ) -> Json<Vec<crate::endpoints::json::sku_stock_json::SkuStockJson>> {
-    let user = build_dummy_user(&headers);
+    let user = build_dummy_user(context.tenant_id());
     sku_stock_endpoint::list_all(state, Extension(user)).await
 }
 

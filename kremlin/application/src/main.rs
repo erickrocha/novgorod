@@ -62,6 +62,7 @@ impl Modify for SecurityAddon {
         endpoints::tenant_endpoint::get_by_uuid,
         endpoints::tenant_endpoint::list_all,
         endpoints::tenant_endpoint::update,
+        endpoints::tenant_endpoint::set_listing,
         endpoints::tenant_endpoint::paged,
         endpoints::user_endpoint::get_by_id,
         endpoints::user_endpoint::add,
@@ -222,6 +223,7 @@ impl Modify for SecurityAddon {
             endpoints::json::refresh_token_request::RefreshTokenRequest,
             endpoints::json::access_token_json::AccessTokenJson,
             endpoints::json::tenant_json::TenantJson,
+            endpoints::tenant_endpoint::ListingJson,
             endpoints::json::province_json::ProvinceJson,
             endpoints::json::city_json::CityJson,
             endpoints::json::catalog_json::CategoryJson,
@@ -339,6 +341,8 @@ pub struct AppState {
     pub shipping: Arc<dyn business::gateway::shipping_provider_gateway::ShippingProviderGateway>,
     pub shipping_keys: Arc<infrastructure::shipping_credentials::ShippingKeyRing>,
     pub payment_keys: Arc<infrastructure::payment_credentials::PaymentKeyRing>,
+    /// Shared secret nginx sends as `x-gateway-token` (GATEWAY_TOKEN); unset => every proof is invalid.
+    pub gateway_token: Option<Arc<str>>,
 }
 
 // ==================== Route Builders ====================
@@ -386,6 +390,10 @@ async fn start() -> anyhow::Result<()> {
         shipping,
         shipping_keys,
         payment_keys,
+        gateway_token: env::var("GATEWAY_TOKEN")
+            .ok()
+            .filter(|token| !token.is_empty())
+            .map(Arc::from),
     };
     crate::endpoints::checkout_payment_endpoint::spawn_payment_reconciliation(state.clone());
 
@@ -405,6 +413,7 @@ async fn start() -> anyhow::Result<()> {
             header::CONTENT_TYPE,
             header::AUTHORIZATION,
             header::HeaderName::from_static("idempotency-key"),
+            header::HeaderName::from_static("x-tenant-id"),
             header::ACCEPT,
             header::ORIGIN,
             header::ACCESS_CONTROL_ALLOW_ORIGIN,
@@ -441,6 +450,10 @@ async fn start() -> anyhow::Result<()> {
         ))
         .nest("/user", user_routes(state.clone()))
         .nest("/api/public", web_store_routes())
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            crate::commons::tenant_context::tenant_context,
+        ))
         .layer(cors)
         .with_state(state);
 

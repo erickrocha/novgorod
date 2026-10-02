@@ -1,5 +1,6 @@
 use crate::AppState;
 use crate::commons::{
+    tenant_context::TenantContext,
     exception_response::{ExceptionResponse, HttpResponse},
     i18n::{ErrorKey, Locale},
     pagination::{NormalizedPagination, PagedResponse},
@@ -39,6 +40,20 @@ fn error(locale: Locale, error: PurchaseError) -> ExceptionResponse {
         }
     }
 }
+/// The resolved tenant is ANDed with the client's own `tenant_id` query parameter, never replaced
+/// by it (SR-TEN-008). `Err(())` means the two differ, so nothing can match.
+fn scope_tenant(context: TenantContext, query: Option<i64>) -> Result<Option<i64>, ()> {
+    match (context.tenant_id(), query) {
+        (Some(resolved), Some(asked)) if resolved != asked => Err(()),
+        (Some(resolved), _) => Ok(Some(resolved)),
+        (None, asked) => Ok(asked),
+    }
+}
+
+fn empty_page<T>(norm: &NormalizedPagination) -> Json<PagedResponse<T>> {
+    Json(PagedResponse::new(Vec::new(), 0, norm.page, norm.page_size))
+}
+
 fn filter(params: OrdersPageQuery, purchase: bool) -> (NormalizedPagination, OrderFilter) {
     let allowed = if purchase {
         &["id", "status", "totalCents", "createdAt"][..]
@@ -89,6 +104,7 @@ pub async fn create_purchase(
     State(state): State<AppState>,
     Extension(user): Extension<User>,
     Extension(locale): Extension<Locale>,
+    Extension(context): Extension<TenantContext>,
     headers: HeaderMap,
     input: Result<Json<serde_json::Value>, axum::extract::rejection::JsonRejection>,
 ) -> HttpResponse<(StatusCode, Json<PurchaseDetailJson>)> {
@@ -104,6 +120,8 @@ pub async fn create_purchase(
     let quoted: CheckoutPurchaseJson = serde_json::from_value(input).map_err(|_| {
         ExceptionResponse::CustomBadRequest("valid checkout shipping quote required".into())
     })?;
+    crate::endpoints::checkout_quote_endpoint::ensure_quote_tenant(&state, quoted.quote_id, context)
+        .await?;
     let created = use_case(&state)
         .create_checkout(
             &user,
@@ -158,15 +176,18 @@ pub async fn get_by_id(
     State(state): State<AppState>,
     Extension(user): Extension<User>,
     Extension(locale): Extension<Locale>,
+    Extension(context): Extension<TenantContext>,
     Path(id): Path<i64>,
 ) -> HttpResponse<Json<OrderDetailJson>> {
-    Ok(Json(
-        use_case(&state)
-            .order(&user, id)
-            .await
-            .map_err(|e| error(locale, e))?
-            .into(),
-    ))
+    let detail = use_case(&state)
+        .order(&user, id)
+        .await
+        .map_err(|e| error(locale, e))?;
+    // an order of another tenant is "not found or not accessible" (SR-TEN-008)
+    if context.tenant_id().is_some_and(|t| t != detail.order.tenant_id) {
+        return Err(error(locale, PurchaseError::NotFound));
+    }
+    Ok(Json(detail.into()))
 }
 
 #[utoipa::path(get, path = "/purchases/{id}/payments", tag = "Payments", params(("id" = i64, Path)),
@@ -205,8 +226,18 @@ pub async fn history(
     State(state): State<AppState>,
     Extension(user): Extension<User>,
     Extension(locale): Extension<Locale>,
+    Extension(context): Extension<TenantContext>,
     Path(id): Path<i64>,
 ) -> HttpResponse<Json<Vec<OrderStatusHistoryJson>>> {
+    if let Some(tenant) = context.tenant_id() {
+        let detail = use_case(&state)
+            .order(&user, id)
+            .await
+            .map_err(|e| error(locale, e))?;
+        if detail.order.tenant_id != tenant {
+            return Err(error(locale, PurchaseError::NotFound));
+        }
+    }
     Ok(Json(
         use_case(&state)
             .history(&user, id)
@@ -252,9 +283,15 @@ pub async fn paged(
     State(state): State<AppState>,
     Extension(user): Extension<User>,
     Extension(locale): Extension<Locale>,
+    Extension(context): Extension<TenantContext>,
     Query(params): Query<OrdersPageQuery>,
 ) -> HttpResponse<Json<PagedResponse<OrdersJson>>> {
-    let (norm, filter) = filter(params, false);
+    let asked = params.tenant_id;
+    let (norm, mut filter) = filter(params, false);
+    match scope_tenant(context, asked) {
+        Ok(tenant) => filter.tenant_id = tenant,
+        Err(()) => return Ok(empty_page(&norm)),
+    }
     let page = use_case(&state)
         .orders(&user, &filter)
         .await
@@ -302,13 +339,14 @@ pub async fn list_all(
     State(state): State<AppState>,
     Extension(user): Extension<User>,
     Extension(locale): Extension<Locale>,
+    Extension(context): Extension<TenantContext>,
 ) -> HttpResponse<Json<Vec<OrdersJson>>> {
     let filter = OrderFilter {
         offset: 0,
         limit: i64::MAX as u64,
         query: None,
         status: None,
-        tenant_id: None,
+        tenant_id: context.tenant_id(),
         customer_id: None,
         sort_by: "id".into(),
         descending: true,
@@ -319,3 +357,7 @@ pub async fn list_all(
         .map_err(|e| error(locale, e))?;
     Ok(Json(page.items.into_iter().map(Into::into).collect()))
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/endpoints/orders_endpoint_test.rs"]
+mod tenant_scope_tests;

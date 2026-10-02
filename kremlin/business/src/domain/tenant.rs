@@ -51,6 +51,8 @@ impl EntityMapper<Tenant, Model, ActiveModel> for TenantEntityMapper {
             administrative_area: Set(d.administrative_area),
             postal_code: Set(d.postal_code),
             country_code: Set(d.country_code),
+            // the listing flag is set only through TenantGateway::set_listed (SR-TEN-019)
+            listed: NotSet,
             created_at: NotSet,
             created_by: match d.created_by {
                 Some(cb) => Set(Some(cb)),

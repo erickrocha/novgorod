@@ -473,6 +473,7 @@ async fn apply_result(
 pub async fn submit(
     State(app): State<AppState>,
     Extension(user): Extension<User>,
+    Extension(context): Extension<crate::commons::tenant_context::TenantContext>,
     Path(id): Path<i64>,
     Json(card): Json<SubmitCard>,
 ) -> Result<Json<PaymentState>, ApiError> {
@@ -496,14 +497,19 @@ pub async fn submit(
             "Prazo para pagamento expirado. Faça um novo orçamento.",
         ));
     }
-    if checkout_quote_entity::Entity::find()
+    let Some(quote) = checkout_quote_entity::Entity::find()
         .filter(checkout_quote_entity::Column::PurchaseId.eq(id))
         .one(app.conn.as_ref())
         .await
         .map_err(|_| unavailable())?
-        .is_none()
-    {
+    else {
         return Err(bad(StatusCode::CONFLICT, "Compra sem orçamento validado"));
+    };
+    // SR-TEN-007: with a Selector/Fixed context the paid items must belong to that tenant
+    if let Some(tenant_id) = context.tenant_id() {
+        if !business::use_cases::checkout_quote_use_case::quote_items_belong_to(&quote.result, tenant_id) {
+            return Err(bad(StatusCode::BAD_REQUEST, "Item de outro tenant"));
+        }
     }
 
     let provider = resolve_provider(&app, id).await?;

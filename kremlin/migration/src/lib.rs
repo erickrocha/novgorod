@@ -43,6 +43,7 @@ mod m20260925_000001_checkout;
 mod m20260926_000001_shipping;
 mod m20260929_000001_multi_warehouse_shipping_matrix;
 mod m20260930_000001_payment_settings;
+mod m20261002_000001_tenant_listed;
 
 pub struct Migrator;
 
@@ -91,6 +92,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260926_000001_shipping::Migration),
             Box::new(m20260929_000001_multi_warehouse_shipping_matrix::Migration),
             Box::new(m20260930_000001_payment_settings::Migration),
+            Box::new(m20261002_000001_tenant_listed::Migration),
         ]
     }
 }
