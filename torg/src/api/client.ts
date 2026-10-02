@@ -12,6 +12,13 @@ export const apiClient = axios.create({
   },
 });
 
+// Marketplace mode sends no tenant header (SR-TEN-020): drop the stale value an older version stored.
+try {
+  localStorage.removeItem('novgorod_tenant_id');
+} catch {
+  // storage unavailable: nothing to clear
+}
+
 // Request Interceptor
 apiClient.interceptors.request.use(
   (config: InternalAxiosRequestConfig) => {
@@ -19,12 +26,6 @@ apiClient.interceptors.request.use(
     const token = localStorage.getItem('torg_customer_token');
     if (token && config.headers && !config.headers.Authorization) {
       config.headers.Authorization = `Bearer ${token}`;
-    }
-
-    // Attach current active session or tenant id if needed
-    const tenantId = localStorage.getItem('novgorod_tenant_id');
-    if (tenantId && config.headers) {
-      config.headers['X-Tenant-Id'] = tenantId;
     }
 
     return config;
