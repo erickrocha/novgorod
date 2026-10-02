@@ -1,4 +1,5 @@
-use super::WebStorePageQuery;
+use super::{WebStorePageQuery, scoped};
+use crate::commons::tenant_context::TenantContext;
 
 #[test]
 fn accepts_current_and_legacy_filter_parameter_names() {
@@ -11,4 +12,21 @@ fn accepts_current_and_legacy_filter_parameter_names() {
         assert_eq!(parsed.max_price, Some(500));
         assert_eq!(parsed.sort_by.as_deref(), Some("price-asc"));
     }
+}
+
+#[tokio::test]
+async fn scoped_sets_the_row_level_scope_of_the_resolved_tenant_only() {
+    use entity::audit_entity::{TenantScope, tenant_scope};
+    assert_eq!(
+        scoped(TenantContext::Selector(7), async { tenant_scope() }).await,
+        TenantScope::Tenant(7)
+    );
+    assert_eq!(
+        scoped(TenantContext::Fixed(9), async { tenant_scope() }).await,
+        TenantScope::Tenant(9)
+    );
+    assert_eq!(
+        scoped(TenantContext::Marketplace, async { tenant_scope() }).await,
+        TenantScope::Unrestricted
+    );
 }

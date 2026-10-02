@@ -41,6 +41,22 @@ fn build_dummy_user(tenant_id: Option<i64>) -> User {
     }
 }
 
+/// Runs a delegated catalog handler with the row-level scope of the resolved tenant (SR-TEN-005).
+/// The delegated handlers read through gateways that follow the request scope (`tenant_select`), and a
+/// public request has no authenticated user to set it; without this the non-paged lists ignore the tenant.
+/// Marketplace mode keeps no scope (unrestricted), as before.
+pub(crate) async fn scoped<F: std::future::Future>(context: TenantContext, fut: F) -> F::Output {
+    let audit_user = context
+        .tenant_id()
+        .map(|tenant_id| entity::audit_entity::AuditUser {
+            id: 0,
+            email: String::new(),
+            tenant_id: Some(tenant_id),
+            enforce_tenant: true,
+        });
+    entity::audit_entity::run_with_user(audit_user, fut).await
+}
+
 #[utoipa::path(
     get,
     path = "/api/public/products",
@@ -230,7 +246,7 @@ pub async fn categories(
     Extension(context): Extension<TenantContext>,
 ) -> Json<Vec<crate::endpoints::json::catalog_json::CategoryJson>> {
     let user = build_dummy_user(context.tenant_id());
-    category_endpoint::categories(state, Extension(user)).await
+    scoped(context, category_endpoint::categories(state, Extension(user))).await
 }
 
 pub async fn categories_paged(
@@ -239,7 +255,7 @@ pub async fn categories_paged(
     query: Query<category_endpoint::CategoryPageQuery>,
 ) -> Json<crate::commons::pagination::PagedResponse<crate::endpoints::json::catalog_json::CategoryJson>> {
     let user = build_dummy_user(context.tenant_id());
-    category_endpoint::categories_paged(state, Extension(user), query).await
+    scoped(context, category_endpoint::categories_paged(state, Extension(user), query)).await
 }
 
 // ==========================================
@@ -250,7 +266,7 @@ pub async fn skus(
     Extension(context): Extension<TenantContext>,
 ) -> Json<Vec<crate::endpoints::json::catalog_json::SkuJson>> {
     let user = build_dummy_user(context.tenant_id());
-    sku_endpoint::skus(state, Extension(user)).await
+    scoped(context, sku_endpoint::skus(state, Extension(user))).await
 }
 
 pub async fn skus_paged(
@@ -259,7 +275,7 @@ pub async fn skus_paged(
     query: Query<sku_endpoint::SkuPageQuery>,
 ) -> Json<crate::commons::pagination::PagedResponse<crate::endpoints::json::catalog_json::SkuJson>> {
     let user = build_dummy_user(context.tenant_id());
-    sku_endpoint::skus_paged(state, Extension(user), query).await
+    scoped(context, sku_endpoint::skus_paged(state, Extension(user), query)).await
 }
 
 // ==========================================
@@ -270,7 +286,7 @@ pub async fn catalog_attributes(
     Extension(context): Extension<TenantContext>,
 ) -> Json<Vec<crate::endpoints::json::catalog_json::CatalogAttributeJson>> {
     let user = build_dummy_user(context.tenant_id());
-    catalog_attribute_endpoint::attributes(state, Extension(user)).await
+    scoped(context, catalog_attribute_endpoint::attributes(state, Extension(user))).await
 }
 
 // ==========================================
@@ -281,7 +297,7 @@ pub async fn product_categories(
     Extension(context): Extension<TenantContext>,
 ) -> Json<Vec<crate::endpoints::json::product_category_json::ProductCategoryJson>> {
     let user = build_dummy_user(context.tenant_id());
-    product_category_endpoint::list_all(state, Extension(user)).await
+    scoped(context, product_category_endpoint::list_all(state, Extension(user))).await
 }
 
 // ==========================================
@@ -292,7 +308,7 @@ pub async fn sku_attributes(
     Extension(context): Extension<TenantContext>,
 ) -> Json<Vec<crate::endpoints::json::sku_attribute_json::SkuAttributeJson>> {
     let user = build_dummy_user(context.tenant_id());
-    sku_attribute_endpoint::list_all(state, Extension(user)).await
+    scoped(context, sku_attribute_endpoint::list_all(state, Extension(user))).await
 }
 
 // ==========================================
@@ -303,7 +319,7 @@ pub async fn sku_attribute_values(
     Extension(context): Extension<TenantContext>,
 ) -> Json<Vec<crate::endpoints::json::sku_attribute_json::SkuAttributeJson>> {
     let user = build_dummy_user(context.tenant_id());
-    sku_attribute_endpoint::list_all(state, Extension(user)).await
+    scoped(context, sku_attribute_endpoint::list_all(state, Extension(user))).await
 }
 
 // ==========================================
@@ -314,7 +330,7 @@ pub async fn sku_stocks(
     Extension(context): Extension<TenantContext>,
 ) -> Json<Vec<crate::endpoints::json::sku_stock_json::SkuStockJson>> {
     let user = build_dummy_user(context.tenant_id());
-    sku_stock_endpoint::list_all(state, Extension(user)).await
+    scoped(context, sku_stock_endpoint::list_all(state, Extension(user))).await
 }
 
 #[cfg(test)]
