@@ -1,7 +1,7 @@
     use super::*;
     use chrono::Utc;
     use entity::{customer_address_entity, customer_entity, user_entity};
-    use sea_orm::{DatabaseBackend, DbErr, Iden, MockDatabase};
+    use sea_orm::{DatabaseBackend, DbErr, MockDatabase};
     use uuid::Uuid;
 
     fn build_test_user(email: &str) -> User {

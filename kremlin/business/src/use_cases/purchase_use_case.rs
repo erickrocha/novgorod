@@ -1,9 +1,9 @@
 use crate::domain::{enums::Role, marketplace::*, user::User};
 use crate::gateway::{
-    cart_gateway::CartGateway, order_address_gateway::OrderAddressGateway, order_item_gateway::OrderItemGateway,
-    order_status_history_gateway::OrderStatusHistoryGateway, orders_gateway::OrdersGateway,
-    payment_allocation_gateway::PaymentAllocationGateway, payment_gateway::PaymentGateway,
-    purchase_gateway::PurchaseGateway,
+    cart_gateway::CartGateway, order_address_gateway::OrderAddressGateway,
+    order_item_gateway::OrderItemGateway, order_status_history_gateway::OrderStatusHistoryGateway,
+    orders_gateway::OrdersGateway, payment_allocation_gateway::PaymentAllocationGateway,
+    payment_gateway::PaymentGateway, purchase_gateway::PurchaseGateway,
 };
 use crate::use_cases::checkout_quote_use_case::{CheckoutQuoteUseCase, QuoteResult};
 use entity::{

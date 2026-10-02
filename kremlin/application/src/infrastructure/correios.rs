@@ -66,14 +66,13 @@ impl Correios {
     ) -> Result<String, Error> {
         // Coalesce concurrent authentication and avoid invalidating a newer refreshed token.
         let mut cached = slot.lock().await;
-        if let Some(token) = cached.as_ref() {
-            if token.credential_version == version
+        if let Some(token) = cached.as_ref()
+            && token.credential_version == version
                 && token.expires_at > Utc::now().timestamp() + 60
                 && rejected != Some(token.value.as_str())
             {
                 return Ok(token.value.clone());
             }
-        }
         *cached = None;
         let regional = credentials
             .regional_identifier

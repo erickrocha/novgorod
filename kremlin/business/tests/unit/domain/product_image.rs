@@ -60,7 +60,7 @@
         assert_eq!(domain.id, Some(10));
         assert_eq!(domain.product_id, 42);
         assert_eq!(domain.uuid.unwrap(), uuid.to_string());
-        assert_eq!(domain.is_primary, true);
+        assert!(domain.is_primary);
         assert_eq!(domain.storage_status, STATUS_AVAILABLE);
         assert_eq!(domain.original_filename, "sample.jpg");
     }

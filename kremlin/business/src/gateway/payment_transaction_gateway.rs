@@ -1,16 +1,10 @@
 use entity::payment_transaction_entity as record;
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, ConnectionTrait, DbErr, EntityTrait, QueryFilter, QueryOrder,
+    ColumnTrait, ConnectionTrait, DbErr, EntityTrait, QueryFilter, QueryOrder,
 };
 
 pub struct PaymentTransactionGateway;
 impl PaymentTransactionGateway {
-    pub(crate) async fn insert<C: ConnectionTrait>(
-        db: &C,
-        model: record::ActiveModel,
-    ) -> Result<record::Model, DbErr> {
-        model.insert(db).await
-    }
     pub(crate) async fn for_parent<C: ConnectionTrait>(
         db: &C,
         id: i64,

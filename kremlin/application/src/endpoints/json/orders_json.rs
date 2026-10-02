@@ -194,31 +194,6 @@ pub struct PurchaseDetailJson {
     pub orders: Vec<OrderDetailJson>,
     pub payments: Vec<PaymentDetailJson>,
 }
-#[derive(Debug, Clone, Deserialize, ToSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct AddressInputJson {
-    pub recipient: String,
-    pub address_line1: String,
-    pub address_line2: Option<String>,
-    pub locality: String,
-    pub administrative_area: String,
-    pub postal_code: String,
-    pub country_code: String,
-}
-#[derive(Debug, Clone, Deserialize, ToSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct PurchaseItemInputJson {
-    pub sku_id: i64,
-    pub quantity: i32,
-}
-/// Legacy input retained for internal compatibility. Customer checkout requires CheckoutPurchaseJson.
-#[derive(Debug, Clone, Deserialize, ToSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct CreatePurchaseInputJson {
-    pub items: Vec<PurchaseItemInputJson>,
-    pub shipping_address: AddressInputJson,
-    pub billing_address: Option<AddressInputJson>,
-}
 #[derive(Debug, Clone, Deserialize, IntoParams)]
 #[serde(rename_all = "camelCase")]
 pub struct OrdersPageQuery {

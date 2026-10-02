@@ -80,7 +80,6 @@ pub struct CustomerAddressPageQuery {
     pub sort_dir: Option<String>,
     #[serde(alias = "customer_id")]
     pub customer_id: Option<i64>,
-    pub uf: Option<String>,
     #[serde(alias = "tenant_id")]
     pub tenant_id: Option<i64>,
 }

@@ -28,6 +28,7 @@
 - **Entity layer:** should keep the database entities. With ORM framework mapping, normally SeaORM. The entity layer should not contain any business logic. and should implement EntityMapper trait for convertion with domain.
 - **Migraton:** should be simple and declarative. Should use the SeaORM migration framework.
 - **Error Handling:** Using `.unwrap()` in production code is strictly prohibited. Always propagate errors using `Result` and the `?` operator.
+- **Clippy:** Always run `cargo clippy` (workspace, all targets) before finishing a Rust change and accept the clippy recommendations whenever possible. Leave no new clippy warning in the code you write or change; apply a suggestion only when it keeps the behavior.
 - **Dependencies:** Do not add new crates to `Cargo.toml` without explicit permission.
 - **Tests:** All tests should be placed in test folder. One file per struct, for example shipping.rs shipping_test.rs. coupon_use_case.rs should have a test file named coupon_use_case_test.rs
 

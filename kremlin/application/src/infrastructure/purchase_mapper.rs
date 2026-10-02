@@ -208,34 +208,4 @@ impl PurchaseMapper {
             payments: value.payments.into_iter().map(Into::into).collect(),
         }
     }
-    pub fn input(
-        value: CreatePurchaseInputJson,
-    ) -> business::domain::marketplace::CreatePurchaseInput {
-        use business::domain::marketplace::PurchaseItemInput;
-        business::domain::marketplace::CreatePurchaseInput {
-            items: value
-                .items
-                .into_iter()
-                .map(|v| PurchaseItemInput {
-                    sku_id: v.sku_id,
-                    quantity: v.quantity,
-                })
-                .collect(),
-            shipping_address: value.shipping_address.into(),
-            billing_address: value.billing_address.map(Into::into),
-        }
-    }
-}
-impl From<AddressInputJson> for business::domain::marketplace::AddressInput {
-    fn from(v: AddressInputJson) -> Self {
-        Self {
-            recipient: v.recipient,
-            address_line1: v.address_line1,
-            address_line2: v.address_line2,
-            locality: v.locality,
-            administrative_area: v.administrative_area,
-            postal_code: v.postal_code,
-            country_code: v.country_code,
-        }
-    }
 }

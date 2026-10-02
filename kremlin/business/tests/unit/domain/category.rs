@@ -6,7 +6,7 @@
         let uuid = Uuid::new_v4();
         let model = Model {
             id: 3,
-            uuid: uuid.clone(),
+            uuid,
             tenant_id: None,
             name: "Eletrônicos".into(),
             slug: "eletronicos".into(),

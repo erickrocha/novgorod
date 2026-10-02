@@ -10,7 +10,6 @@ pub struct PagSeguro {
     client: reqwest::Client,
     token: String,
     pub base_url: String,
-    pub public_key: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
@@ -21,7 +20,6 @@ struct HolderResponse {
 #[derive(Deserialize, Default)]
 struct CardDetailsResponse {
     brand: Option<String>,
-    first_digits: Option<String>,
     last_digits: Option<String>,
     exp_month: Option<serde_json::Value>,
     exp_year: Option<serde_json::Value>,
@@ -32,7 +30,6 @@ struct CardDetailsResponse {
 struct PaymentMethodResponse {
     #[serde(rename = "type")]
     payment_type: Option<String>,
-    installments: Option<i32>,
     card: Option<CardDetailsResponse>,
 }
 
@@ -70,14 +67,12 @@ impl PagSeguro {
             return Err(ProviderError("PagSeguro não configurado".into()));
         }
         let env_mode = std::env::var("PAGSEGURO_ENVIRONMENT").unwrap_or_else(|_| "sandbox".into());
-        let public_key = std::env::var("PAGSEGURO_PUBLIC_KEY").ok();
-        Self::with_credentials(token, Some(&env_mode), public_key)
+        Self::with_credentials(token, Some(&env_mode))
     }
 
     pub fn with_credentials(
         token: String,
         environment: Option<&str>,
-        public_key: Option<String>,
     ) -> Result<Self, ProviderError> {
         if token.is_empty() {
             return Err(ProviderError("Token do PagSeguro inválido".into()));
@@ -94,7 +89,6 @@ impl PagSeguro {
             client,
             token,
             base_url,
-            public_key,
         })
     }
 
@@ -266,19 +260,16 @@ impl PaymentProviderGateway for PagSeguro {
             .await
             .map_err(|e| ProviderError(e.to_string()))?;
 
-        if let Ok(search) = serde_json::from_value::<ChargeSearchResponse>(body.clone()) {
-            if let Some(charges) = search.charges {
-                if let Some(first) = charges.into_iter().next() {
+        if let Ok(search) = serde_json::from_value::<ChargeSearchResponse>(body.clone())
+            && let Some(charges) = search.charges
+                && let Some(first) = charges.into_iter().next() {
                     return Self::normalized_response(first).map(Some);
                 }
-            }
-        }
 
-        if let Some(arr) = body.as_array() {
-            if let Some(first) = arr.first() {
+        if let Some(arr) = body.as_array()
+            && let Some(first) = arr.first() {
                 return Self::parse_payment_json(first.clone()).map(Some);
             }
-        }
 
         Ok(None)
     }

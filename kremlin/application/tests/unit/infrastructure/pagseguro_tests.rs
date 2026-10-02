@@ -110,13 +110,13 @@ fn parse_payment_rejects_empty_id() {
 
 #[test]
 fn test_with_credentials_validation() {
-    assert!(PagSeguro::with_credentials("".into(), None, None).is_err());
+    assert!(PagSeguro::with_credentials("".into(), None).is_err());
 
     let ps_sandbox =
-        PagSeguro::with_credentials("sample_token".into(), Some("sandbox"), None).unwrap();
+        PagSeguro::with_credentials("sample_token".into(), Some("sandbox")).unwrap();
     assert_eq!(ps_sandbox.base_url, "https://sandbox.api.pagseguro.com");
 
     let ps_prod =
-        PagSeguro::with_credentials("sample_token".into(), Some("production"), None).unwrap();
+        PagSeguro::with_credentials("sample_token".into(), Some("production")).unwrap();
     assert_eq!(ps_prod.base_url, "https://api.pagseguro.com");
 }

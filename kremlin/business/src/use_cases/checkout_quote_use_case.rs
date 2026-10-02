@@ -174,10 +174,10 @@ impl CheckoutQuoteUseCase {
             None,
         )
         .await?;
-        if let Some(tenant_id) = tenant_id {
-            if quote.items.iter().any(|item| item.tenant_id != tenant_id) {
-                return Err(PurchaseError::Validation("item of another tenant"));
-            }
+        if let Some(tenant_id) = tenant_id
+            && quote.items.iter().any(|item| item.tenant_id != tenant_id)
+        {
+            return Err(PurchaseError::Validation("item of another tenant"));
         }
         let expiry = Utc::now().naive_utc() + Duration::minutes(15);
         let record = checkout_quote_entity::ActiveModel {
@@ -447,7 +447,7 @@ impl CheckoutQuoteUseCase {
                     .iter()
                     .map(|(sku, q)| i64::from(sku.weight_g.unwrap_or(0)) * i64::from(*q))
                     .sum::<i64>()
-                    + i64::from(config.packaging.weight_g);
+                    + config.packaging.weight_g;
 
                 let calculated_price = if rate
                     .free_shipping_threshold_cents

@@ -1,6 +1,13 @@
 use super::*;
 use serde_json::json;
 
+/// Parses a provider payload the way the production search and charge paths do.
+fn parse_payment_json(json: serde_json::Value) -> Result<ProviderResult, ProviderError> {
+    let response: PaymentResponse =
+        serde_json::from_value(json).map_err(|e| ProviderError(e.to_string()))?;
+    MercadoPago::normalized_response(response)
+}
+
 #[test]
 fn parse_payment_approved_maps_to_captured_with_card_metadata() {
     let payload = json!({
@@ -22,7 +29,7 @@ fn parse_payment_approved_maps_to_captured_with_card_metadata() {
         }
     });
 
-    let result = MercadoPago::parse_payment_json(payload).expect("successful parse");
+    let result = parse_payment_json(payload).expect("successful parse");
     assert_eq!(result.reference, "123456789");
     assert_eq!(result.status, ProviderStatus::Captured);
     assert_eq!(result.amount_cents, 19500);
@@ -50,19 +57,19 @@ fn parse_payment_status_mappings() {
         "payment_type_id": "credit_card",
     });
 
-    let r_auth = MercadoPago::parse_payment_json(make_payload("authorized")).unwrap();
+    let r_auth = parse_payment_json(make_payload("authorized")).unwrap();
     assert_eq!(r_auth.status, ProviderStatus::Authorized);
 
-    let r_rej = MercadoPago::parse_payment_json(make_payload("rejected")).unwrap();
+    let r_rej = parse_payment_json(make_payload("rejected")).unwrap();
     assert_eq!(r_rej.status, ProviderStatus::Failed);
 
-    let r_canc = MercadoPago::parse_payment_json(make_payload("cancelled")).unwrap();
+    let r_canc = parse_payment_json(make_payload("cancelled")).unwrap();
     assert_eq!(r_canc.status, ProviderStatus::Failed);
 
-    let r_ref = MercadoPago::parse_payment_json(make_payload("refunded")).unwrap();
+    let r_ref = parse_payment_json(make_payload("refunded")).unwrap();
     assert_eq!(r_ref.status, ProviderStatus::Failed);
 
-    let r_pend = MercadoPago::parse_payment_json(make_payload("in_process")).unwrap();
+    let r_pend = parse_payment_json(make_payload("in_process")).unwrap();
     assert_eq!(r_pend.status, ProviderStatus::Pending);
 }
 
@@ -76,5 +83,5 @@ fn parse_payment_rejects_invalid_amount() {
         "collector_id": 1,
         "payment_type_id": "credit_card"
     });
-    assert!(MercadoPago::parse_payment_json(payload).is_err());
+    assert!(parse_payment_json(payload).is_err());
 }

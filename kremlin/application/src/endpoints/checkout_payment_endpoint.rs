@@ -61,9 +61,9 @@ pub async fn config(
         return Err(bad(StatusCode::FORBIDDEN, "Acesso negado"));
     }
 
-    if let Some(tenant_id_str) = params.get("tenantId").or_else(|| params.get("tenant_id")) {
-        if let Ok(tid) = tenant_id_str.parse::<i64>() {
-            if let Ok(Some(row)) = state
+    if let Some(tenant_id_str) = params.get("tenantId").or_else(|| params.get("tenant_id"))
+        && let Ok(tid) = tenant_id_str.parse::<i64>()
+            && let Ok(Some(row)) = state
                 .conn
                 .query_one_raw(Statement::from_sql_and_values(
                     DbBackend::Postgres,
@@ -74,17 +74,14 @@ pub async fn config(
             {
                 let provider: String = row.try_get("", "provider").unwrap_or_else(|_| "mercado_pago".into());
                 let config_val: serde_json::Value = row.try_get("", "configuration").unwrap_or_default();
-                if let Some(pk) = config_val.get("publicKey").and_then(|v| v.as_str()) {
-                    if !pk.is_empty() {
+                if let Some(pk) = config_val.get("publicKey").and_then(|v| v.as_str())
+                    && !pk.is_empty() {
                         return Ok(Json(PaymentConfig {
                             provider,
                             public_key: pk.to_owned(),
                         }));
                     }
-                }
             }
-        }
-    }
 
     if let Ok(Some(row)) = state
         .conn
@@ -97,33 +94,30 @@ pub async fn config(
     {
         let provider: String = row.try_get("", "provider").unwrap_or_else(|_| "mercado_pago".into());
         let config_val: serde_json::Value = row.try_get("", "configuration").unwrap_or_default();
-        if let Some(pk) = config_val.get("publicKey").and_then(|v| v.as_str()) {
-            if !pk.is_empty() {
+        if let Some(pk) = config_val.get("publicKey").and_then(|v| v.as_str())
+            && !pk.is_empty() {
                 return Ok(Json(PaymentConfig {
                     provider,
                     public_key: pk.to_owned(),
                 }));
             }
-        }
     }
 
-    if let Ok(public_key) = std::env::var("PAGSEGURO_PUBLIC_KEY") {
-        if !public_key.is_empty() {
+    if let Ok(public_key) = std::env::var("PAGSEGURO_PUBLIC_KEY")
+        && !public_key.is_empty() {
             return Ok(Json(PaymentConfig {
                 provider: "pagseguro".into(),
                 public_key,
             }));
         }
-    }
 
-    if let Ok(public_key) = std::env::var("MP_PUBLIC_KEY") {
-        if !public_key.is_empty() {
+    if let Ok(public_key) = std::env::var("MP_PUBLIC_KEY")
+        && !public_key.is_empty() {
             return Ok(Json(PaymentConfig {
                 provider: "mercado_pago".into(),
                 public_key,
             }));
         }
-    }
 
     Err(unavailable())
 }
@@ -209,15 +203,13 @@ async fn resolve_provider(state: &AppState, purchase_id: i64) -> Result<Resolved
             let credentials_bytes: Option<Vec<u8>> = row.try_get("", "credentials").ok().flatten();
             let key_version: Option<String> = row.try_get("", "key_version").ok().flatten();
 
-            if let (Some(bytes), Some(key)) = (credentials_bytes, key_version) {
-                if let Ok(payload) = state.payment_keys.decrypt_payload(tid, &key, &bytes) {
+            if let (Some(bytes), Some(key)) = (credentials_bytes, key_version)
+                && let Ok(payload) = state.payment_keys.decrypt_payload(tid, &key, &bytes) {
                     match payload {
                         TenantCredentialsPayload::PagSeguro(ps) => {
-                            if let Ok(ps_instance) = PagSeguro::with_credentials(
-                                ps.token,
-                                ps.environment.as_deref(),
-                                ps.public_key,
-                            ) {
+                            if let Ok(ps_instance) =
+                                PagSeguro::with_credentials(ps.token, ps.environment.as_deref())
+                            {
                                 return Ok(ResolvedProvider::PagSeguro(ps_instance));
                             }
                         }
@@ -228,13 +220,11 @@ async fn resolve_provider(state: &AppState, purchase_id: i64) -> Result<Resolved
                         }
                     }
                 }
-            }
 
-            if provider_name == "pagseguro" {
-                if let Ok(ps) = PagSeguro::configured() {
+            if provider_name == "pagseguro"
+                && let Ok(ps) = PagSeguro::configured() {
                     return Ok(ResolvedProvider::PagSeguro(ps));
                 }
-            }
         }
     }
 
@@ -451,8 +441,8 @@ async fn apply_result(
             .insert(&tx)
             .await
             .map_err(|_| unavailable())?;
-            if result.status == ProviderStatus::Captured {
-                if let Some(coupon_id) = order.coupon_id {
+            if result.status == ProviderStatus::Captured
+                && let Some(coupon_id) = order.coupon_id {
                     coupon_redemption_entity::ActiveModel {
                         tenant_id: Set(Some(order.tenant_id)),
                         coupon_id: Set(coupon_id),
@@ -464,7 +454,6 @@ async fn apply_result(
                     .await
                     .map_err(|_| unavailable())?;
                 }
-            }
         }
         if result.status == ProviderStatus::Captured {
             // C-034: the approved payment consumes the customer's carts (best effort, never fails it)
@@ -512,10 +501,13 @@ pub async fn submit(
         return Err(bad(StatusCode::CONFLICT, "Compra sem orçamento validado"));
     };
     // SR-TEN-007: with a Selector/Fixed context the paid items must belong to that tenant
-    if let Some(tenant_id) = context.tenant_id() {
-        if !business::use_cases::checkout_quote_use_case::quote_items_belong_to(&quote.result, tenant_id) {
-            return Err(bad(StatusCode::BAD_REQUEST, "Item de outro tenant"));
-        }
+    if let Some(tenant_id) = context.tenant_id()
+        && !business::use_cases::checkout_quote_use_case::quote_items_belong_to(
+            &quote.result,
+            tenant_id,
+        )
+    {
+        return Err(bad(StatusCode::BAD_REQUEST, "Item de outro tenant"));
     }
 
     let provider = resolve_provider(&app, id).await?;
@@ -706,8 +698,8 @@ pub async fn webhook(
         .and_then(|v| v.to_str().ok())
         .ok_or_else(|| bad(StatusCode::UNAUTHORIZED, "Identificador ausente"))?;
     let mut data_id = query.data_id.or(query.id);
-    if data_id.is_none() && !body_bytes.is_empty() {
-        if let Ok(json_body) = serde_json::from_slice::<serde_json::Value>(&body_bytes) {
+    if data_id.is_none() && !body_bytes.is_empty()
+        && let Ok(json_body) = serde_json::from_slice::<serde_json::Value>(&body_bytes) {
             data_id = json_body
                 .get("data")
                 .and_then(|d| d.get("id"))
@@ -723,7 +715,6 @@ pub async fn webhook(
                     }).map(str::to_owned)
                 });
         }
-    }
     let data_id = data_id.ok_or_else(|| bad(StatusCode::UNAUTHORIZED, "Pagamento ausente"))?;
     if !data_id.bytes().all(|b| b.is_ascii_digit()) {
         return Err(bad(StatusCode::UNAUTHORIZED, "Pagamento inválido"));
@@ -834,8 +825,8 @@ pub async fn reconcile_unresolved(state: &AppState) -> Result<usize, String> {
             None
         };
 
-        if let Some(outcome) = outcome {
-            if apply_result(
+        if let Some(outcome) = outcome
+            && apply_result(
                 state,
                 &purchase,
                 &payment,
@@ -848,7 +839,6 @@ pub async fn reconcile_unresolved(state: &AppState) -> Result<usize, String> {
             {
                 count += 1;
             }
-        }
     }
     Ok(count)
 }

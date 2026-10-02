@@ -45,11 +45,6 @@ impl MercadoPago {
             .map_err(|e| ProviderError(e.to_string()))?, access_token, collector_id })
     }
 
-    pub fn parse_payment_json(json: serde_json::Value) -> Result<ProviderResult, ProviderError> {
-        let response: PaymentResponse = serde_json::from_value(json).map_err(|e| ProviderError(e.to_string()))?;
-        Self::normalized_response(response)
-    }
-
     fn normalized_response(response: PaymentResponse) -> Result<ProviderResult, ProviderError> {
         let reference = response.id.as_str().map(str::to_owned).or_else(|| response.id.as_i64().map(|id| id.to_string()))
             .ok_or_else(|| ProviderError("invalid provider reference".into()))?;
