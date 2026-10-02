@@ -7,6 +7,8 @@ pub struct MercadoPago {
     client: reqwest::Client,
     access_token: String,
     pub collector_id: i64,
+    /// `MP_API_BASE_URL` overrides the real API, so tests can point it at a provider double.
+    base_url: String,
 }
 
 #[derive(Deserialize, Default)]
@@ -41,8 +43,10 @@ impl MercadoPago {
         let collector_id = std::env::var("MP_COLLECTOR_ID").ok().and_then(|s| s.parse().ok())
             .ok_or_else(|| ProviderError("Mercado Pago não configurado".into()))?;
         if access_token.is_empty() { return Err(ProviderError("Mercado Pago não configurado".into())); }
+        let base_url = std::env::var("MP_API_BASE_URL").ok().filter(|u| !u.is_empty())
+            .unwrap_or_else(|| "https://api.mercadopago.com".to_string());
         Ok(Self { client: reqwest::Client::builder().timeout(std::time::Duration::from_secs(15)).build()
-            .map_err(|e| ProviderError(e.to_string()))?, access_token, collector_id })
+            .map_err(|e| ProviderError(e.to_string()))?, access_token, collector_id, base_url })
     }
 
     fn normalized_response(response: PaymentResponse) -> Result<ProviderResult, ProviderError> {
@@ -72,7 +76,7 @@ impl MercadoPago {
     }
 
     pub async fn search(&self, external_reference: &str) -> Result<Option<ProviderResult>, ProviderError> {
-        let response = self.client.get("https://api.mercadopago.com/v1/payments/search")
+        let response = self.client.get(format!("{}/v1/payments/search", self.base_url))
             .bearer_auth(&self.access_token).query(&[("external_reference", external_reference)])
             .send().await.map_err(|e| ProviderError(e.to_string()))?;
         if !response.status().is_success() { return Err(ProviderError(format!("provider search returned {}", response.status()))); }
@@ -97,7 +101,7 @@ impl PaymentProviderGateway for MercadoPago {
             "external_reference": request.external_reference,
             "payer": {"email": request.payer_email, "identification": {"type": "CPF", "number": request.payer_tax_id}}
         });
-        let response = self.client.post("https://api.mercadopago.com/v1/payments")
+        let response = self.client.post(format!("{}/v1/payments", self.base_url))
             .bearer_auth(&self.access_token).header("X-Idempotency-Key", request.idempotency_key)
             .json(&body).send().await.map_err(|e| ProviderError(e.to_string()))?;
         if !response.status().is_success() { return Err(ProviderError(format!("provider charge returned {}", response.status()))); }
@@ -107,7 +111,7 @@ impl PaymentProviderGateway for MercadoPago {
 
     async fn status(&self, reference: &str) -> Result<ProviderResult, ProviderError> {
         if !reference.bytes().all(|c| c.is_ascii_digit()) { return Err(ProviderError("invalid provider reference".into())); }
-        let url = format!("https://api.mercadopago.com/v1/payments/{reference}");
+        let url = format!("{}/v1/payments/{reference}", self.base_url);
         let response = self.client.get(url).bearer_auth(&self.access_token).send().await.map_err(|e| ProviderError(e.to_string()))?;
         if !response.status().is_success() { return Err(ProviderError(format!("provider status returned {}", response.status()))); }
         let body = response.json().await.map_err(|e| ProviderError(e.to_string()))?;
