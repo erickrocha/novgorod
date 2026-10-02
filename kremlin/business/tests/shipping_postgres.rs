@@ -330,6 +330,79 @@ INSERT INTO tenant_shipping_settings(tenant_id,configuration) VALUES(2,'{"mode":
 }
 #[tokio::test]
 #[ignore = "requires isolated PostgreSQL"]
+async fn zero_total_checkout_purchase_consumes_the_customers_store_cart() {
+    let (root, db, schema) = database().await;
+    Migrator::up(&db, None).await.unwrap();
+    fixtures(&db).await;
+    // tenant 1 sells in fixed mode with free shipping and a 100% coupon: the purchase costs nothing
+    db.execute_unprepared(
+        r#"
+UPDATE shipping_rate SET price_cents=0 WHERE tenant_id=1;
+INSERT INTO coupon (uuid, tenant_id, code, coupon_type, value, active, created_at, updated_at)
+VALUES (gen_random_uuid(), 1, 'FREE', 'PERCENTAGE', 100, true, now(), now());
+"#,
+    )
+    .await
+    .unwrap();
+    let provider = Arc::new(Carrier {
+        calls: AtomicUsize::new(0),
+        fail: false,
+    });
+    let quotes = CheckoutQuoteUseCase::with_provider(db.clone(), provider);
+    let mut free = request();
+    free.items.retain(|item| item.sku_id <= 3); // the SKUs of tenant 1
+    free.coupons = vec![business::use_cases::checkout_quote_use_case::SellerCoupon {
+        tenant_id: 1,
+        code: "FREE".into(),
+    }];
+    let quote = quotes.create(1, free).await.unwrap();
+    assert_eq!(quote.total_cents, 0);
+    let selected = quotes
+        .select(1, quote.id, selections(&quote))
+        .await
+        .unwrap();
+    // C-034: customer 1 has a store cart of tenant 1, one of tenant 2 and a marketplace cart;
+    // customer 2 has a store cart of tenant 1
+    db.execute_unprepared(
+        "INSERT INTO cart (uuid, tenant_id, customer_id, status, created_at, updated_at) VALUES \
+         (gen_random_uuid(), 1, 1, 'active', now(), now()), \
+         (gen_random_uuid(), 2, 1, 'active', now(), now()), \
+         (gen_random_uuid(), NULL, 1, 'active', now(), now()), \
+         (gen_random_uuid(), 1, 2, 'active', now(), now())",
+    )
+    .await
+    .unwrap();
+    let purchases = PurchaseUseCase::new(PurchaseGateway::new(db.clone()));
+    let buyer = user(1, Role::Customer, None);
+    let created = purchases
+        .create_checkout(&buyer, "zero", checkout(selected.id))
+        .await
+        .unwrap();
+    // created already paid, without a provider charge: the cleanup ran at creation
+    assert_eq!(created.detail.purchase.total_cents, 0);
+    assert_eq!(created.detail.purchase.status, "paid");
+    assert_eq!(created.detail.orders.len(), 1);
+    let left = db
+        .query_all_raw(sea_orm::Statement::from_string(
+            sea_orm::DbBackend::Postgres,
+            "SELECT customer_id, tenant_id FROM cart ORDER BY customer_id, tenant_id NULLS FIRST"
+                .to_string(),
+        ))
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|r| {
+            (
+                r.try_get::<i64>("", "customer_id").unwrap(),
+                r.try_get::<Option<i64>>("", "tenant_id").unwrap(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(left, vec![(1, None), (1, Some(2)), (2, Some(1))]);
+    cleanup(root, db, schema).await;
+}
+#[tokio::test]
+#[ignore = "requires isolated PostgreSQL"]
 async fn legacy_fixed_snapshots_and_migration_roundtrip() {
     let (root, db, schema) = database().await;
     Migrator::up(&db, None).await.unwrap();

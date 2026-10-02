@@ -15,6 +15,7 @@ use axum::{
 use business::{
     domain::{enums::Role, marketplace::PurchaseError, user::User},
     gateway::{
+        cart_gateway::CartGateway,
         payment_provider_gateway::{
             ChargeRequest, PaymentProviderGateway, ProviderError, ProviderResult, ProviderStatus,
         },
@@ -464,6 +465,11 @@ async fn apply_result(
                     .map_err(|_| unavailable())?;
                 }
             }
+        }
+        if result.status == ProviderStatus::Captured {
+            // C-034: the approved payment consumes the customer's carts (best effort, never fails it)
+            let tenants: Vec<i64> = rows.iter().map(|order| order.tenant_id).collect();
+            CartGateway::purge_purchased(&tx, purchase.id, purchase.customer_id, &tenants).await;
         }
     }
     tx.commit().await.map_err(|_| unavailable())?;

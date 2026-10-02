@@ -1,6 +1,6 @@
 use crate::domain::{enums::Role, marketplace::*, user::User};
 use crate::gateway::{
-    order_address_gateway::OrderAddressGateway, order_item_gateway::OrderItemGateway,
+    cart_gateway::CartGateway, order_address_gateway::OrderAddressGateway, order_item_gateway::OrderItemGateway,
     order_status_history_gateway::OrderStatusHistoryGateway, orders_gateway::OrdersGateway,
     payment_allocation_gateway::PaymentAllocationGateway, payment_gateway::PaymentGateway,
     purchase_gateway::PurchaseGateway,
@@ -332,7 +332,9 @@ impl PurchaseUseCase {
         )
         .await?;
         let mut allocated = 0_i64;
+        let mut order_tenants: Vec<i64> = Vec::new();
         for (tenant_id, items) in groups {
+            order_tenants.push(tenant_id);
             let seller_subtotal = items.iter().try_fold(0_i64, |sum, item| {
                 sum.checked_add(*item.total_cents.as_ref())
                     .ok_or(PurchaseError::Validation("amount overflow"))
@@ -468,6 +470,10 @@ impl PurchaseUseCase {
             if updated.rows_affected() != 1 {
                 return Err(PurchaseError::Conflict);
             }
+        }
+        if paid {
+            // a purchase created already paid (zero total) consumes the customer's carts now
+            CartGateway::purge_purchased(&tx, purchase.id, customer.id, &order_tenants).await;
         }
         let detail = PurchaseGateway::detail(&tx, access, purchase.id).await?;
         tx.commit().await?;
