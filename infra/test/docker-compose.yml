@@ -1,0 +1,52 @@
+# Disposable test stack for kremlin. Based on ../dev (same postgres image), but nothing persists:
+# the database lives in tmpfs and is gone when the stack stops. Throwaway credentials, local only.
+services:
+  postgres:
+    image: postgres:18-alpine
+    container_name: novgorod_test_postgres
+    environment:
+      - POSTGRES_DB=${TEST_DATABASE_NAME:-novgorod_test}
+      - POSTGRES_USER=${TEST_DATABASE_USER:-novgorod_test}
+      - POSTGRES_PASSWORD=${TEST_DATABASE_PASSWORD:-novgorod_test}
+    ports:
+      - '${TEST_DATABASE_PORT:-5433}:5432' # 5433 so it never collides with the dev database on 5432
+    tmpfs:
+      - /var/lib/postgresql
+    networks:
+      - novgorod-test-network
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}" ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  kremlin-tests:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: novgorod_test_kremlin
+    working_dir: /work/kremlin
+    # The Postgres tests are #[ignore]d and refuse any database whose name does not end in _test.
+    environment:
+      - KREMLIN_TEST_DATABASE_URL=postgres://${TEST_DATABASE_USER:-novgorod_test}:${TEST_DATABASE_PASSWORD:-novgorod_test}@postgres:5432/${TEST_DATABASE_NAME:-novgorod_test}
+      - CARGO_TARGET_DIR=/cargo-target
+    volumes:
+      - ../../kremlin:/work/kremlin
+      - ../../data:/work/data:ro # a kremlin unit test reads data/wines/wine_catalog.csv
+      - cargo_registry:/usr/local/cargo/registry
+      - cargo_target:/cargo-target
+    networks:
+      - novgorod-test-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # Override the command to run something else, e.g. `cargo test -p business --test cart_cleanup_postgres -- --ignored --nocapture`
+    command: cargo test --workspace -- --include-ignored
+
+volumes:
+  cargo_registry:
+  cargo_target:
+
+networks:
+  novgorod-test-network:
+    driver: bridge
