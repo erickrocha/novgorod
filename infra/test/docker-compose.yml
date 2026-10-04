@@ -43,6 +43,66 @@ services:
     # Override the command to run something else, e.g. `cargo test -p business --test cart_cleanup_postgres -- --ignored --nocapture`
     command: cargo test --workspace -- --include-ignored
 
+  # ---- HTTP kit (NOV-3 T-CHK-01..03): `docker compose up -d --build --wait kremlin mpd`, then ./kit.py (see README) ----
+  # Mercado Pago test double (Python stdlib). kremlin reaches it through MP_API_BASE_URL.
+  mpd:
+    image: python:3-alpine
+    container_name: novgorod_test_mpd
+    command: python /mpd.py
+    volumes:
+      - ./mpd.py:/mpd.py:ro
+    ports:
+      - '${TEST_MPD_PORT:-8099}:8099'
+    networks:
+      - novgorod-test-network
+
+  # The kremlin app on the disposable database. Runs migrations at boot and seeds the SysAdmin.
+  # All values below are made-up, local-only, and live only for the life of the stack.
+  kremlin:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: novgorod_test_app
+    working_dir: /work/kremlin
+    command: cargo run -p application --bin kremlin
+    environment:
+      - DATABASE_URL=postgres://${TEST_DATABASE_USER:-novgorod_test}:${TEST_DATABASE_PASSWORD:-novgorod_test}@postgres:5432/${TEST_DATABASE_NAME:-novgorod_test}
+      - HOST=0.0.0.0
+      - PORT=8080
+      - RUST_LOG=${TEST_KREMLIN_LOG:-info,sqlx=warn}
+      - ACCESS_TOKEN_SECRET=${TEST_ACCESS_TOKEN_SECRET:-test-access-0b7f3c9e51d24a68a1c4e7d2f9b30586}
+      - REFRESH_TOKEN_SECRET=${TEST_REFRESH_TOKEN_SECRET:-test-refresh-6d1e84a2c7f9405b93a0e2d8b4c71f35}
+      - SYSADMIN_EMAIL=sysadmin@test.local
+      - SYSADMIN_PASSWORD=${TEST_SYSADMIN_PASSWORD:-SysAdmin-test-1}
+      - MP_ACCESS_TOKEN=TEST-mp-access-token-local
+      - MP_COLLECTOR_ID=424242
+      - MP_PUBLIC_KEY=TEST-mp-public-key-local
+      - MP_API_BASE_URL=http://mpd:8099
+      - MP_WEBHOOK_SECRET=${TEST_MP_WEBHOOK_SECRET:-test-mp-webhook-3a9c5e7b1d2f4860}
+      - GATEWAY_TOKEN=${TEST_GATEWAY_TOKEN:-test-gateway-8f2b6d4a0c1e3957}
+      - CARGO_TARGET_DIR=/cargo-target
+      # No SQS_QUEUE_URL (consumer off), no AWS_* (storage only touches S3 for images), no encryption keys
+      # (shipping/payment credentials are not used; the tenants use fixed shipping, see seed.py).
+    volumes:
+      - ../../kremlin:/work/kremlin
+      - ../../data:/work/data:ro
+      - cargo_registry:/usr/local/cargo/registry
+      - cargo_target:/cargo-target
+    ports:
+      - '${TEST_KREMLIN_PORT:-8080}:8080'
+    networks:
+      - novgorod-test-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mpd:
+        condition: service_started
+    healthcheck:
+      test: [ "CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/8080 && printf \"GET / HTTP/1.0\\r\\n\\r\\n\" >&3 && head -c 12 <&3 | grep -q HTTP'" ]
+      interval: 5s
+      timeout: 5s
+      retries: 240
+
 volumes:
   cargo_registry:
   cargo_target:
