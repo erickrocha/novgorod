@@ -35,6 +35,26 @@ fn can_read_tenant(user: &User, tenant_id: Option<i64>) -> bool {
     user.role == Role::SysAdmin || (user.tenant_id.is_some() && user.tenant_id == tenant_id)
 }
 
+fn validate_coupon_input(input: &CouponInputJson) -> Option<String> {
+    let coupon_type = input.coupon_type.trim().to_uppercase();
+    let valid_value = match coupon_type.as_str() {
+        "PERCENTAGE" => (0..=100).contains(&input.value),
+        "FIXED" => input.value >= 0,
+        _ => false,
+    };
+    if input.code.trim().is_empty()
+        || !valid_value
+        || input.min_order_cents.is_some_and(|value| value < 0)
+        || input.max_uses.is_some_and(|value| value < 0)
+        || input
+            .max_uses_per_customer
+            .is_some_and(|value| value < 0)
+    {
+        return None;
+    }
+    Some(coupon_type)
+}
+
 const COUPON_SORT_FIELDS: &[&str] = &[
     "id",
     "code",
@@ -205,13 +225,10 @@ pub async fn add(
     let tenant_id = tenant_for_write(&user, input.tenant_id).ok_or(
         ExceptionResponse::Forbidden(locale, ErrorKey::InvalidParameterValue),
     )?;
-
-    if input.code.trim().is_empty() || input.coupon_type.trim().is_empty() {
-        return Err(ExceptionResponse::BadRequest(
-            locale,
-            ErrorKey::InvalidParameterValue,
-        ));
-    }
+    let coupon_type = validate_coupon_input(&input).ok_or(ExceptionResponse::BadRequest(
+        locale,
+        ErrorKey::InvalidParameterValue,
+    ))?;
 
     let domain = Coupon {
         id: None,
@@ -219,7 +236,7 @@ pub async fn add(
         tenant_id: Some(tenant_id),
         code: input.code.trim().to_uppercase(),
         campaign_id: input.campaign_id,
-        coupon_type: input.coupon_type.trim().to_string(),
+        coupon_type,
         value: input.value,
         min_order_cents: input.min_order_cents,
         max_uses: input.max_uses,
@@ -282,11 +299,15 @@ pub async fn update(
             ErrorKey::InvalidParameterValue,
         ));
     }
+    let coupon_type = validate_coupon_input(&input).ok_or(ExceptionResponse::BadRequest(
+        locale,
+        ErrorKey::InvalidParameterValue,
+    ))?;
 
     let mut updated = existing;
     updated.code = input.code.trim().to_uppercase();
     updated.campaign_id = input.campaign_id;
-    updated.coupon_type = input.coupon_type.trim().to_string();
+    updated.coupon_type = coupon_type;
     updated.value = input.value;
     updated.min_order_cents = input.min_order_cents;
     updated.max_uses = input.max_uses;

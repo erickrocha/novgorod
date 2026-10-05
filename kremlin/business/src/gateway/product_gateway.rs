@@ -302,7 +302,7 @@ impl ProductGateway {
         // Query stock for skus
         let raw_stock_sql = format!(
             r#"
-            SELECT sku_id, COALESCE(SUM(quantity), 0) as total_stock
+            SELECT sku_id, COALESCE(SUM(quantity - reserved), 0) as total_stock
             FROM sku_stock
             WHERE sku_id IN (SELECT id FROM sku WHERE product_id = {})
             GROUP BY sku_id

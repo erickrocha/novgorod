@@ -24,13 +24,6 @@ use business::sea_orm::{
 use business::use_cases::coupon_redemption_use_case::CouponRedemptionUseCase;
 use entity::coupon_redemption_entity;
 
-fn tenant_for_write(user: &User, requested: Option<i64>) -> Option<i64> {
-    match user.role {
-        Role::SysAdmin => requested,
-        Role::TenantOwner | Role::TenantUser | Role::Customer => user.tenant_id,
-    }
-}
-
 fn can_read_tenant(user: &User, tenant_id: Option<i64>) -> bool {
     user.role == Role::SysAdmin || (user.tenant_id.is_some() && user.tenant_id == tenant_id)
 }
@@ -202,9 +195,16 @@ pub async fn add(
     Extension(user): Extension<User>,
     Json(input): Json<CouponRedemptionInputJson>,
 ) -> HttpResponse<(StatusCode, Json<CouponRedemptionJson>)> {
-    let tenant_id = tenant_for_write(&user, input.tenant_id).ok_or(
-        ExceptionResponse::Forbidden(locale, ErrorKey::InvalidParameterValue),
-    )?;
+    if user.role != Role::SysAdmin {
+        return Err(ExceptionResponse::Forbidden(
+            locale,
+            ErrorKey::InvalidParameterValue,
+        ));
+    }
+    let tenant_id = input.tenant_id.ok_or(ExceptionResponse::Forbidden(
+        locale,
+        ErrorKey::InvalidParameterValue,
+    ))?;
 
     let domain = CouponRedemption {
         id: None,

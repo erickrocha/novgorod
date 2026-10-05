@@ -26,6 +26,8 @@ docker compose up -d --build --wait kremlin mpd   # app on :8080, Mercado Pago d
 ./kit.py tchk12                                    # Expired stock is released; in-flight payments are preserved
 ./kit.py tchk13                                    # Payment window and stock re-reservation on retry
 ./kit.py tchk14                                    # Late capture consumes available stock or logs oversell
+./kit.py tchk15                                    # Coupon write validation
+./kit.py tchk16                                    # Only SysAdmin can create coupon redemptions
 ./kit.py --help                                    # every command, with examples in the header of kit.py
 ./smoke.py                                         # up, seed, login, public GET, quote, purchase, payment, webhook, reset, down -v
 docker compose down -v                             # always tear down; the database is gone with it
@@ -56,6 +58,10 @@ Stack (`docker-compose.yml`): `kremlin` runs `cargo run -p application --bin kre
 `./kit.py tchk13` verifies TC-25: attempts after the 15-minute window are refused without MPD calls; retries inside the window re-reserve stock before charging; insufficient stock returns 409 without changing the failed payment or released reservation; pending attempts remain in flight.
 
 `./kit.py tchk14` verifies late approved webhooks: released stock is consumed if available; otherwise the payment is confirmed, inventory stays unchanged, and one oversell error is logged with purchase, SKU, and quantity.
+
+`./kit.py tchk15` verifies lowercase coupon type normalization plus rejection of invalid coupon types, values, and usage limits on both create and update.
+
+`./kit.py tchk16` verifies `POST /coupon-redemptions` returns 403 for TenantOwner, TenantUser, and Customer, then returns 201 for SysAdmin with the requested tenant scope.
 
 ### Driving
 

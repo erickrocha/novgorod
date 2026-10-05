@@ -603,6 +603,98 @@ def tchk14(args):
     print("T-CHK-14 PASS: late capture consumed available stock; oversold capture confirmed payment, preserved inventory, and logged once")
 
 
+def tchk15(args):
+    f = fixtures()
+    if not f:
+        sys.exit("no fixtures; run `seed` first")
+    tenant_id = f["tenants"]["T1"]
+
+    def require(condition, message):
+        if not condition:
+            sys.exit(f"T-CHK-15 failed: {message}")
+
+    reset(args)
+    valid = dict(code="lowercase-valid", couponType="percentage", value=10)
+    code, body, _ = api("POST", "/coupons", "s1", {"tenantId": tenant_id, **valid})
+    require(code == 201 and body["couponType"] == "PERCENTAGE",
+            f"lowercase type normalization: HTTP {code} {body}")
+    coupon_id = body["id"]
+
+    invalid_cases = [
+        ("bad-create-percentage-high", dict(couponType="PERCENTAGE", value=101)),
+        ("bad-create-percentage-low", dict(couponType="PERCENTAGE", value=-1)),
+        ("bad-create-fixed", dict(couponType="FIXED", value=-5)),
+        ("bad-create-type", dict(couponType="BOGUS", value=10)),
+        ("bad-create-minimum", dict(couponType="PERCENTAGE", value=10, minOrderCents=-1)),
+        ("bad-create-max", dict(couponType="PERCENTAGE", value=10, maxUses=-1)),
+        ("bad-create-customer-max", dict(couponType="PERCENTAGE", value=10, maxUsesPerCustomer=-1)),
+    ]
+    for code_value, values in invalid_cases:
+        payload = {"tenantId": tenant_id, "code": code_value, "couponType": "PERCENTAGE", "value": 10, **values}
+        status, response, _ = api("POST", "/coupons", "s1", payload)
+        require(status == 400, f"invalid create {code_value}: HTTP {status} {response}")
+        exists = psql(f"SELECT count(*) FROM coupon WHERE tenant_id={tenant_id} AND code='{code_value.upper()}'", tuples=True).strip()
+        require(exists == "0", f"invalid create persisted {code_value}")
+
+    for code_value, values in invalid_cases:
+        payload = {"tenantId": tenant_id, "code": "changed", "couponType": "PERCENTAGE", "value": 10, **values}
+        status, response, _ = api("PUT", f"/coupons/{coupon_id}", "s1", payload)
+        require(status == 400, f"invalid update {code_value}: HTTP {status} {response}")
+
+    stored = psql(
+        f"SELECT code||'|'||coupon_type||'|'||value FROM coupon WHERE id={coupon_id}", tuples=True
+    ).strip()
+    require(stored == "LOWERCASE-VALID|PERCENTAGE|10", f"invalid update changed existing row: {stored}")
+    print("T-CHK-15 PASS: normalized valid coupon; invalid type, value, and limits rejected on create/update")
+
+
+def tchk16(args):
+    f = fixtures()
+    if not f:
+        sys.exit("no fixtures; run `seed` first")
+    t1, c1 = f["tenants"]["T1"], f["customers"]["C1"]
+
+    def require(condition, message):
+        if not condition:
+            sys.exit(f"T-CHK-16 failed: {message}")
+
+    reset(args)
+    code, quote_body, _ = api("POST", "/checkout/quotes", "c1", dict(
+        items=[dict(skuId=f["skus"]["A1"], quantity=1)],
+        addressId=f["addresses"]["AD1"],
+        coupons=[dict(tenantId=t1, code="CP10")],
+    ))
+    require(code == 201, f"quote: HTTP {code} {quote_body}")
+    code, purchase_body, _ = api("POST", "/purchases", "c1", dict(
+        quoteId=quote_body["id"], email=USERS["c1"][0], phone="11988887777",
+    ), {"Idempotency-Key": "tchk16-order"})
+    require(code == 201, f"purchase: HTTP {code} {purchase_body}")
+    order_id = purchase_body["orders"][0]["id"]
+    payload = dict(
+        tenantId=t1,
+        couponId=f["coupons"]["CP10"],
+        orderId=order_id,
+        customerId=c1,
+    )
+
+    for actor in ("s1", "u1", "c1"):
+        code, body, _ = api("POST", "/coupon-redemptions", actor, payload)
+        require(code == 403, f"{actor} should be forbidden: HTTP {code} {body}")
+    require(psql("SELECT count(*) FROM coupon_redemption", tuples=True).strip() == "0",
+            "unauthorized requests inserted coupon redemption")
+
+    code, body, _ = api("POST", "/coupon-redemptions", "sysadmin", payload)
+    require(code == 201 and body["tenantId"] == t1,
+            f"SysAdmin write: HTTP {code} {body}")
+    stored = psql(
+        f"SELECT tenant_id||'|'||coupon_id||'|'||order_id||'|'||customer_id FROM coupon_redemption WHERE order_id={order_id}",
+        tuples=True,
+    ).strip()
+    require(stored == f"{t1}|{f['coupons']['CP10']}|{order_id}|{c1}",
+            f"SysAdmin row mismatch: {stored}")
+    print("T-CHK-16 PASS: TenantOwner, TenantUser, and Customer denied; SysAdmin created the tenant-scoped redemption")
+
+
 # ---------------------------------------------------------------- driver
 def show(res):
     code, body, ms = res
@@ -699,6 +791,8 @@ def main():
     p = sp.add_parser("tchk12"); p.add_argument("--expect-disabled", action="store_true")
     sp.add_parser("tchk13")
     sp.add_parser("tchk14")
+    sp.add_parser("tchk15")
+    sp.add_parser("tchk16")
     p = sp.add_parser("call"); p.add_argument("method"); p.add_argument("path"); p.add_argument("--as", dest="who"); p.add_argument("--json"); p.add_argument("-H", action="append")
     p = sp.add_parser("burst"); p.add_argument("method", nargs="?"); p.add_argument("path", nargs="?"); p.add_argument("--repeat", type=int, default=1)
     p.add_argument("--as", dest="who"); p.add_argument("--json"); p.add_argument("-H", action="append"); p.add_argument("--spec")
@@ -717,6 +811,8 @@ def main():
     elif a.cmd == "tchk12": tchk12(a)
     elif a.cmd == "tchk13": tchk13(a)
     elif a.cmd == "tchk14": tchk14(a)
+    elif a.cmd == "tchk15": tchk15(a)
+    elif a.cmd == "tchk16": tchk16(a)
     elif a.cmd == "ids": print(json.dumps(fixtures(), indent=1))
     elif a.cmd == "call": show(api(a.method.upper(), a.path, a.who, a.json, hdrs(a.H)))
     elif a.cmd == "burst":
