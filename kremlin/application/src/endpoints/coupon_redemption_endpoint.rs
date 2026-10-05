@@ -44,6 +44,7 @@ const COUPON_REDEMPTION_SORT_FIELDS: &[&str] = &[
     get,
     path = "/coupon-redemptions",
     tag = "Coupon",
+    description = "Authenticated collection endpoint; currently returns all coupon redemption rows. Use the paged endpoint for tenant-scoped results.",
     responses(
         (status = 200, description = "List of coupon redemptions", body = [CouponRedemptionJson]),
         (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
@@ -66,6 +67,7 @@ pub async fn list_all(
     path = "/coupon-redemptions/paged",
     tag = "Coupon",
     params(CouponRedemptionPageQuery),
+    description = "SysAdmin can query all tenants or filter by tenantId; tenant staff see only their own tenant's redemptions. A caller without a tenant gets an empty page.",
     responses(
         (status = 200, description = "Paged coupon redemptions", body = PagedResponse<CouponRedemptionJson>),
         (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
@@ -141,6 +143,7 @@ pub async fn paged(
     path = "/coupon-redemptions/{id}",
     tag = "Coupon",
     params(("id" = i64, Path, description = "Coupon Redemption ID")),
+    description = "Returns a redemption only to SysAdmin or staff of its tenant; other callers receive 404.",
     responses(
         (status = 200, description = "Coupon redemption found", body = CouponRedemptionJson),
         (status = 404, description = "Not found", body = NotFoundErrorJson),
@@ -180,11 +183,12 @@ pub async fn get_by_id(
     path = "/coupon-redemptions",
     tag = "Coupon",
     request_body = CouponRedemptionInputJson,
+    description = "Administrative redemption creation is SysAdmin-only and requires tenantId. TenantOwner, TenantUser, and Customer callers receive 403. Checkout creates purchase redemptions internally; this route is not used by the purchase flow.",
     responses(
         (status = 201, description = "Coupon redemption created", body = CouponRedemptionJson),
         (status = 400, description = "Bad request", body = BadRequestErrorJson),
         (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
-        (status = 403, description = "Forbidden", body = ForbiddenErrorJson),
+        (status = 403, description = "SysAdmin role required and tenantId must be supplied", body = ForbiddenErrorJson),
         (status = 500, description = "Internal server error", body = InternalServerErrorJson),
     ),
     security(("bearer_auth" = []))

@@ -70,6 +70,7 @@ const COUPON_SORT_FIELDS: &[&str] = &[
     get,
     path = "/coupons",
     tag = "Coupon",
+    description = "Authenticated collection endpoint; currently returns all coupon rows. Use the paged endpoint for tenant-scoped results.",
     responses(
         (status = 200, description = "List of coupons", body = [CouponJson]),
         (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
@@ -92,6 +93,7 @@ pub async fn list_all(
     path = "/coupons/paged",
     tag = "Coupon",
     params(CouponPageQuery),
+    description = "SysAdmin can query all tenants or filter by tenantId; tenant staff see only their own tenant's coupons. A caller without a tenant gets an empty page.",
     responses(
         (status = 200, description = "Paged coupons", body = PagedResponse<CouponJson>),
         (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
@@ -168,6 +170,7 @@ pub async fn paged(
     path = "/coupons/{id}",
     tag = "Coupon",
     params(("id" = i64, Path, description = "Coupon ID")),
+    description = "Returns a coupon only to SysAdmin or staff of the coupon's tenant; other callers receive 404.",
     responses(
         (status = 200, description = "Coupon found", body = CouponJson),
         (status = 404, description = "Not found", body = NotFoundErrorJson),
@@ -207,9 +210,10 @@ pub async fn get_by_id(
     path = "/coupons",
     tag = "Coupon",
     request_body = CouponInputJson,
+    description = "Creates a coupon for the caller's tenant (or the tenantId supplied by SysAdmin). couponType is trimmed, case-insensitive, and stored uppercase: PERCENTAGE requires value 0..100; FIXED requires value >= 0. minOrderCents, maxUses, and maxUsesPerCustomer must be non-negative when supplied. Invalid code, type, value, or limit returns 400.",
     responses(
         (status = 201, description = "Coupon created", body = CouponJson),
-        (status = 400, description = "Bad request", body = BadRequestErrorJson),
+        (status = 400, description = "Invalid coupon code, type, value, or usage limit", body = BadRequestErrorJson),
         (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
         (status = 403, description = "Forbidden", body = ForbiddenErrorJson),
         (status = 500, description = "Internal server error", body = InternalServerErrorJson),
@@ -265,9 +269,10 @@ pub async fn add(
     tag = "Coupon",
     params(("id" = i64, Path, description = "Coupon ID")),
     request_body = CouponInputJson,
+    description = "Updates a coupon in the caller's tenant; SysAdmin may supply tenantId. couponType is trimmed, case-insensitive, and stored uppercase: PERCENTAGE requires value 0..100; FIXED requires value >= 0. minOrderCents, maxUses, and maxUsesPerCustomer must be non-negative when supplied. Invalid code, type, value, or limit returns 400.",
     responses(
         (status = 200, description = "Coupon updated", body = CouponJson),
-        (status = 400, description = "Bad request", body = BadRequestErrorJson),
+        (status = 400, description = "Invalid coupon code, type, value, or usage limit", body = BadRequestErrorJson),
         (status = 404, description = "Not found", body = NotFoundErrorJson),
         (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
         (status = 403, description = "Forbidden", body = ForbiddenErrorJson),
