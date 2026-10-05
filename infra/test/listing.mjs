@@ -79,9 +79,9 @@ try {
     assert.deepEqual(await request("GET", "/api/public/products", null), before);
   });
 
-  await test("accepted unauthenticated contract returns 401", async () => {
+  await test("missing Authorization follows shared middleware and returns 403", async () => {
     for (const method of ["GET", "PUT"]) {
-      assert.equal((await request(method, path, null, method === "PUT" ? { listed: true } : undefined)).status, 401);
+      assert.equal((await request(method, path, null, method === "PUT" ? { listed: true } : undefined)).status, 403);
     }
   });
 } finally {
