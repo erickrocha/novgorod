@@ -1100,6 +1100,15 @@
   },
   "tenants": {
     "title": "Tenants",
+    "listing": {
+      "title": "Mobile listing",
+      "label": "Listed in the mobile app",
+      "save": "Save mobile listing",
+      "saved": "Mobile listing saved.",
+      "readError": "Could not load mobile listing.",
+      "saveError": "Could not save mobile listing.",
+      "retry": "Try again"
+    },
     "editTenant": "Edit tenant",
     "addTenant": "Add tenant",
     "tenantForm": "Tenant form",

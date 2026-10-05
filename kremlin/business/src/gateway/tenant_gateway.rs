@@ -7,6 +7,7 @@ use entity::tenant_entity;
 use sea_orm::prelude::async_trait::async_trait;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, DbConn, DbErr, DeleteResult, EntityTrait, QueryFilter,
+    QuerySelect,
 };
 use sea_orm::sea_query::Expr;
 
@@ -21,6 +22,16 @@ impl TenantGateway {
 }
 
 impl TenantGateway {
+    pub async fn get_listed(&self, id: i64) -> Result<Option<bool>, DbErr> {
+        TenantQuery::find()
+            .select_only()
+            .column(tenant_entity::Column::Listed)
+            .filter(tenant_entity::Column::Id.eq(id))
+            .into_tuple::<bool>()
+            .one(&self.db)
+            .await
+    }
+
     /// Sets only the listing flag (SR-TEN-019); returns the number of rows changed.
     pub async fn set_listed(&self, id: i64, listed: bool) -> Result<u64, DbErr> {
         let result = TenantQuery::update_many()

@@ -63,6 +63,7 @@ impl Modify for SecurityAddon {
         endpoints::tenant_endpoint::list_all,
         endpoints::tenant_endpoint::update,
         endpoints::tenant_endpoint::set_listing,
+        endpoints::tenant_endpoint::get_listing,
         endpoints::tenant_endpoint::paged,
         endpoints::user_endpoint::get_by_id,
         endpoints::user_endpoint::add,

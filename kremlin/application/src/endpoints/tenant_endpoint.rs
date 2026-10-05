@@ -367,6 +367,46 @@ fn listing_access(user: &User, tenant_id: i64) -> ListingAccess {
 }
 
 #[utoipa::path(
+    get,
+    tag = "Tenant",
+    path = "/tenant/{id}/listing",
+    params(("id" = i64, Path, description = "Tenant ID")),
+    responses(
+        (status = 200, description = "Listing flag", body = ListingJson),
+        (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
+        (status = 403, description = "Forbidden", body = ForbiddenErrorJson),
+        (status = 404, description = "Tenant not found or not accessible", body = NotFoundErrorJson),
+        (status = 500, description = "Internal server error", body = InternalServerErrorJson),
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn get_listing(
+    State(state): State<AppState>,
+    Extension(locale): Extension<Locale>,
+    Extension(current_user): Extension<User>,
+    Path(id): Path<i64>,
+) -> HttpResponse<Json<ListingJson>> {
+    match listing_access(&current_user, id) {
+        ListingAccess::Allowed => {}
+        ListingAccess::Forbidden => {
+            return Err(ExceptionResponse::Forbidden(locale, ErrorKey::InvalidParameterValue));
+        }
+        ListingAccess::NotFound => {
+            return Err(ExceptionResponse::NotFound(locale, ErrorKey::TenantNotFound));
+        }
+    }
+    let listed = TenantGateway::new(state.conn.as_ref().clone())
+        .get_listed(id)
+        .await
+        .map_err(|error| {
+            log::error!("Failed to read tenant listing flag: {error}");
+            ExceptionResponse::InternalServerError(locale, ErrorKey::TenantUpdateFailed)
+        })?
+        .ok_or(ExceptionResponse::NotFound(locale, ErrorKey::TenantNotFound))?;
+    Ok(Json(ListingJson { listed }))
+}
+
+#[utoipa::path(
     put,
     tag = "Tenant",
     path = "/tenant/{id}/listing",

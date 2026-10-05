@@ -49,6 +49,7 @@ struct Server {
     prices: AtomicUsize,
     reject_first: bool,
     mode: usize,
+    expected_parcel: Option<(&'static str, &'static str, &'static str, &'static str)>,
 }
 async fn auth(
     State(s): State<Arc<Server>>,
@@ -69,7 +70,15 @@ async fn price(
     Json(body): Json<Value>,
 ) -> (StatusCode, Json<Value>) {
     s.prices.fetch_add(1, Ordering::SeqCst);
-    assert_eq!(body["parametrosProduto"][0]["comprimento"], "14");
+    if let Some((weight, length, width, height)) = s.expected_parcel {
+        let parcel = &body["parametrosProduto"][0];
+        assert_eq!(parcel["psObjeto"], weight);
+        assert_eq!(parcel["comprimento"], length);
+        assert_eq!(parcel["largura"], width);
+        assert_eq!(parcel["altura"], height);
+    } else {
+        assert_eq!(body["parametrosProduto"][0]["comprimento"], "14");
+    }
     assert_eq!(body["parametrosProduto"][0]["nuContrato"], "contract");
     assert_eq!(body["parametrosProduto"][0]["nuDR"], 72);
     if s.reject_first && headers["authorization"] == "Bearer token-1" {
@@ -182,6 +191,58 @@ async fn http_malformed_timeout_and_outage_are_retryable_without_body_leaks() {
         task.abort();
     }
 }
+
+#[tokio::test]
+async fn parcel_limits_accept_exact_maximum_and_reject_excess_before_http_calls() {
+    let server = Arc::new(Server {
+        expected_parcel: Some(("30000", "100", "99", "1")),
+        ..Default::default()
+    });
+    let (adapter, task) = adapter(server.clone()).await;
+    let mut at_limit = request(1);
+    at_limit.parcel = Parcel {
+        weight_g: 30_000,
+        length_mm: 1_000,
+        width_mm: 990,
+        height_mm: 10,
+    };
+    assert!(adapter.query(at_limit, credentials(), 1).await.is_ok());
+    let auth_calls = server.auth.load(Ordering::SeqCst);
+    let price_calls = server.prices.load(Ordering::SeqCst);
+
+    for parcel in [
+        Parcel {
+            weight_g: 30_001,
+            length_mm: 100,
+            width_mm: 100,
+            height_mm: 100,
+        },
+        Parcel {
+            weight_g: 500,
+            length_mm: 1_001,
+            width_mm: 100,
+            height_mm: 100,
+        },
+        Parcel {
+            weight_g: 500,
+            length_mm: 1_000,
+            width_mm: 1_000,
+            height_mm: 10,
+        },
+    ] {
+        let mut request = request(1);
+        request.parcel = parcel;
+        assert_eq!(
+            adapter.query(request, credentials(), 1).await.unwrap_err(),
+            Error::UnsupportedParcel
+        );
+    }
+
+    assert_eq!(server.auth.load(Ordering::SeqCst), auth_calls);
+    assert_eq!(server.prices.load(Ordering::SeqCst), price_calls);
+    task.abort();
+}
+
 #[test]
 fn parsing_and_partial_service_matching() {
     assert_eq!(cents("1.234,56").unwrap(), 123456);

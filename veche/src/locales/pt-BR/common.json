@@ -204,6 +204,15 @@
   },
   "tenants": {
     "title": "Empresas",
+    "listing": {
+      "title": "Listagem mobile",
+      "label": "Listada no aplicativo mobile",
+      "save": "Salvar listagem mobile",
+      "saved": "Listagem mobile salva.",
+      "readError": "Não foi possível carregar a listagem mobile.",
+      "saveError": "Não foi possível salvar a listagem mobile.",
+      "retry": "Tentar novamente"
+    },
     "editTenant": "Editar empresa",
     "addTenant": "Nova empresa",
     "tenantForm": "Formulário de empresa",

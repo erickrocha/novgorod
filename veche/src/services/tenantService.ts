@@ -1,7 +1,21 @@
 import { api } from "./api";
 import type { PagedResult, PageQueryParams, Tenant, TenantInput, TenantPlan, TenantPlanInput } from "./types";
 
+export interface TenantListing {
+  listed: boolean;
+}
+
 export const tenantService = {
+  async getListing(id: number): Promise<TenantListing> {
+    const response = await api.get<TenantListing>(`/tenant/${id}/listing`);
+    return response.data;
+  },
+
+  async setListing(id: number, listed: boolean): Promise<TenantListing> {
+    const response = await api.put<TenantListing>(`/tenant/${id}/listing`, { listed });
+    return response.data;
+  },
+
   async getTenants(): Promise<Tenant[]> {
     const response = await api.get<Tenant[]>("/tenant");
     return response.data;

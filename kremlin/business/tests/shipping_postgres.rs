@@ -131,7 +131,10 @@ impl ShippingProviderGateway for Carrier {
     ) -> Result<Vec<ShippingOption>, ShippingProviderError> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         assert_eq!(r.tenant_id, 2);
-        assert_eq!(r.parcel.weight_g, 600);
+        assert_eq!(r.parcel.weight_g, 650);
+        assert_eq!(r.parcel.length_mm, 160);
+        assert_eq!(r.parcel.width_mm, 105);
+        assert_eq!(r.parcel.height_mm, 110);
         if self.fail {
             return Err(ShippingProviderError::Unavailable);
         }
@@ -153,6 +156,28 @@ impl ShippingProviderGateway for Carrier {
                 transit_days: Some(5),
             },
         ])
+    }
+}
+struct ChangingCarrier {
+    calls: AtomicUsize,
+    price_cents: AtomicUsize,
+}
+#[async_trait]
+impl ShippingProviderGateway for ChangingCarrier {
+    async fn quote(
+        &self,
+        _request: ShippingRequest,
+    ) -> Result<Vec<ShippingOption>, ShippingProviderError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        let price = self.price_cents.load(Ordering::SeqCst) as i64;
+        Ok(vec![ShippingOption {
+            id: "carrier-price".into(),
+            provider: "correios".into(),
+            service_code: "03298".into(),
+            service_name: "PAC".into(),
+            price_cents: price,
+            transit_days: Some(5),
+        }])
     }
 }
 fn request() -> QuoteRequest {
@@ -197,7 +222,7 @@ async fn mixed_modes_selection_expiry_inputs_orders_and_idempotency() {
 UPDATE tenant SET postal_code='01001000';
 UPDATE sku SET weight_g=300,length_mm=150,width_mm=100,height_mm=50;
 UPDATE shipping_rate SET price_cents=500 WHERE tenant_id=1;
-INSERT INTO tenant_shipping_settings(tenant_id,configuration) VALUES(2,'{"mode":"correios","originCep":"01001000","services":[{"code":"03220","name":"SEDEX"},{"code":"03298","name":"PAC"}],"packaging":{"weightG":0,"lengthMm":0,"widthMm":0,"heightMm":0}}');
+INSERT INTO tenant_shipping_settings(tenant_id,configuration) VALUES(2,'{"mode":"correios","originCep":"01001000","services":[{"code":"03220","name":"SEDEX"},{"code":"03298","name":"PAC"}],"packaging":{"weightG":50,"lengthMm":10,"widthMm":5,"heightMm":10}}');
 "#).await.unwrap();
     let provider = Arc::new(Carrier {
         calls: AtomicUsize::new(0),
@@ -231,6 +256,17 @@ INSERT INTO tenant_shipping_settings(tenant_id,configuration) VALUES(2,'{"mode":
     assert_eq!(selected.expires_at, quote.expires_at);
     assert_eq!(selected.shipping_cents, 2500);
     assert_eq!(selected.total_cents, 4000);
+    let (_, original) = CheckoutQuoteUseCase::load(&db, 1, quote.id).await.unwrap();
+    assert_eq!(original.total_cents, quote.total_cents);
+    assert_eq!(
+        original.sellers[1]
+            .shipping
+            .as_ref()
+            .unwrap()
+            .selected_option
+            .id,
+        "cheap"
+    );
     assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
     let purchases = PurchaseUseCase::new(PurchaseGateway::new(db.clone()));
     let buyer = user(1, Role::Customer, None);
@@ -328,6 +364,49 @@ INSERT INTO tenant_shipping_settings(tenant_id,configuration) VALUES(2,'{"mode":
     assert_eq!(count(&db, "purchase").await, 1);
     cleanup(root, db, schema).await;
 }
+
+#[tokio::test]
+#[ignore = "requires isolated PostgreSQL"]
+async fn carrier_price_changes_do_not_mutate_an_unexpired_quote() {
+    let (root, db, schema) = database().await;
+    Migrator::up(&db, None).await.unwrap();
+    fixtures(&db).await;
+    db.execute_unprepared(r#"
+UPDATE tenant SET postal_code='01001000';
+UPDATE sku SET weight_g=300,length_mm=150,width_mm=100,height_mm=50;
+UPDATE shipping_rate SET price_cents=500 WHERE tenant_id=1;
+INSERT INTO tenant_shipping_settings(tenant_id,configuration) VALUES(2,'{"mode":"correios","originCep":"01001000","services":[{"code":"03298","name":"PAC"}],"packaging":{"weightG":0,"lengthMm":0,"widthMm":0,"heightMm":0}}');
+"#).await.unwrap();
+    let provider = Arc::new(ChangingCarrier {
+        calls: AtomicUsize::new(0),
+        price_cents: AtomicUsize::new(1000),
+    });
+    let quotes = CheckoutQuoteUseCase::with_provider(db.clone(), provider.clone());
+    let quote = quotes.create(1, request()).await.unwrap();
+    let initial_shipping = quote.sellers[1].shipping.as_ref().unwrap();
+    assert_eq!(initial_shipping.selected_option.price_cents, 1000);
+    let initial_total = quote.total_cents;
+    let initial_expiry = quote.expires_at;
+
+    provider.price_cents.store(5000, Ordering::SeqCst);
+    let (_, persisted) = CheckoutQuoteUseCase::load(&db, 1, quote.id).await.unwrap();
+    let stored_shipping = persisted.sellers[1].shipping.as_ref().unwrap();
+    assert_eq!(stored_shipping.selected_option.price_cents, 1000);
+    assert_eq!(persisted.total_cents, initial_total);
+    assert_eq!(persisted.expires_at, initial_expiry);
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
+
+    let buyer = user(1, Role::Customer, None);
+    let purchase = PurchaseUseCase::new(PurchaseGateway::new(db.clone()))
+        .create_checkout(&buyer, "carrier-price-change", checkout(quote.id))
+        .await
+        .unwrap();
+    assert_eq!(purchase.detail.purchase.total_cents, initial_total);
+    assert_eq!(purchase.detail.orders[1].order.shipping_cents, 1000);
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
+    cleanup(root, db, schema).await;
+}
+
 #[tokio::test]
 #[ignore = "requires isolated PostgreSQL"]
 async fn zero_total_checkout_purchase_consumes_the_customers_store_cart() {

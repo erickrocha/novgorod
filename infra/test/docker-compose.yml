@@ -80,6 +80,9 @@ services:
       - MP_API_BASE_URL=http://mpd:8099
       - MP_WEBHOOK_SECRET=${TEST_MP_WEBHOOK_SECRET:-test-mp-webhook-3a9c5e7b1d2f4860}
       - GATEWAY_TOKEN=${TEST_GATEWAY_TOKEN:-test-gateway-8f2b6d4a0c1e3957}
+      # Fake local-only key ring for shipping-credential encryption tests.
+      - 'SHIPPING_ENCRYPTION_KEYS={"test-only-v1":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}'
+      - SHIPPING_ACTIVE_KEY_VERSION=test-only-v1
       - STOCK_EXPIRY_JOB_ENABLED=${TEST_STOCK_EXPIRY_JOB_ENABLED:-true}
       - CARGO_TARGET_DIR=/cargo-target
       # No SQS_QUEUE_URL (consumer off), no AWS_* (storage only touches S3 for images), no encryption keys

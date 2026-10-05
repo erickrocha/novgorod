@@ -28,6 +28,7 @@ import {
   stripNonDigits,
 } from "@/utils/taxId";
 import type { TenantInput, Province, City } from "@/services/types";
+import TenantListing from "./TenantListing";
 
 const tenantSchema = yup.object({
   businessName: yup.string().required("Campo obrigatório"),
@@ -300,6 +301,7 @@ export function TenantForm() {
       <PageBreadcrumb pageTitle={pageTitle} />
       <ComponentCard title={pageTitle}>
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
+          {editing && existing?.id != null && <TenantListing tenantId={existing.id} />}
           {/* First row: Business name (70%) and Tax ID (30%) */}
           <div className="grid grid-cols-1 md:grid-cols-10 gap-5">
             <div className="md:col-span-7">
