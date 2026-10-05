@@ -290,6 +290,319 @@ def tchk08(args):
     print("T-CHK-08 PASS: Customer marketplace and store-mode zero-total purchases, and approved coupon payment confirmed through HTTP auth")
 
 
+def tchk11(args):
+    f = fixtures()
+    if not f:
+        sys.exit("no fixtures; run `seed` first")
+    a1 = f["skus"]["A1"]
+
+    def require(condition, message):
+        if not condition:
+            sys.exit(f"T-CHK-11 failed: {message}")
+
+    def create_purchase(key):
+        code, quote_body, _ = api("POST", "/checkout/quotes", "c1", dict(
+            items=[dict(skuId=a1, quantity=3)],
+            addressId=f["addresses"]["AD1"], coupons=[],
+        ))
+        require(code == 201, f"quote: HTTP {code} {quote_body}")
+        code, body, _ = api("POST", "/purchases", "c1", dict(
+            quoteId=quote_body["id"], email=USERS["c1"][0], phone="11988887777",
+        ), {"Idempotency-Key": key})
+        require(code == 201 and body["status"] == "pending_payment",
+                f"purchase: HTTP {code} {body}")
+        return body["id"]
+
+    def inventory(purchase_id):
+        return psql(
+            f"SELECT (SELECT status FROM purchase WHERE id={purchase_id}) || '|' || "
+            f"(SELECT status FROM payment WHERE purchase_id={purchase_id}) || '|' || "
+            f"(SELECT quantity FROM sku_stock WHERE sku_id={a1}) || '|' || "
+            f"(SELECT reserved FROM sku_stock WHERE sku_id={a1}) || '|' || "
+            f"(SELECT status FROM checkout_stock_reservation WHERE purchase_id={purchase_id})",
+            tuples=True,
+        ).strip()
+
+    reset(args)
+    purchase_id = create_purchase("tchk11-captured")
+    http("POST", "/_mpd/config", {"mode": "approved"}, base=MPD)
+    code, body, _ = api("POST", f"/purchases/{purchase_id}/payments/submit", "c1", dict(
+        token="tok-tchk11-approved", paymentMethodId="visa", installments=1,
+    ))
+    require(code == 200 and body["status"] == "captured",
+            f"approved submit: HTTP {code} {body}")
+    expected = "paid|captured|7|0|consumed"
+    require(inventory(purchase_id) == expected, f"captured inventory: {inventory(purchase_id)}")
+    code, body, _ = api("GET", f"/purchases/{purchase_id}/payments/status", "c1")
+    require(code == 200 and body["status"] == "captured", f"captured replay: HTTP {code} {body}")
+    require(inventory(purchase_id) == expected, "captured replay changed stock")
+
+    reset(args)
+    purchase_id = create_purchase("tchk11-failed")
+    http("POST", "/_mpd/config", {"mode": "rejected"}, base=MPD)
+    code, body, _ = api("POST", f"/purchases/{purchase_id}/payments/submit", "c1", dict(
+        token="tok-tchk11-rejected", paymentMethodId="visa", installments=1,
+    ))
+    require(code == 200 and body["status"] == "failed", f"rejected submit: HTTP {code} {body}")
+    expected = "payment_failed|failed|10|0|released"
+    require(inventory(purchase_id) == expected, f"failed inventory: {inventory(purchase_id)}")
+    code, body, _ = api("GET", f"/purchases/{purchase_id}/payments/status", "c1")
+    require(code == 200 and body["status"] == "failed", f"failed status replay: HTTP {code} {body}")
+    provider_payments = http("GET", "/_mpd/payments", base=MPD)[1]
+    payment_id = provider_payments[-1]["id"]
+    request_id = f"tchk11-{payment_id}"
+    signature = sign(payment_id, request_id)
+    code, body, _ = http(
+        "POST", f"/webhooks/mercado-pago?data.id={payment_id}",
+        {"action": "payment.updated", "type": "payment", "data": {"id": str(payment_id)}},
+        {"x-signature": signature, "x-request-id": request_id},
+    )
+    require(code == 200, f"failed webhook replay: HTTP {code} {body}")
+    require(inventory(purchase_id) == expected, "failed replay changed stock")
+    print("T-CHK-11 PASS: captured stock consumed once; failed stock released once across status and webhook replays")
+
+
+def tchk12(args):
+    f = fixtures()
+    if not f:
+        sys.exit("no fixtures; run `seed` first")
+    c1, t1, a1 = f["customers"]["C1"], f["tenants"]["T1"], f["skus"]["A1"]
+
+    def require(condition, message):
+        if not condition:
+            sys.exit(f"T-CHK-12 failed: {message}")
+
+    def create_purchase(key, quantity):
+        code, quote_body, _ = api("POST", "/checkout/quotes", "c1", dict(
+            items=[dict(skuId=a1, quantity=quantity)],
+            addressId=f["addresses"]["AD1"],
+            coupons=[dict(tenantId=t1, code="CP10")],
+        ))
+        require(code == 201, f"quote: HTTP {code} {quote_body}")
+        code, body, _ = api("POST", "/purchases", "c1", dict(
+            quoteId=quote_body["id"], email=USERS["c1"][0], phone="11988887777",
+        ), {"Idempotency-Key": key})
+        require(code == 201, f"purchase: HTTP {code} {body}")
+        return body["id"]
+
+    def payment_state(purchase_id):
+        return psql(
+            f"SELECT (SELECT status FROM payment WHERE purchase_id={purchase_id}) || '|' || "
+            f"(SELECT status FROM checkout_stock_reservation WHERE purchase_id={purchase_id}) || '|' || "
+            f"(SELECT status FROM checkout_coupon_reservation WHERE purchase_id={purchase_id})",
+            tuples=True,
+        ).strip()
+
+    reset(args)
+    never_submitted = create_purchase("tchk12-unsubmitted", 2)
+    in_flight = create_purchase("tchk12-in-flight", 1)
+    code, body, _ = api("POST", f"/purchases/{in_flight}/payments/submit", "c1", dict(
+        token="pending-tchk12", paymentMethodId="visa", installments=1,
+    ))
+    require(code == 200 and body["status"] == "pending", f"pending submit: HTTP {code} {body}")
+    psql(
+        "UPDATE purchase SET created_at=CURRENT_TIMESTAMP-interval '20 minutes' "
+        f"WHERE id IN ({never_submitted},{in_flight}); "
+        "UPDATE checkout_stock_reservation SET expires_at=CURRENT_TIMESTAMP-interval '20 minutes' "
+        f"WHERE purchase_id IN ({never_submitted},{in_flight}); "
+        "UPDATE checkout_coupon_reservation SET expires_at=CURRENT_TIMESTAMP-interval '20 minutes' "
+        f"WHERE purchase_id IN ({never_submitted},{in_flight});"
+    )
+
+    expected_unsubmitted = "pending_provider|reserved|reserved"
+    expected_in_flight = "pending|reserved|reserved"
+    if args.expect_disabled:
+        deadline = time.monotonic() + 32
+        while time.monotonic() < deadline:
+            time.sleep(0.5)
+        require(payment_state(never_submitted) == expected_unsubmitted,
+                f"disabled job changed unsubmitted payment: {payment_state(never_submitted)}")
+        require(payment_state(in_flight) == expected_in_flight,
+                f"disabled job changed in-flight payment: {payment_state(in_flight)}")
+        require(psql("SELECT reserved FROM sku_stock WHERE sku_id=1", tuples=True).strip() == "3",
+                "disabled job changed reserved stock")
+        print("T-CHK-12 PASS: disabled switch preserved expired stock and coupon reservations")
+        return
+
+    deadline = time.monotonic() + 35
+    while time.monotonic() < deadline:
+        if payment_state(never_submitted) == "pending_provider|released|released":
+            break
+        time.sleep(0.5)
+    require(payment_state(never_submitted) == "pending_provider|released|released",
+            f"expired unsubmitted reservation not released: {payment_state(never_submitted)}")
+    require(payment_state(in_flight) == expected_in_flight,
+            f"in-flight payment reservation changed: {payment_state(in_flight)}")
+    require(psql("SELECT quantity||'|'||reserved FROM sku_stock WHERE sku_id=1", tuples=True).strip() == "10|1",
+            "expiry job did not release only the unsubmitted stock")
+    print("T-CHK-12 PASS: expired unsubmitted reservation and coupon released; in-flight payment remained reserved")
+
+
+def tchk13(args):
+    f = fixtures()
+    if not f:
+        sys.exit("no fixtures; run `seed` first")
+    a1 = f["skus"]["A1"]
+
+    def require(condition, message):
+        if not condition:
+            sys.exit(f"T-CHK-13 failed: {message}")
+
+    def create_purchase(key, quantity):
+        code, quote_body, _ = api("POST", "/checkout/quotes", "c1", dict(
+            items=[dict(skuId=a1, quantity=quantity)],
+            addressId=f["addresses"]["AD1"], coupons=[],
+        ))
+        require(code == 201, f"quote: HTTP {code} {quote_body}")
+        code, body, _ = api("POST", "/purchases", "c1", dict(
+            quoteId=quote_body["id"], email=USERS["c1"][0], phone="11988887777",
+        ), {"Idempotency-Key": key})
+        require(code == 201, f"purchase: HTTP {code} {body}")
+        return body["id"]
+
+    def submit(purchase_id, token_value):
+        return api("POST", f"/purchases/{purchase_id}/payments/submit", "c1", dict(
+            token=token_value, paymentMethodId="visa", installments=1,
+        ))
+
+    def calls():
+        return len(http("GET", "/_mpd/calls", base=MPD)[1])
+
+    def state(purchase_id):
+        return psql(
+            f"SELECT (SELECT status FROM payment WHERE purchase_id={purchase_id}) || '|' || "
+            f"(SELECT quantity FROM sku_stock WHERE sku_id={a1}) || '|' || "
+            f"(SELECT reserved FROM sku_stock WHERE sku_id={a1}) || '|' || "
+            f"(SELECT status FROM checkout_stock_reservation WHERE purchase_id={purchase_id})",
+            tuples=True,
+        ).strip()
+
+    reset(args)
+    purchase_id = create_purchase("tchk13-expired", 3)
+    http("POST", "/_mpd/config", {"mode": "rejected"}, base=MPD)
+    code, body, _ = submit(purchase_id, "tok-tchk13-reject")
+    require(code == 200 and body["status"] == "failed", f"initial failed attempt: HTTP {code} {body}")
+    require(state(purchase_id) == "failed|10|0|released", f"initial failure state: {state(purchase_id)}")
+    kit_sql = f"UPDATE purchase SET created_at=CURRENT_TIMESTAMP-interval '20 minutes' WHERE id={purchase_id}"
+    psql(kit_sql)
+    before_calls = calls()
+    code, body, _ = submit(purchase_id, "tok-tchk13-expired")
+    require(code == 409, f"expired retry: HTTP {code} {body}")
+    require(calls() == before_calls, "expired retry reached MPD")
+    require(state(purchase_id) == "failed|10|0|released", f"expired retry changed state: {state(purchase_id)}")
+
+    psql(f"UPDATE purchase SET created_at=CURRENT_TIMESTAMP-interval '5 minutes' WHERE id={purchase_id}")
+    http("POST", "/_mpd/config", {"mode": "approved"}, base=MPD)
+    code, body, _ = submit(purchase_id, "tok-tchk13-retry-approved")
+    require(code == 200 and body["status"] == "captured", f"retry capture: HTTP {code} {body}")
+    require(state(purchase_id) == "captured|7|0|consumed", f"retry capture state: {state(purchase_id)}")
+
+    insufficient = create_purchase("tchk13-insufficient", 3)
+    http("POST", "/_mpd/config", {"mode": "rejected"}, base=MPD)
+    code, body, _ = submit(insufficient, "tok-tchk13-reject-b")
+    require(code == 200 and body["status"] == "failed", f"second initial failure: HTTP {code} {body}")
+    psql(f"UPDATE sku_stock SET quantity=2 WHERE sku_id={a1}; UPDATE purchase SET created_at=CURRENT_TIMESTAMP-interval '5 minutes' WHERE id={insufficient}")
+    http("POST", "/_mpd/config", {"mode": "approved"}, base=MPD)
+    before_calls = calls()
+    code, body, _ = submit(insufficient, "tok-tchk13-insufficient-retry")
+    require(code == 409, f"insufficient retry: HTTP {code} {body}")
+    require(calls() == before_calls, "insufficient retry reached MPD")
+    require(state(insufficient) == "failed|2|0|released", f"insufficient retry changed state: {state(insufficient)}")
+
+    in_flight = create_purchase("tchk13-in-flight", 1)
+    code, body, _ = submit(in_flight, "pending-tchk13-flight")
+    require(code == 200 and body["status"] == "pending", f"pending attempt: HTTP {code} {body}")
+    psql(f"UPDATE purchase SET created_at=CURRENT_TIMESTAMP-interval '20 minutes' WHERE id={in_flight}")
+    before_calls = calls()
+    code, body, _ = submit(in_flight, "pending-tchk13-replay")
+    require(code == 200 and body["status"] == "pending", f"in-flight replay: HTTP {code} {body}")
+    require(calls() == before_calls, "in-flight replay reached MPD again")
+    require(state(in_flight) == "pending|2|1|reserved", f"in-flight reservation changed: {state(in_flight)}")
+    print("T-CHK-13 PASS: 15-minute window, released-stock retry, insufficient-stock refusal, and in-flight attempt")
+
+
+def tchk14(args):
+    f = fixtures()
+    if not f:
+        sys.exit("no fixtures; run `seed` first")
+    a1, t1 = f["skus"]["A1"], f["tenants"]["T1"]
+
+    def require(condition, message):
+        if not condition:
+            sys.exit(f"T-CHK-14 failed: {message}")
+
+    def create_purchase(customer, address, key):
+        code, quote_body, _ = api("POST", "/checkout/quotes", customer, dict(
+            items=[dict(skuId=a1, quantity=3)],
+            addressId=f["addresses"][address], coupons=[],
+        ))
+        require(code == 201, f"quote: HTTP {code} {quote_body}")
+        code, body, _ = api("POST", "/purchases", customer, dict(
+            quoteId=quote_body["id"], email=USERS[customer][0], phone="11988887777",
+        ), {"Idempotency-Key": key})
+        require(code == 201, f"purchase: HTTP {code} {body}")
+        return body["id"]
+
+    def fail_payment(purchase_id):
+        http("POST", "/_mpd/config", {"mode": "rejected"}, base=MPD)
+        code, body, _ = api("POST", f"/purchases/{purchase_id}/payments/submit", "c1", dict(
+            token=f"tok-tchk14-reject-{purchase_id}", paymentMethodId="visa", installments=1,
+        ))
+        require(code == 200 and body["status"] == "failed", f"initial reject: HTTP {code} {body}")
+        payment = http("GET", "/_mpd/payments", base=MPD)[1][-1]
+        return payment["id"]
+
+    def approve_late(payment_id, purchase_id):
+        http("POST", f"/_mpd/payments/{payment_id}", {"status": "approved"}, base=MPD)
+        request_id = f"tchk14-{payment_id}"
+        code, body, _ = http(
+            "POST", f"/webhooks/mercado-pago?data.id={payment_id}",
+            {"action": "payment.updated", "type": "payment", "data": {"id": str(payment_id)}},
+            {"x-signature": sign(payment_id, request_id), "x-request-id": request_id},
+        )
+        require(code == 200, f"late approved webhook: HTTP {code} {body}")
+        state = psql(
+            f"SELECT (SELECT status FROM purchase WHERE id={purchase_id}) || '|' || "
+            f"(SELECT status FROM payment WHERE purchase_id={purchase_id}) || '|' || "
+            f"(SELECT quantity FROM sku_stock WHERE sku_id={a1}) || '|' || "
+            f"(SELECT reserved FROM sku_stock WHERE sku_id={a1}) || '|' || "
+            f"(SELECT status FROM checkout_stock_reservation WHERE purchase_id={purchase_id})",
+            tuples=True,
+        ).strip()
+        return state
+
+    reset(args)
+    purchase_id = create_purchase("c1", "AD1", "tchk14-late-available")
+    payment_id = fail_payment(purchase_id)
+    require(psql(f"SELECT status FROM checkout_stock_reservation WHERE purchase_id={purchase_id}", tuples=True).strip() == "released",
+            "first purchase reservation was not released")
+    available_state = approve_late(payment_id, purchase_id)
+    require(available_state == "paid|captured|7|0|consumed", f"available late capture: {available_state}")
+
+    reset(args)
+    failed_purchase = create_purchase("c1", "AD1", "tchk14-late-oversold")
+    payment_id = fail_payment(failed_purchase)
+    psql(f"UPDATE sku_stock SET quantity=3,reserved=0 WHERE sku_id={a1}")
+    other_purchase = create_purchase("c2", "AD9", "tchk14-other-buyer")
+    require(psql(f"SELECT quantity||'|'||reserved FROM sku_stock WHERE sku_id={a1}", tuples=True).strip() == "3|3",
+            "second customer did not reserve all available stock")
+    marker = f"late payment capture oversold, purchase_id={failed_purchase}, sku_id={a1}, quantity=3, manual refund"
+    logs_before = subprocess.run(
+        ["docker", "compose", "logs", "--since=1m", "kremlin"], cwd=HERE,
+        capture_output=True, text=True, check=False,
+    ).stdout.count(marker)
+    oversold_state = approve_late(payment_id, failed_purchase)
+    require(oversold_state == "paid|captured|3|3|released", f"oversold late capture: {oversold_state}")
+    logs_after = subprocess.run(
+        ["docker", "compose", "logs", "--since=1m", "kremlin"], cwd=HERE,
+        capture_output=True, text=True, check=False,
+    ).stdout.count(marker)
+    require(logs_after == logs_before + 1, f"expected one oversell error log; before={logs_before}, after={logs_after}")
+    require(psql(f"SELECT status FROM purchase WHERE id={other_purchase}", tuples=True).strip() == "pending_payment",
+            "other customer's purchase changed during late capture")
+    print("T-CHK-14 PASS: late capture consumed available stock; oversold capture confirmed payment, preserved inventory, and logged once")
+
+
 # ---------------------------------------------------------------- driver
 def show(res):
     code, body, ms = res
@@ -381,8 +694,11 @@ def shift(args):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sp = ap.add_subparsers(dest="cmd", required=True)
-    for n in ("seed", "reset", "ids", "mpd-calls", "mpd-payments", "mpd-reset", "tchk08"):
+    for n in ("seed", "reset", "ids", "mpd-calls", "mpd-payments", "mpd-reset", "tchk08", "tchk11"):
         sp.add_parser(n)
+    p = sp.add_parser("tchk12"); p.add_argument("--expect-disabled", action="store_true")
+    sp.add_parser("tchk13")
+    sp.add_parser("tchk14")
     p = sp.add_parser("call"); p.add_argument("method"); p.add_argument("path"); p.add_argument("--as", dest="who"); p.add_argument("--json"); p.add_argument("-H", action="append")
     p = sp.add_parser("burst"); p.add_argument("method", nargs="?"); p.add_argument("path", nargs="?"); p.add_argument("--repeat", type=int, default=1)
     p.add_argument("--as", dest="who"); p.add_argument("--json"); p.add_argument("-H", action="append"); p.add_argument("--spec")
@@ -397,6 +713,10 @@ def main():
     if a.cmd == "seed": seed(a)
     elif a.cmd == "reset": reset(a)
     elif a.cmd == "tchk08": tchk08(a)
+    elif a.cmd == "tchk11": tchk11(a)
+    elif a.cmd == "tchk12": tchk12(a)
+    elif a.cmd == "tchk13": tchk13(a)
+    elif a.cmd == "tchk14": tchk14(a)
     elif a.cmd == "ids": print(json.dumps(fixtures(), indent=1))
     elif a.cmd == "call": show(api(a.method.upper(), a.path, a.who, a.json, hdrs(a.H)))
     elif a.cmd == "burst":

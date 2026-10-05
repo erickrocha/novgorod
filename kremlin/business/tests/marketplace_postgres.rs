@@ -199,7 +199,9 @@ async fn split_purchase_retries_isolation_snapshots_and_atomicity() {
     assert_eq!(count(&db, "coupon_redemption").await, 0);
     let stock = db.query_one_raw(Statement::from_string(DbBackend::Postgres, "SELECT sum(quantity)::bigint AS quantity, sum(reserved)::bigint AS reserved FROM sku_stock".to_string())).await.unwrap().unwrap();
     assert_eq!(stock.try_get::<i64>("", "quantity").unwrap(), 50);
-    assert_eq!(stock.try_get::<i64>("", "reserved").unwrap(), 0);
+    assert_eq!(stock.try_get::<i64>("", "reserved").unwrap(), 5);
+    assert_eq!(count(&db, "checkout_stock_reservation").await, 5);
+    assert_eq!(count(&db, "checkout_stock_reservation WHERE status='reserved'").await, 5);
 
     let replay = use_case
         .create_checkout(&buyer, "first", checkout(quote_id))
@@ -291,6 +293,16 @@ async fn split_purchase_retries_isolation_snapshots_and_atomicity() {
     db.execute_unprepared("ALTER TABLE orders DROP CONSTRAINT test_reject_second_seller;")
         .await
         .unwrap();
+    assert_eq!(count(&db, "checkout_stock_reservation").await, 10);
+    let stock = db
+        .query_one_raw(Statement::from_string(
+            DbBackend::Postgres,
+            "SELECT sum(reserved)::bigint AS reserved FROM sku_stock".to_string(),
+        ))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(stock.try_get::<i64>("", "reserved").unwrap(), 10);
 
     // Database constraints protect relationships even outside the use case.
     assert!(

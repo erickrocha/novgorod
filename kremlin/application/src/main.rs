@@ -393,6 +393,7 @@ async fn start() -> anyhow::Result<()> {
             .map(Arc::from),
     };
     crate::endpoints::checkout_payment_endpoint::spawn_payment_reconciliation(state.clone());
+    crate::endpoints::checkout_payment_endpoint::spawn_stock_expiry(state.clone());
 
     log::info!("Starting server...");
 

@@ -187,6 +187,16 @@ impl PurchaseUseCase {
                 {
                     return Err(PurchaseError::Validation("insufficient stock"));
                 }
+                let reserved = tx
+                    .execute_raw(Statement::from_sql_and_values(
+                        DbBackend::Postgres,
+                        "UPDATE sku_stock SET reserved=reserved+$3,updated_at=CURRENT_TIMESTAMP WHERE tenant_id=$1 AND sku_id=$2 AND quantity-reserved >= $3",
+                        [item.tenant_id.into(), item.sku_id.into(), item.quantity.into()],
+                    ))
+                    .await?;
+                if reserved.rows_affected() != 1 {
+                    return Err(PurchaseError::Validation("insufficient stock"));
+                }
             }
             for seller in &stored.sellers {
                 tx.query_one_raw(Statement::from_sql_and_values(
@@ -403,6 +413,38 @@ impl PurchaseUseCase {
                 }
             }
             for mut item in items {
+                if checkout.is_some() {
+                    let sku_id = *item.sku_id.as_ref();
+                    let quantity = *item.quantity.as_ref();
+                    let expires_at =
+                        chrono::Utc::now().naive_utc() + chrono::Duration::minutes(15);
+                    tx.execute_raw(Statement::from_sql_and_values(
+                        DbBackend::Postgres,
+                        "INSERT INTO checkout_stock_reservation (purchase_id,order_id,sku_id,tenant_id,quantity,status,expires_at) VALUES ($1,$2,$3,$4,$5,$6,$7)",
+                        [
+                            purchase.id.into(),
+                            order.id.into(),
+                            sku_id.into(),
+                            order.tenant_id.into(),
+                            quantity.into(),
+                            (if paid { "consumed" } else { "reserved" }).into(),
+                            expires_at.into(),
+                        ],
+                    ))
+                    .await?;
+                    if paid {
+                        let consumed = tx
+                            .execute_raw(Statement::from_sql_and_values(
+                                DbBackend::Postgres,
+                                "UPDATE sku_stock SET quantity=quantity-$3,reserved=reserved-$3,updated_at=CURRENT_TIMESTAMP WHERE tenant_id=$1 AND sku_id=$2 AND quantity >= $3 AND reserved >= $3",
+                                [order.tenant_id.into(), sku_id.into(), quantity.into()],
+                            ))
+                            .await?;
+                        if consumed.rows_affected() != 1 {
+                            return Err(PurchaseError::Validation("insufficient stock"));
+                        }
+                    }
+                }
                 item.order_id = Set(order.id);
                 OrderItemGateway::insert(&tx, item).await?;
             }

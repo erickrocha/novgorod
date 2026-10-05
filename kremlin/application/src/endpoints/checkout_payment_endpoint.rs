@@ -22,8 +22,8 @@ use business::{
         purchase_gateway::PurchaseGateway,
     },
     sea_orm::{
-        ActiveModelTrait, ColumnTrait, ConnectionTrait, DbBackend, EntityTrait, QueryFilter, Set,
-        Statement, TransactionTrait,
+        ActiveModelTrait, ColumnTrait, ConnectionTrait, DbBackend, DbErr, EntityTrait, QueryFilter,
+        Set, Statement, TransactionTrait,
     },
     use_cases::purchase_use_case::PurchaseUseCase,
 };
@@ -422,6 +422,120 @@ async fn apply_result(
         ))
         .await
         .map_err(|_| unavailable())?;
+        let stock_reservations = tx
+            .query_all_raw(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT id,tenant_id,sku_id,quantity FROM checkout_stock_reservation WHERE purchase_id=$1 AND status='reserved' FOR UPDATE",
+                [purchase.id.into()],
+            ))
+            .await
+            .map_err(|_| unavailable())?;
+        for reservation in stock_reservations {
+            let reservation_id: i64 = reservation
+                .try_get("", "id")
+                .map_err(|_| unavailable())?;
+            let tenant_id: i64 = reservation
+                .try_get("", "tenant_id")
+                .map_err(|_| unavailable())?;
+            let sku_id: i64 = reservation
+                .try_get("", "sku_id")
+                .map_err(|_| unavailable())?;
+            let quantity: i32 = reservation
+                .try_get("", "quantity")
+                .map_err(|_| unavailable())?;
+            let stock_update = if result.status == ProviderStatus::Captured {
+                "UPDATE sku_stock SET quantity=quantity-$3,reserved=reserved-$3,updated_at=CURRENT_TIMESTAMP WHERE tenant_id=$1 AND sku_id=$2 AND quantity >= $3 AND reserved >= $3"
+            } else {
+                "UPDATE sku_stock SET reserved=reserved-$3,updated_at=CURRENT_TIMESTAMP WHERE tenant_id=$1 AND sku_id=$2 AND reserved >= $3"
+            };
+            let changed = tx
+                .execute_raw(Statement::from_sql_and_values(
+                    DbBackend::Postgres,
+                    stock_update,
+                    [tenant_id.into(), sku_id.into(), quantity.into()],
+                ))
+                .await
+                .map_err(|_| unavailable())?;
+            if changed.rows_affected() != 1 {
+                return Err(unavailable());
+            }
+            let changed = tx
+                .execute_raw(Statement::from_sql_and_values(
+                    DbBackend::Postgres,
+                    "UPDATE checkout_stock_reservation SET status=$1 WHERE id=$2 AND status='reserved'",
+                    [
+                        (if result.status == ProviderStatus::Captured {
+                            "consumed"
+                        } else {
+                            "released"
+                        })
+                        .into(),
+                        reservation_id.into(),
+                    ],
+                ))
+                .await
+                .map_err(|_| unavailable())?;
+            if changed.rows_affected() != 1 {
+                return Err(unavailable());
+            }
+        }
+        if result.status == ProviderStatus::Captured {
+            let released_stock = tx
+                .query_all_raw(Statement::from_sql_and_values(
+                    DbBackend::Postgres,
+                    "SELECT id,tenant_id,sku_id,quantity FROM checkout_stock_reservation WHERE purchase_id=$1 AND status='released' ORDER BY tenant_id,sku_id FOR UPDATE",
+                    [purchase.id.into()],
+                ))
+                .await
+                .map_err(|_| unavailable())?;
+            for reservation in released_stock {
+                let reservation_id: i64 = reservation
+                    .try_get("", "id")
+                    .map_err(|_| unavailable())?;
+                let tenant_id: i64 = reservation
+                    .try_get("", "tenant_id")
+                    .map_err(|_| unavailable())?;
+                let sku_id: i64 = reservation
+                    .try_get("", "sku_id")
+                    .map_err(|_| unavailable())?;
+                let quantity: i32 = reservation
+                    .try_get("", "quantity")
+                    .map_err(|_| unavailable())?;
+                let consumed = tx
+                    .execute_raw(Statement::from_sql_and_values(
+                        DbBackend::Postgres,
+                        "UPDATE sku_stock SET quantity=quantity-$3,updated_at=CURRENT_TIMESTAMP WHERE tenant_id=$1 AND sku_id=$2 AND quantity-reserved >= $3",
+                        [tenant_id.into(), sku_id.into(), quantity.into()],
+                    ))
+                    .await
+                    .map_err(|_| unavailable())?;
+                if consumed.rows_affected() != 1 {
+                    log::error!(
+                        "late payment capture oversold, purchase_id={}, sku_id={}, quantity={}, manual refund",
+                        purchase.id,
+                        sku_id,
+                        quantity
+                    );
+                    continue;
+                }
+                let updated = tx
+                    .execute_raw(Statement::from_sql_and_values(
+                        DbBackend::Postgres,
+                        "UPDATE checkout_stock_reservation SET status='consumed' WHERE id=$1 AND status='released'",
+                        [reservation_id.into()],
+                    ))
+                    .await
+                    .map_err(|_| unavailable())?;
+                if updated.rows_affected() != 1 {
+                    log::error!(
+                        "late payment capture stock row not consumed, purchase_id={}, sku_id={}, quantity={}",
+                        purchase.id,
+                        sku_id,
+                        quantity
+                    );
+                }
+            }
+        }
         let rows = orders_entity::Entity::find()
             .filter(orders_entity::Column::PurchaseId.eq(purchase.id))
             .all(&tx)
@@ -519,8 +633,12 @@ pub async fn submit(
     if purchase.total_cents == 0 {
         return Ok(Json(state(id, &payment)));
     }
+    let attempt_is_in_flight_or_complete = matches!(
+        payment.status.as_str(),
+        "captured" | "authorized" | "pending"
+    ) || (payment.status == "pending_provider" && payment.attempt_key.is_some());
     if purchase.created_at + chrono::Duration::minutes(15) <= chrono::Utc::now().naive_utc()
-        && payment.attempt_key.is_none()
+        && !attempt_is_in_flight_or_complete
     {
         return Err(bad(
             StatusCode::CONFLICT,
@@ -568,6 +686,65 @@ pub async fn submit(
     {
         tx.commit().await.map_err(|_| unavailable())?;
         return Ok(Json(state(id, &current)));
+    }
+    let released_stock = tx
+        .query_all_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT id,tenant_id,sku_id,quantity FROM checkout_stock_reservation WHERE purchase_id=$1 AND status='released' ORDER BY tenant_id,sku_id FOR UPDATE",
+            [purchase.id.into()],
+        ))
+        .await
+        .map_err(|_| unavailable())?;
+    for reservation in released_stock {
+        let reservation_id: i64 = reservation.try_get("", "id").map_err(|_| unavailable())?;
+        let tenant_id: i64 = reservation
+            .try_get("", "tenant_id")
+            .map_err(|_| unavailable())?;
+        let sku_id: i64 = reservation
+            .try_get("", "sku_id")
+            .map_err(|_| unavailable())?;
+        let quantity: i32 = reservation
+            .try_get("", "quantity")
+            .map_err(|_| unavailable())?;
+        let stock = tx
+            .query_one_raw(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT id FROM sku_stock WHERE tenant_id=$1 AND sku_id=$2 FOR UPDATE",
+                [tenant_id.into(), sku_id.into()],
+            ))
+            .await
+            .map_err(|_| unavailable())?;
+        if stock.is_none() {
+            return Err(bad(
+                StatusCode::CONFLICT,
+                "Estoque insuficiente para nova tentativa de pagamento",
+            ));
+        }
+        let reserved = tx
+            .execute_raw(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "UPDATE sku_stock SET reserved=reserved+$3,updated_at=CURRENT_TIMESTAMP WHERE tenant_id=$1 AND sku_id=$2 AND quantity-reserved >= $3",
+                [tenant_id.into(), sku_id.into(), quantity.into()],
+            ))
+            .await
+            .map_err(|_| unavailable())?;
+        if reserved.rows_affected() != 1 {
+            return Err(bad(
+                StatusCode::CONFLICT,
+                "Estoque insuficiente para nova tentativa de pagamento",
+            ));
+        }
+        let updated = tx
+            .execute_raw(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "UPDATE checkout_stock_reservation SET status='reserved',expires_at=CURRENT_TIMESTAMP+interval '15 minutes' WHERE id=$1 AND status='released'",
+                [reservation_id.into()],
+            ))
+            .await
+            .map_err(|_| unavailable())?;
+        if updated.rows_affected() != 1 {
+            return Err(unavailable());
+        }
     }
     tx.execute_raw(Statement::from_sql_and_values(
         DbBackend::Postgres,
@@ -885,6 +1062,94 @@ pub fn spawn_payment_reconciliation(state: AppState) {
             interval.tick().await;
             if let Err(e) = reconcile_unresolved(&state).await {
                 log::debug!("Reconciliation: {e}");
+            }
+        }
+    });
+}
+
+async fn release_expired_stock_reservations(state: &AppState) -> Result<u64, DbErr> {
+    let tx = state.conn.begin().await?;
+    let payments = tx
+        .query_all_raw(Statement::from_string(
+            DbBackend::Postgres,
+            "SELECT p.id,p.purchase_id FROM payment p WHERE ((p.status='pending_provider' AND p.attempt_key IS NULL) OR p.status='failed') AND EXISTS (SELECT 1 FROM checkout_stock_reservation r WHERE r.purchase_id=p.purchase_id AND r.status='reserved' AND r.expires_at <= CURRENT_TIMESTAMP) ORDER BY p.id FOR UPDATE OF p SKIP LOCKED".to_string(),
+        ))
+        .await?;
+    let mut released_count = 0;
+    for payment in payments {
+        let purchase_id: i64 = payment.try_get("", "purchase_id")?;
+        let reservations = tx
+            .query_all_raw(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT id,tenant_id,sku_id,quantity FROM checkout_stock_reservation WHERE purchase_id=$1 AND status='reserved' AND expires_at <= CURRENT_TIMESTAMP ORDER BY id FOR UPDATE",
+                [purchase_id.into()],
+            ))
+            .await?;
+        for reservation in reservations {
+            let reservation_id: i64 = reservation.try_get("", "id")?;
+            let tenant_id: i64 = reservation.try_get("", "tenant_id")?;
+            let sku_id: i64 = reservation.try_get("", "sku_id")?;
+            let quantity: i32 = reservation.try_get("", "quantity")?;
+            let stock = tx
+                .execute_raw(Statement::from_sql_and_values(
+                    DbBackend::Postgres,
+                    "UPDATE sku_stock SET reserved=reserved-$3,updated_at=CURRENT_TIMESTAMP WHERE tenant_id=$1 AND sku_id=$2 AND reserved >= $3",
+                    [tenant_id.into(), sku_id.into(), quantity.into()],
+                ))
+                .await?;
+            if stock.rows_affected() != 1 {
+                return Err(DbErr::Custom(format!(
+                    "stock reservation release mismatch, purchase_id={purchase_id}, sku_id={sku_id}"
+                )));
+            }
+            let reservation_update = tx
+                .execute_raw(Statement::from_sql_and_values(
+                    DbBackend::Postgres,
+                    "UPDATE checkout_stock_reservation SET status='released' WHERE id=$1 AND status='reserved'",
+                    [reservation_id.into()],
+                ))
+                .await?;
+            if reservation_update.rows_affected() != 1 {
+                return Err(DbErr::Custom(format!(
+                    "stock reservation status mismatch, purchase_id={purchase_id}, sku_id={sku_id}"
+                )));
+            }
+            released_count += 1;
+        }
+        tx.execute_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "UPDATE checkout_coupon_reservation SET status='released' WHERE purchase_id=$1 AND status='reserved' AND expires_at <= CURRENT_TIMESTAMP",
+            [purchase_id.into()],
+        ))
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(released_count)
+}
+
+pub fn spawn_stock_expiry(state: AppState) {
+    let enabled = match std::env::var("STOCK_EXPIRY_JOB_ENABLED") {
+        Ok(value) => match value.trim().parse::<bool>() {
+            Ok(enabled) => enabled,
+            Err(_) => {
+                log::warn!("invalid STOCK_EXPIRY_JOB_ENABLED value; defaulting to enabled");
+                true
+            }
+        },
+        Err(_) => true,
+    };
+    if !enabled {
+        log::info!("Stock expiry job disabled by STOCK_EXPIRY_JOB_ENABLED");
+        return;
+    }
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+        loop {
+            interval.tick().await;
+            match release_expired_stock_reservations(&state).await {
+                Ok(count) if count > 0 => log::info!("Expired stock reservations released: {count}"),
+                Ok(_) => {}
+                Err(e) => log::warn!("Stock expiry job failed: {e}"),
             }
         }
     });

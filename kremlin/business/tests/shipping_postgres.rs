@@ -382,6 +382,30 @@ VALUES (gen_random_uuid(), 1, 'FREE', 'PERCENTAGE', 100, true, now(), now());
     assert_eq!(created.detail.purchase.total_cents, 0);
     assert_eq!(created.detail.purchase.status, "paid");
     assert_eq!(created.detail.orders.len(), 1);
+    let stock = db
+        .query_all_raw(sea_orm::Statement::from_string(
+            sea_orm::DbBackend::Postgres,
+            "SELECT quantity,reserved FROM sku_stock WHERE tenant_id=1 ORDER BY sku_id".to_string(),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(stock.len(), 3);
+    assert!(stock.iter().all(|row| {
+        row.try_get::<i32>("", "quantity").unwrap() == 9
+            && row.try_get::<i32>("", "reserved").unwrap() == 0
+    }));
+    assert_eq!(
+        db.query_one_raw(sea_orm::Statement::from_string(
+            sea_orm::DbBackend::Postgres,
+            "SELECT count(*) AS n FROM checkout_stock_reservation WHERE purchase_id=1 AND status='consumed'".to_string(),
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get::<i64>("", "n")
+        .unwrap(),
+        3
+    );
     let left = db
         .query_all_raw(sea_orm::Statement::from_string(
             sea_orm::DbBackend::Postgres,

@@ -22,12 +22,16 @@ Runs the kremlin app itself on the disposable database and drives it over HTTP. 
 docker compose up -d --build --wait kremlin mpd   # app on :8080, Mercado Pago double on :8099, Postgres on :5433
 ./kit.py seed                                      # fixtures E1 (once per fresh stack)
 ./kit.py tchk08                                    # Customer auth-layer regression: marketplace, store mode, coupon payment
+./kit.py tchk11                                    # Capture consumes and failure releases stock, including replays
+./kit.py tchk12                                    # Expired stock is released; in-flight payments are preserved
+./kit.py tchk13                                    # Payment window and stock re-reservation on retry
+./kit.py tchk14                                    # Late capture consumes available stock or logs oversell
 ./kit.py --help                                    # every command, with examples in the header of kit.py
 ./smoke.py                                         # up, seed, login, public GET, quote, purchase, payment, webhook, reset, down -v
 docker compose down -v                             # always tear down; the database is gone with it
 ```
 
-Stack (`docker-compose.yml`): `kremlin` runs `cargo run -p application --bin kremlin` (migrations and the SysAdmin seed happen at boot; healthy when the port answers; the first start compiles for a few minutes, `down -v` also drops the cargo cache volumes), `mpd` is `mpd.py` in `python:3-alpine`. Every env var the app needs is set in the compose file with a made-up local-only value (JWT secrets, SysAdmin password, `MP_*`, `GATEWAY_TOKEN`); override with `TEST_ACCESS_TOKEN_SECRET`, `TEST_REFRESH_TOKEN_SECRET`, `TEST_SYSADMIN_PASSWORD`, `TEST_MP_WEBHOOK_SECRET`, `TEST_GATEWAY_TOKEN`, `TEST_KREMLIN_PORT`, `TEST_MPD_PORT`, `TEST_KREMLIN_LOG`. No `.env` file is read. SQS, S3 and the shipping/payment encryption keys are not configured (the consumer is off, tenants use fixed shipping, the provider comes from the `MP_*` variables).
+Stack (`docker-compose.yml`): `kremlin` runs `cargo run -p application --bin kremlin` (migrations and the SysAdmin seed happen at boot; healthy when the port answers; the first start compiles for a few minutes, `down -v` also drops the cargo cache volumes), `mpd` is `mpd.py` in `python:3-alpine`. Every env var the app needs is set in the compose file with a made-up local-only value (JWT secrets, SysAdmin password, `MP_*`, `GATEWAY_TOKEN`); override with `TEST_ACCESS_TOKEN_SECRET`, `TEST_REFRESH_TOKEN_SECRET`, `TEST_SYSADMIN_PASSWORD`, `TEST_MP_WEBHOOK_SECRET`, `TEST_GATEWAY_TOKEN`, `TEST_KREMLIN_PORT`, `TEST_MPD_PORT`, `TEST_KREMLIN_LOG`, `TEST_STOCK_EXPIRY_JOB_ENABLED`. No `.env` file is read. SQS, S3 and the shipping/payment encryption keys are not configured (the consumer is off, tenants use fixed shipping, the provider comes from the `MP_*` variables).
 
 ### Fixtures (`kit.py seed`, test-cases.md environment E1)
 
@@ -44,6 +48,14 @@ Stack (`docker-compose.yml`): `kremlin` runs `cargo run -p application --bin kre
 `./kit.py ids` prints the ids. Names work as `{{A1}}`, `{{AD1}}`, `{{T1}}`, `{{C1}}`, `{{CP10}}` in paths, headers and bodies. `./kit.py reset` returns to the seeded state between cases: truncates quotes, purchases, orders, payments, reservations, carts and coupons (ids restart at 1), restores stock to 10/0, recreates the coupons, resets the double. Users, tenants, SKUs and addresses stay.
 
 `./kit.py tchk08` resets the disposable data and runs the T-CHK-08 regression through the real HTTP server and authentication middleware. It verifies zero-total coupon purchases as C1 without a tenant header and with `x-tenant-id: 1`, then confirms an approved CP10 payment as C1; each result is checked against Postgres.
+
+`./kit.py tchk11` resets the disposable data and verifies through HTTP/Postgres that an approved A1 x3 payment consumes its stock reservation once, while a rejected payment releases its reservation once across status and signed webhook replays.
+
+`./kit.py tchk12` verifies expired reservations are released only for `pending_provider` payments without an attempt or failed payments; a `pending` payment stays reserved. Run with `TEST_STOCK_EXPIRY_JOB_ENABLED=false` when starting Compose, then `./kit.py tchk12 --expect-disabled`, to verify the switch prevents releases.
+
+`./kit.py tchk13` verifies TC-25: attempts after the 15-minute window are refused without MPD calls; retries inside the window re-reserve stock before charging; insufficient stock returns 409 without changing the failed payment or released reservation; pending attempts remain in flight.
+
+`./kit.py tchk14` verifies late approved webhooks: released stock is consumed if available; otherwise the payment is confirmed, inventory stays unchanged, and one oversell error is logged with purchase, SKU, and quantity.
 
 ### Driving
 
