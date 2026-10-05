@@ -1,5 +1,38 @@
 use super::*;
 
+#[tokio::test]
+async fn quote_rejects_non_brazilian_delivery_before_catalog_queries() {
+    use sea_orm::{DbBackend, MockDatabase};
+
+    let db = MockDatabase::new(DbBackend::Postgres).into_connection();
+    let request = QuoteRequest {
+        items: vec![PurchaseItemInput {
+            sku_id: 1,
+            quantity: 1,
+        }],
+        address_id: None,
+        shipping_address: Some(AddressInput {
+            recipient: "Buyer".into(),
+            address_line1: "Street 1".into(),
+            address_line2: None,
+            locality: "City".into(),
+            administrative_area: "SP".into(),
+            postal_code: "01001000".into(),
+            country_code: "AR".into(),
+        }),
+        coupons: vec![],
+    };
+
+    let error = CheckoutQuoteUseCase::calculate(&db, 1, &request)
+        .await
+        .unwrap_err();
+
+    assert!(matches!(
+        error,
+        PurchaseError::Validation("Brazilian delivery address required")
+    ));
+}
+
 #[test]
 fn selection_recalculates_totals_and_rejects_invalid_sets_atomically() {
     let mut quote: QuoteResult = serde_json::from_value(serde_json::json!({

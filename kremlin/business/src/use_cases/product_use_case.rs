@@ -106,3 +106,7 @@ impl ProductUseCase {
         Some(())
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/use_cases/product.rs"]
+mod tests;

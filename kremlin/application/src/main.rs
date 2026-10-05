@@ -474,6 +474,99 @@ pub fn main() {
 #[cfg(test)]
 mod shipping_api_tests {
     use super::*;
+    use business::domain::enums::Role;
+
+    #[test]
+    fn customer_token_payload_has_no_tenant_binding() {
+        let payload = endpoints::json::access_token_json::AccessTokenJson {
+            access_token: "test-token".into(),
+            token_type: "Bearer".into(),
+            expire_in: 3600,
+            refresh_token: None,
+            email: "customer@example.test".into(),
+            uuid: "customer-uuid".into(),
+            name: "Customer".into(),
+            user_id: 7,
+            role: Role::Customer,
+            tenant_id: None,
+            first_login: false,
+        };
+        let json = serde_json::to_value(payload).unwrap();
+        assert_eq!(json["role"], "Customer");
+        assert!(json["tenantId"].is_null());
+    }
+
+    #[test]
+    fn public_catalog_prices_serialize_as_integer_cents() {
+        let product = endpoints::json::web_store_json::WebStoreProductJson {
+            id: 1,
+            uuid: "product-uuid".into(),
+            name: "Test Product".into(),
+            slug: "test-product".into(),
+            description: None,
+            brand: None,
+            price_cents: Some(1099),
+            compare_at_price_cents: Some(1299),
+            primary_image_url: None,
+            primary_image_alt: None,
+            category_slugs: vec![],
+            rating: None,
+            review_count: None,
+            is_featured: false,
+            is_new: false,
+            seller: None,
+        };
+        let json = serde_json::to_value(product).unwrap();
+        assert_eq!(json["priceCents"].as_i64(), Some(1099));
+        assert_eq!(json["compareAtPriceCents"].as_i64(), Some(1299));
+        assert!(json["price"].is_null());
+    }
+
+    #[test]
+    fn c001_openapi_baseline_exposes_route_and_public_security_gaps() {
+        let doc = serde_json::to_value(ApiDoc::openapi()).unwrap();
+        let documented_products = [
+            ("/api/public/products", "get"),
+            ("/api/public/products/query", "get"),
+            ("/api/public/products/{slug}", "get"),
+        ];
+        for (path, method) in documented_products {
+            assert!(
+                doc["paths"][path][method].is_object(),
+                "missing OpenAPI operation {method} {path}"
+            );
+        }
+
+        for path in ["/api/public/products/query", "/api/public/products/{slug}"] {
+            assert_eq!(
+                doc["paths"][path]["get"]["security"][0]["bearer_auth"].is_array(),
+                true,
+                "record the current public-route bearer annotation on {path}"
+            );
+        }
+
+        for path in [
+            "/login",
+            "/signup",
+            "/customers/me",
+            "/customers/me/tax-id",
+            "/api/public/categories",
+            "/api/public/categories/paged",
+            "/api/public/skus",
+            "/api/public/skus/paged",
+            "/api/public/catalog-attributes",
+            "/api/public/product-categories",
+            "/api/public/sku-attributes",
+            "/api/public/sku-attribute-values",
+            "/api/public/sku-stocks",
+        ] {
+            assert!(
+                doc["paths"][path].is_null(),
+                "record current undocumented route {path}"
+            );
+        }
+    }
+
     #[test]
     fn shipping_endpoints_and_write_only_secrets_are_documented() {
         let doc = serde_json::to_value(ApiDoc::openapi()).unwrap();
@@ -483,6 +576,161 @@ mod shipping_api_tests {
         assert_eq!(
             doc["components"]["schemas"]["CredentialsUpdate"]["properties"]["apiAccessCode"]["writeOnly"],
             true
+        );
+    }
+}
+
+#[cfg(test)]
+mod c001_auth_middleware_tests {
+    use super::*;
+    use axum::{
+        Extension, Router,
+        body::Body,
+        http::{Request, StatusCode},
+        middleware,
+        routing::get,
+    };
+    use business::{
+        domain::{enums::Role, shipping::ShippingOption, user::User},
+        gateway::shipping_provider_gateway::{
+            ShippingProviderError, ShippingProviderGateway, ShippingRequest,
+        },
+        sea_orm::{DatabaseBackend, DbConn, MockDatabase},
+    };
+    use chrono::Utc;
+    use entity::user_entity;
+    use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
+    use crate::authentication::authentication_middleware::authentication;
+    use std::sync::Arc;
+    use tower::ServiceExt;
+
+    const TEST_SECRET: &str = "c001-test-secret-long-enough-for-hs512-auth-middleware-tests";
+
+    struct UnusedShippingProvider;
+
+    #[business::sea_orm::prelude::async_trait::async_trait]
+    impl ShippingProviderGateway for UnusedShippingProvider {
+        async fn quote(
+            &self,
+            _request: ShippingRequest,
+        ) -> Result<Vec<ShippingOption>, ShippingProviderError> {
+            Err(ShippingProviderError::Unavailable)
+        }
+    }
+
+    fn state(db: DbConn) -> AppState {
+        let storage_client = aws_sdk_s3::Client::from_conf(
+            aws_sdk_s3::Config::builder()
+                .behavior_version(aws_config::BehaviorVersion::latest())
+                .build(),
+        );
+        AppState {
+            conn: Arc::new(db),
+            storage: Arc::new(business::gateway::storage_gateway::StorageGateway::new(
+                "unused-test-bucket".into(),
+                "http://localhost.invalid".into(),
+                storage_client,
+            )),
+            shipping: Arc::new(UnusedShippingProvider),
+            shipping_keys: Arc::new(infrastructure::shipping_credentials::ShippingKeyRing::default()),
+            payment_keys: Arc::new(infrastructure::payment_credentials::PaymentKeyRing::default()),
+            gateway_token: None,
+        }
+    }
+
+    fn user_model() -> user_entity::Model {
+        let now = Utc::now().naive_utc();
+        user_entity::Model {
+            id: 42,
+            uuid: uuid::Uuid::new_v4(),
+            name: Some("C001 Customer".into()),
+            email: "c001@example.test".into(),
+            password: String::new(),
+            first_login: false,
+            enabled: true,
+            tenant_id: None,
+            role: "Customer".into(),
+            blocked_reason: None,
+            created_at: now,
+            created_by: None,
+            updated_at: now,
+            updated_by: None,
+        }
+    }
+
+    fn token(expires_at: i64) -> String {
+        let claims = business::domain::access_token::Claims {
+            sub: "c001@example.test".into(),
+            exp: expires_at,
+            uuid: "c001-user".into(),
+            name: "C001 Customer".into(),
+            user_id: 42,
+            role: Role::Customer,
+            tenant_id: None,
+        };
+        encode(
+            &Header::new(Algorithm::HS512),
+            &claims,
+            &EncodingKey::from_secret(TEST_SECRET.as_bytes()),
+        )
+        .unwrap()
+    }
+
+    fn request(authorization: Option<&str>) -> Request<Body> {
+        let mut builder = Request::builder().uri("/protected");
+        if let Some(value) = authorization {
+            builder = builder.header("authorization", value);
+        }
+        builder.body(Body::empty()).unwrap()
+    }
+
+    #[tokio::test]
+    async fn authentication_middleware_characterizes_bearer_status_and_expiry_gap() {
+        unsafe { std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET); }
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![user_model()], vec![user_model()]])
+            .into_connection();
+        let app = Router::new()
+            .route(
+                "/protected",
+                get(|Extension(user): Extension<User>| async move { user.role.to_string() }),
+            )
+            .route_layer(middleware::from_fn_with_state(state(db), authentication));
+
+        assert_eq!(
+            app.clone().oneshot(request(None)).await.unwrap().status(),
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            app.clone()
+                .oneshot(request(Some("Basic not-a-bearer")))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            app.clone()
+                .oneshot(request(Some("Bearer malformed-token")))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            app.clone()
+                .oneshot(request(Some(&format!("Bearer {}", token(Utc::now().timestamp() - 60)))))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::OK
+        );
+        assert_eq!(
+            app.oneshot(request(Some(&format!("Bearer {}", token(Utc::now().timestamp() + 3600)))))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::OK
         );
     }
 }

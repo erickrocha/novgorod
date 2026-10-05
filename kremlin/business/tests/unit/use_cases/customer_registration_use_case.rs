@@ -149,6 +149,32 @@
     }
 
     #[tokio::test]
+    async fn customer_registration_preserves_tenantless_customer_identity() {
+        let mut user = build_test_user("marketplace@example.com");
+        user.tenant_id = None;
+        let mut customer = build_test_customer(Some("52998224725"));
+        customer.tenant_id = None;
+        let mut user_res = mock_user_model(3, "marketplace@example.com");
+        user_res.tenant_id = None;
+        let mut customer_res = mock_customer_model(30, Some(3), Some("52998224725"));
+        customer_res.tenant_id = None;
+
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([Vec::<user_entity::Model>::new()])
+            .append_query_results([Vec::<customer_entity::Model>::new()])
+            .append_query_results([vec![user_res]])
+            .append_query_results([vec![customer_res]])
+            .into_connection();
+
+        let result = CustomerRegistrationUseCase::execute(&db, user, customer, None)
+            .await
+            .expect("marketplace customer registration should succeed without tenant binding");
+
+        assert_eq!(result.user_id, Some(3));
+        assert_eq!(result.tenant_id, None);
+    }
+
+    #[tokio::test]
     async fn test_registration_success_with_address() {
         let user = build_test_user("jane@example.com");
         let customer = build_test_customer(Some("12345678901"));

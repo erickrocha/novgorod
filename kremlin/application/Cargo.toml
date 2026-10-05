@@ -43,3 +43,5 @@ path = "src/main.rs"
 
 [dev-dependencies]
 business = { path = "../business", features = ["mock"] }
+tower = { version = "0.5.3", features = ["util"] }
+jsonwebtoken = { version = "11.0.0", features = ["rust_crypto"] }
