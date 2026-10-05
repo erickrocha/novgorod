@@ -21,6 +21,7 @@ Runs the kremlin app itself on the disposable database and drives it over HTTP. 
 ```
 docker compose up -d --build --wait kremlin mpd   # app on :8080, Mercado Pago double on :8099, Postgres on :5433
 ./kit.py seed                                      # fixtures E1 (once per fresh stack)
+./kit.py tchk08                                    # Customer auth-layer regression: marketplace, store mode, coupon payment
 ./kit.py --help                                    # every command, with examples in the header of kit.py
 ./smoke.py                                         # up, seed, login, public GET, quote, purchase, payment, webhook, reset, down -v
 docker compose down -v                             # always tear down; the database is gone with it
@@ -41,6 +42,8 @@ Stack (`docker-compose.yml`): `kremlin` runs `cargo run -p application --bin kre
 | U1 (TenantUser T1, `u1`, same password as S1) | **SQL**: no API creates a TenantUser (`POST /user` as an owner forces TenantOwner) |
 
 `./kit.py ids` prints the ids. Names work as `{{A1}}`, `{{AD1}}`, `{{T1}}`, `{{C1}}`, `{{CP10}}` in paths, headers and bodies. `./kit.py reset` returns to the seeded state between cases: truncates quotes, purchases, orders, payments, reservations, carts and coupons (ids restart at 1), restores stock to 10/0, recreates the coupons, resets the double. Users, tenants, SKUs and addresses stay.
+
+`./kit.py tchk08` resets the disposable data and runs the T-CHK-08 regression through the real HTTP server and authentication middleware. It verifies zero-total coupon purchases as C1 without a tenant header and with `x-tenant-id: 1`, then confirms an approved CP10 payment as C1; each result is checked against Postgres.
 
 ### Driving
 

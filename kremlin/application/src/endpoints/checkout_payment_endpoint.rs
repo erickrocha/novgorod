@@ -443,16 +443,51 @@ async fn apply_result(
             .map_err(|_| unavailable())?;
             if result.status == ProviderStatus::Captured
                 && let Some(coupon_id) = order.coupon_id {
-                    coupon_redemption_entity::ActiveModel {
+                    let savepoint = match tx.begin().await {
+                        Ok(savepoint) => savepoint,
+                        Err(e) => {
+                            log::warn!(
+                                "coupon redemption savepoint unavailable, purchase_id={}, order_id={}: {e}",
+                                purchase.id,
+                                order.id
+                            );
+                            continue;
+                        }
+                    };
+                    let redemption = coupon_redemption_entity::ActiveModel {
                         tenant_id: Set(Some(order.tenant_id)),
                         coupon_id: Set(coupon_id),
                         order_id: Set(order.id),
                         customer_id: Set(purchase.customer_id),
                         ..Default::default()
                     }
-                    .insert(&tx)
-                    .await
-                    .map_err(|_| unavailable())?;
+                    .insert(&savepoint)
+                    .await;
+                    match redemption {
+                        Ok(_) => {
+                            if let Err(e) = savepoint.commit().await {
+                                log::warn!(
+                                    "coupon redemption savepoint release failed, purchase_id={}, order_id={}: {e}",
+                                    purchase.id,
+                                    order.id
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            log::warn!(
+                                "coupon redemption insert failed, purchase_id={}, order_id={}: {e}",
+                                purchase.id,
+                                order.id
+                            );
+                            if let Err(e) = savepoint.rollback().await {
+                                log::error!(
+                                    "coupon redemption savepoint rollback failed, purchase_id={}, order_id={}: {e}",
+                                    purchase.id,
+                                    order.id
+                                );
+                            }
+                        }
+                    }
                 }
         }
         if result.status == ProviderStatus::Captured {

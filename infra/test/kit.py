@@ -216,6 +216,80 @@ def reset(args):
     print("reset: purchases, quotes, carts, coupons, reservations cleared; stock restored; coupons recreated; MPD reset")
 
 
+def tchk08(args):
+    f = fixtures()
+    if not f:
+        sys.exit("no fixtures; run `seed` first")
+    reset(args)
+    c1, t1, a1 = f["customers"]["C1"], f["tenants"]["T1"], f["skus"]["A1"]
+
+    def quote(code, address, headers=None):
+        return api("POST", "/checkout/quotes", "c1", dict(
+            items=[dict(skuId=a1, quantity=1)], addressId=f["addresses"][address],
+            coupons=[dict(tenantId=t1, code=code)],
+        ), headers)
+
+    def purchase(quote_id, key, headers=None):
+        return api("POST", "/purchases", "c1", dict(
+            quoteId=quote_id, email=USERS["c1"][0], phone="11988887777",
+        ), {"Idempotency-Key": key, **(headers or {})})
+
+    def require(condition, message):
+        if not condition:
+            sys.exit(f"T-CHK-08 failed: {message}")
+
+    code, body, _ = quote("CP100", "AD3")
+    require(code == 201 and body["totalCents"] == 0 and body["discountCents"] == 5000,
+            f"marketplace quote: HTTP {code} {body}")
+    code, body, _ = purchase(body["id"], "tchk08-marketplace")
+    require(code == 201 and body["status"] == "paid", f"marketplace purchase: HTTP {code} {body}")
+    counts = psql(
+        "SELECT (SELECT count(*) FROM coupon_redemption WHERE order_id IN "
+        f"(SELECT id FROM orders WHERE purchase_id={body['id']}) AND tenant_id={t1} "
+        f"AND coupon_id={f['coupons']['CP100']} AND customer_id={c1}), "
+        f"(SELECT count(*) FROM checkout_coupon_reservation WHERE purchase_id={body['id']} "
+        f"AND coupon_id={f['coupons']['CP100']} AND status='redeemed')",
+        tuples=True,
+    ).strip()
+    require(counts == "1|1", f"marketplace redemption/reservation: {counts}")
+
+    store_headers = {"x-tenant-id": str(t1)}
+    code, body, _ = quote("CP100b", "AD3", store_headers)
+    require(code == 201 and body["totalCents"] == 0, f"store-mode quote: HTTP {code} {body}")
+    code, body, _ = purchase(body["id"], "tchk08-store", store_headers)
+    require(code == 201 and body["status"] == "paid", f"store-mode purchase: HTTP {code} {body}")
+    counts = psql(
+        "SELECT (SELECT count(*) FROM coupon_redemption WHERE order_id IN "
+        f"(SELECT id FROM orders WHERE purchase_id={body['id']}) AND tenant_id={t1} "
+        f"AND coupon_id={f['coupons']['CP100b']} AND customer_id={c1}), "
+        f"(SELECT count(*) FROM checkout_coupon_reservation WHERE purchase_id={body['id']} "
+        f"AND coupon_id={f['coupons']['CP100b']} AND status='redeemed')",
+        tuples=True,
+    ).strip()
+    require(counts == "1|1", f"store-mode redemption/reservation: {counts}")
+
+    code, body, _ = quote("CP10", "AD1")
+    require(code == 201 and body["totalCents"] > 0, f"payment quote: HTTP {code} {body}")
+    code, body, _ = purchase(body["id"], "tchk08-payment")
+    require(code == 201 and body["status"] == "pending_payment", f"pending purchase: HTTP {code} {body}")
+    http("POST", "/_mpd/config", {"mode": "approved"}, base=MPD)
+    code, body, _ = api("POST", f"/purchases/{body['id']}/payments/submit", "c1", dict(
+        token="tok-tchk08-approved", paymentMethodId="visa", installments=1,
+    ))
+    require(code == 200 and body["status"] == "captured", f"Customer payment confirmation: HTTP {code} {body}")
+    counts = psql(
+        "SELECT (SELECT count(*) FROM coupon_redemption WHERE order_id IN "
+        f"(SELECT id FROM orders WHERE purchase_id={body['purchaseId']}) AND tenant_id={t1} "
+        f"AND coupon_id={f['coupons']['CP10']} AND customer_id={c1}), "
+        f"(SELECT count(*) FROM checkout_coupon_reservation WHERE purchase_id={body['purchaseId']} "
+        f"AND coupon_id={f['coupons']['CP10']} AND status='redeemed'), "
+        f"(SELECT count(*) FROM payment WHERE purchase_id={body['purchaseId']} AND status='captured')",
+        tuples=True,
+    ).strip()
+    require(counts == "1|1|1", f"payment redemption/reservation/capture: {counts}")
+    print("T-CHK-08 PASS: Customer marketplace and store-mode zero-total purchases, and approved coupon payment confirmed through HTTP auth")
+
+
 # ---------------------------------------------------------------- driver
 def show(res):
     code, body, ms = res
@@ -307,7 +381,7 @@ def shift(args):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sp = ap.add_subparsers(dest="cmd", required=True)
-    for n in ("seed", "reset", "ids", "mpd-calls", "mpd-payments", "mpd-reset"):
+    for n in ("seed", "reset", "ids", "mpd-calls", "mpd-payments", "mpd-reset", "tchk08"):
         sp.add_parser(n)
     p = sp.add_parser("call"); p.add_argument("method"); p.add_argument("path"); p.add_argument("--as", dest="who"); p.add_argument("--json"); p.add_argument("-H", action="append")
     p = sp.add_parser("burst"); p.add_argument("method", nargs="?"); p.add_argument("path", nargs="?"); p.add_argument("--repeat", type=int, default=1)
@@ -322,6 +396,7 @@ def main():
     a = ap.parse_args()
     if a.cmd == "seed": seed(a)
     elif a.cmd == "reset": reset(a)
+    elif a.cmd == "tchk08": tchk08(a)
     elif a.cmd == "ids": print(json.dumps(fixtures(), indent=1))
     elif a.cmd == "call": show(api(a.method.upper(), a.path, a.who, a.json, hdrs(a.H)))
     elif a.cmd == "burst":
