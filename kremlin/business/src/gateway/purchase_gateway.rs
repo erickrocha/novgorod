@@ -64,7 +64,7 @@ impl PurchaseGateway {
             .filter(product_entity::Column::Active.eq(true))
             .one(db)
             .await?
-            .ok_or(PurchaseError::Validation("product unavailable"))?;
+            .ok_or(PurchaseError::Validation("SKU unavailable"))?;
         if sku.tenant_id.is_none() || sku.tenant_id != product.tenant_id || sku.price_cents < 0 {
             return Err(PurchaseError::Validation("invalid catalog seller or price"));
         }
@@ -297,5 +297,46 @@ impl PurchaseGateway {
             items: PurchaseEntityMapper::from_models(models),
             total,
         })
+    }
+}
+
+#[cfg(test)]
+mod tc03_tests {
+    use super::*;
+    use sea_orm::{DbBackend, MockDatabase};
+
+    #[tokio::test]
+    async fn inactive_product_is_reported_as_sku_unavailable() {
+        let now = chrono::Utc::now().naive_utc();
+        let sku = sku_entity::Model {
+            id: 9,
+            uuid: uuid::Uuid::new_v4(),
+            tenant_id: Some(1),
+            product_id: 3,
+            code: "W1".into(),
+            variant_key: "750ml".into(),
+            price_cents: 1000,
+            compare_at_price_cents: None,
+            weight_g: Some(750),
+            width_mm: Some(80),
+            height_mm: Some(300),
+            length_mm: Some(80),
+            active: true,
+            created_at: now,
+            created_by: None,
+            updated_at: now,
+            updated_by: None,
+        };
+        let db = MockDatabase::new(DbBackend::Postgres)
+            .append_query_results([vec![sku]])
+            .append_query_results([Vec::<product_entity::Model>::new()])
+            .into_connection();
+
+        let result = PurchaseGateway::catalog(&db, 9).await;
+
+        assert!(matches!(
+            result,
+            Err(PurchaseError::Validation("SKU unavailable"))
+        ));
     }
 }

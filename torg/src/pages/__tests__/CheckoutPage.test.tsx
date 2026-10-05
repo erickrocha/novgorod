@@ -413,5 +413,50 @@ describe('CheckoutPage', () => {
       expect(screen.getAllByText(/208,00/).length).toBeGreaterThan(0);
     });
   });
+
+  it('explains a required variant and quotes only after the buyer selects one', async () => {
+    const multipleVariantProduct = {
+      ...mockCatalogProduct,
+      skus: [
+        { id: 101, code: 'SKU-101', variantKey: 'V1', priceCents: 10000, active: true, stock: 20 },
+        { id: 102, code: 'SKU-102', variantKey: 'V2', priceCents: 11000, active: true, stock: 20 },
+      ],
+    };
+    vi.spyOn(authService, 'me').mockResolvedValue(mockCustomer);
+    vi.spyOn(catalogService, 'getProductBySlug').mockResolvedValue(multipleVariantProduct as any);
+    vi.spyOn(checkoutService, 'quote').mockResolvedValue(mockQuote);
+
+    const store = createTestStore({
+      auth: { token: 'mock-jwt-token', user: null, customer: null, isAuthenticated: true, loading: false },
+      cart: { items: [mockCartItem], isOpen: false },
+    });
+
+    render(
+      <Provider store={store}>
+        <MemoryRouter initialEntries={['/checkout']}>
+          <Routes>
+            <Route path="/checkout" element={<CheckoutPage />} />
+          </Routes>
+        </MemoryRouter>
+      </Provider>
+    );
+
+    const variant = await screen.findByRole('combobox', { name: 'Variante de Vinho Tinto Reserva' });
+    expect(variant).toHaveValue('');
+    expect(await screen.findByText('Confira CPF, contato, endereço e variantes dos produtos.')).toBeInTheDocument();
+    const calculateButton = screen.getByRole('button', { name: /Calcular total com frete/i });
+    expect(calculateButton).toBeDisabled();
+    expect(checkoutService.quote).not.toHaveBeenCalled();
+
+    fireEvent.change(variant, { target: { value: '102' } });
+    await waitFor(() => expect(calculateButton).toBeEnabled());
+    expect(screen.queryByText('Confira CPF, contato, endereço e variantes dos produtos.')).not.toBeInTheDocument();
+    fireEvent.click(calculateButton);
+
+    await waitFor(() => expect(checkoutService.quote).toHaveBeenCalled());
+    expect(vi.mocked(checkoutService.quote).mock.calls[0][0].items).toEqual([
+      { skuId: 102, quantity: 2 },
+    ]);
+  });
 });
 

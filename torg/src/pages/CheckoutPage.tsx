@@ -160,6 +160,10 @@ export const CheckoutPage = () => {
     : Boolean(addressId && completeSavedAddresses.some(a => Number(a.id) === addressId));
 
   const skusReady = items.length > 0 && items.every(item => skuOptions[item.id]?.some(s => s.id === skuSelection[item.id]));
+  const needsVariantSelection = items.some(item => {
+    const options = skuOptions[item.id] || [];
+    return options.length > 1 && !options.some(sku => sku.id === skuSelection[item.id]);
+  });
   const sellerIds = Array.from(new Set(items.map(item => item.product.seller?.id).filter((id): id is number => Boolean(id))));
   const sellerName = (id: number) => items.find(item => item.product.seller?.id === id)?.product.seller?.businessName || `Vendedor ${id}`;
   const resetQuote = () => {
@@ -589,6 +593,11 @@ export const CheckoutPage = () => {
                     {busy ? 'Calculando frete e cupons…' : 'Calcular total com frete'}
                   </button>
                 </div>
+                {needsVariantSelection && (
+                  <p role="status" className="text-sm text-amber-700" aria-live="polite">
+                    Confira CPF, contato, endereço e variantes dos produtos.
+                  </p>
+                )}
               </section>
             )}
 
