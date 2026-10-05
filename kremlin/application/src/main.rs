@@ -588,7 +588,7 @@ mod c001_auth_middleware_tests {
         body::Body,
         http::{Request, StatusCode},
         middleware,
-        routing::get,
+        routing::{get, post},
     };
     use business::{
         domain::{enums::Role, shipping::ShippingOption, user::User},
@@ -676,8 +676,8 @@ mod c001_auth_middleware_tests {
         .unwrap()
     }
 
-    fn request(authorization: Option<&str>) -> Request<Body> {
-        let mut builder = Request::builder().uri("/protected");
+    fn request(method: &str, path: &str, authorization: Option<&str>) -> Request<Body> {
+        let mut builder = Request::builder().method(method).uri(path);
         if let Some(value) = authorization {
             builder = builder.header("authorization", value);
         }
@@ -685,7 +685,7 @@ mod c001_auth_middleware_tests {
     }
 
     #[tokio::test]
-    async fn authentication_middleware_characterizes_bearer_status_and_expiry_gap() {
+    async fn authentication_middleware_rejects_expired_bearer_tokens() {
         unsafe { std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET); }
         let db = MockDatabase::new(DatabaseBackend::Postgres)
             .append_query_results([vec![user_model()], vec![user_model()]])
@@ -695,15 +695,13 @@ mod c001_auth_middleware_tests {
                 "/protected",
                 get(|Extension(user): Extension<User>| async move { user.role.to_string() }),
             )
+            .route("/login", post(|| async { StatusCode::OK }))
+            .route("/signup", post(|| async { StatusCode::OK }))
             .route_layer(middleware::from_fn_with_state(state(db), authentication));
 
         assert_eq!(
-            app.clone().oneshot(request(None)).await.unwrap().status(),
-            StatusCode::FORBIDDEN
-        );
-        assert_eq!(
             app.clone()
-                .oneshot(request(Some("Basic not-a-bearer")))
+                .oneshot(request("GET", "/protected", None))
                 .await
                 .unwrap()
                 .status(),
@@ -711,7 +709,15 @@ mod c001_auth_middleware_tests {
         );
         assert_eq!(
             app.clone()
-                .oneshot(request(Some("Bearer malformed-token")))
+                .oneshot(request("GET", "/protected", Some("Basic not-a-bearer")))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            app.clone()
+                .oneshot(request("GET", "/protected", Some("Bearer malformed-token")))
                 .await
                 .unwrap()
                 .status(),
@@ -719,18 +725,38 @@ mod c001_auth_middleware_tests {
         );
         assert_eq!(
             app.clone()
-                .oneshot(request(Some(&format!("Bearer {}", token(Utc::now().timestamp() - 60)))))
+                .oneshot(request(
+                    "GET",
+                    "/protected",
+                    Some(&format!("Bearer {}", token(Utc::now().timestamp() - 120))),
+                ))
                 .await
                 .unwrap()
                 .status(),
-            StatusCode::OK
+            StatusCode::UNAUTHORIZED
         );
         assert_eq!(
-            app.oneshot(request(Some(&format!("Bearer {}", token(Utc::now().timestamp() + 3600)))))
+            app.clone()
+                .oneshot(request(
+                    "GET",
+                    "/protected",
+                    Some(&format!("Bearer {}", token(Utc::now().timestamp() + 3600))),
+                ))
                 .await
                 .unwrap()
                 .status(),
             StatusCode::OK
         );
+        for path in ["/login", "/signup"] {
+            assert_eq!(
+                app.clone()
+                    .oneshot(request("POST", path, None))
+                    .await
+                    .unwrap()
+                    .status(),
+                StatusCode::OK,
+                "{path} remains public"
+            );
+        }
     }
 }

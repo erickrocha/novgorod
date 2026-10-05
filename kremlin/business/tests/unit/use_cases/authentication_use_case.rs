@@ -1,6 +1,8 @@
     use super::*;
     use chrono::Utc;
+    use crate::domain::enums::Role;
     use entity::{customer_entity, user_entity};
+    use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
     use sea_orm::{DatabaseBackend, DbErr, MockDatabase};
     use uuid::Uuid;
 
@@ -370,6 +372,45 @@
             .await
             .unwrap_err();
         assert_eq!(not_found_err.message, "Invalid credentials");
+    }
+
+    #[tokio::test]
+    async fn expired_access_and_refresh_tokens_are_rejected_before_user_lookup() {
+        setup_env();
+        let expired_claims = Claims::builder()
+            .with_sub("expired@example.com")
+            .exp(Utc::now().timestamp() - 120)
+            .uuid("expired-user")
+            .name("Expired User")
+            .user_id(77)
+            .role(Role::Customer)
+            .tenant_id(None)
+            .build()
+            .unwrap();
+        let access_token = encode(
+            &Header::new(Algorithm::HS512),
+            &expired_claims,
+            &EncodingKey::from_secret(
+                std::env::var("ACCESS_TOKEN_SECRET").unwrap().as_bytes(),
+            ),
+        )
+        .unwrap();
+        let refresh_token = encode(
+            &Header::new(Algorithm::HS512),
+            &expired_claims,
+            &EncodingKey::from_secret(
+                std::env::var("REFRESH_TOKEN_SECRET").unwrap().as_bytes(),
+            ),
+        )
+        .unwrap();
+        let db = MockDatabase::new(DatabaseBackend::Postgres).into_connection();
+
+        assert!(AuthenticationUseCase::validate(&db, access_token)
+            .await
+            .is_err());
+        assert!(AuthenticationUseCase::validate_refresh_token(&db, refresh_token)
+            .await
+            .is_err());
     }
 
     #[tokio::test]
