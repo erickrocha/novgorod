@@ -1,6 +1,11 @@
 #!/bin/bash
 set -euo pipefail
 
+if [[ -z "${POSTGRES_PASSWORD:-}" ]]; then
+  echo "[setup] Error: POSTGRES_PASSWORD is required."
+  exit 1
+fi
+
 echo "=========================================================="
 echo "Initializing LocalStack Resources & Wine Media for Novgorod"
 echo "=========================================================="
