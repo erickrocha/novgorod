@@ -581,6 +581,10 @@ mod shipping_api_tests {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/infrastructure/shipping_http_test.rs"]
+mod shipping_http_tests;
+
+#[cfg(test)]
 mod c001_auth_middleware_tests {
     use super::*;
     use axum::{

@@ -32,6 +32,21 @@ impl Correios {
             Ok("homologation") | Err(_) => "https://apihom.correios.com.br",
             _ => return Err("invalid CORREIOS_ENVIRONMENT"),
         };
+        Self::with_base_url(db, keys, base)
+    }
+    #[cfg(test)]
+    pub(crate) fn with_base_url_for_test(
+        db: DbConn,
+        keys: Arc<ShippingKeyRing>,
+        base_url: &str,
+    ) -> Result<Self, &'static str> {
+        Self::with_base_url(db, keys, base_url)
+    }
+    fn with_base_url(
+        db: DbConn,
+        keys: Arc<ShippingKeyRing>,
+        base_url: &str,
+    ) -> Result<Self, &'static str> {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(8))
             .connect_timeout(Duration::from_secs(3))
@@ -42,7 +57,7 @@ impl Correios {
             db,
             keys,
             client,
-            base_url: base.into(),
+            base_url: base_url.into(),
             tokens: Mutex::new(BTreeMap::new()),
             permits: Semaphore::new(8),
         })

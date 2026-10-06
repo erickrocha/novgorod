@@ -51,6 +51,13 @@ pub struct ShippingKeyRing {
     keys: BTreeMap<String, [u8; 32]>,
 }
 impl ShippingKeyRing {
+    #[cfg(test)]
+    pub(crate) fn for_test() -> Self {
+        Self {
+            active: "test-only-v1".into(),
+            keys: BTreeMap::from([("test-only-v1".into(), [42; 32])]),
+        }
+    }
     pub fn from_env() -> Result<Self, &'static str> {
         let raw = match std::env::var("SHIPPING_ENCRYPTION_KEYS") {
             Ok(v) => v,
