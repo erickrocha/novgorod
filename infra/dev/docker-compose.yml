@@ -35,7 +35,9 @@ services:
       - POSTGRES_USER=${DATABASE_USER}
       - POSTGRES_PASSWORD=${DATABASE_PASSWORD}
     volumes:
-      - ./localstack-init:/etc/localstack/init/ready.d
+      - ./localstack-init/setup.sh:/etc/localstack/init/ready.d/setup.sh:ro
+      - ./localstack-init/scripts/sync_seed_images.py:/opt/novgorod-seed/sync_seed_images.py:ro
+      - ./localstack-init/vendor:/opt/novgorod-seed/vendor:ro
       - ../../data/wines/images:/data/images:ro
     networks:
       - novgorod-dev-network

@@ -70,12 +70,12 @@ awslocal s3api put-bucket-notification-configuration --bucket "${BUCKET_NAME}" -
 
 # 5. Offline install pg8000 and run image sync
 echo "[5/5] Synchronizing wine media images to S3 & verifying database..."
-if [ -d "/etc/localstack/init/ready.d/vendor" ]; then
-    python3 -m pip install --quiet --no-index --find-links=/etc/localstack/init/ready.d/vendor pg8000 || true
+if [ -d "/opt/novgorod-seed/vendor" ]; then
+  python3 -m pip install --quiet --no-index --find-links=/opt/novgorod-seed/vendor pg8000 || true
 fi
 
-if [ -f "/etc/localstack/init/ready.d/scripts/sync_seed_images.py" ]; then
-    python3 /etc/localstack/init/ready.d/scripts/sync_seed_images.py
+if [ -f "/opt/novgorod-seed/sync_seed_images.py" ]; then
+  python3 /opt/novgorod-seed/sync_seed_images.py
 fi
 
 echo "=========================================================="

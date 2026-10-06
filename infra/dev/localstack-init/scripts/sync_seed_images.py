@@ -24,7 +24,10 @@ POSTGRES_HOST = os.environ.get("POSTGRES_HOST", "postgres")
 POSTGRES_PORT = int(os.environ.get("POSTGRES_PORT", 5432))
 POSTGRES_DB = os.environ.get("POSTGRES_DB", "novgorod-dev")
 POSTGRES_USER = os.environ.get("POSTGRES_USER", "novgorod-dev")
-POSTGRES_PASSWORD = os.environ.get("POSTGRES_PASSWORD", "9e374511")
+POSTGRES_PASSWORD = os.environ.get("POSTGRES_PASSWORD")
+if not POSTGRES_PASSWORD:
+    print("[sync_seed_images] Error: POSTGRES_PASSWORD is required.")
+    sys.exit(1)
 
 # Locate manifest and images directory
 POSSIBLE_PATHS = [

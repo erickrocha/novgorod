@@ -31,10 +31,16 @@ cargo test --workspace --manifest-path kremlin/Cargo.toml
 
 Para executar os testes de integração com PostgreSQL (requer banco rodando):
 ```bash
-KREMLIN_TEST_DATABASE_URL=postgresql://novgorod-dev:9e374511@localhost:5432/shipping_test \
-  cargo test -p business --manifest-path kremlin/Cargo.toml \
-  --test shipping_postgres --test marketplace_postgres -- --ignored --nocapture
+(
+  set -a
+  . infra/dev/.env
+  set +a
+  KREMLIN_TEST_DATABASE_URL="postgresql://${DATABASE_USER}:${DATABASE_PASSWORD}@localhost:5432/shipping_test" \
+    cargo test -p business --manifest-path kremlin/Cargo.toml \
+    --test shipping_postgres --test marketplace_postgres -- --ignored --nocapture
+)
 ```
+Execute from the Novgorod repository root. Do not enable shell tracing (`set -x`) while loading local credentials.
 
 ### 1.2 Painel do Lojista (`veche`)
 
