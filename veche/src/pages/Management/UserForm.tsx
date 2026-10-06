@@ -1,4 +1,5 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
+import axios from "axios";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useForm } from "react-hook-form";
@@ -17,8 +18,10 @@ import Button from "@/components/ui/button/Button";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { createUser, fetchUsers, updateUser } from "@/store/userSlice";
 import { fetchTenants } from "@/store/tenantSlice";
+import { getApiErrorMessage } from "@/services/api";
+import { userService } from "@/services/userService";
 import { ROLES } from "@/utils/enums";
-import type { Role, UserInput } from "@/services/types";
+import type { Role, User, UserInput } from "@/services/types";
 
 const userSchema = yup.object({
   name: yup.string().nullable().defined(),
@@ -39,13 +42,16 @@ export function UserForm() {
   const { t } = useTranslation();
 
   const editing = Boolean(id);
-  const { usersList, loading, error } = useAppSelector((s) => s.user);
+  const { loading, error } = useAppSelector((s) => s.user);
   const { tenantsList } = useAppSelector((s) => s.tenant);
   const { user } = useAppSelector((s) => s.auth);
 
   const sysAdmin = user?.role === ROLES.SYS_ADMIN;
   const ownTenant = user?.tenantId ?? user?.tenant_id;
-  const existing = usersList.find((u) => String(u.id) === id);
+  const [existing, setExisting] = useState<User>();
+  const [loadedUserId, setLoadedUserId] = useState<string>();
+  const [lookupState, setLookupState] = useState<"idle" | "loading" | "loaded" | "denied" | "error">("idle");
+  const [lookupError, setLookupError] = useState("");
 
   const {
     handleSubmit,
@@ -69,9 +75,54 @@ export function UserForm() {
   const formValues = watch();
 
   useEffect(() => {
-    dispatch(fetchUsers());
     dispatch(fetchTenants());
-  }, [dispatch]);
+    if (!editing || !id) {
+      setExisting(undefined);
+      setLoadedUserId(undefined);
+      setLookupState("idle");
+      return;
+    }
+
+    let active = true;
+    setExisting(undefined);
+    setLoadedUserId(undefined);
+    setLookupError("");
+    setLookupState("loading");
+
+    userService
+      .getUserById(Number(id))
+      .then((loadedUser) => {
+        if (!active) return;
+        setExisting(loadedUser);
+        setLoadedUserId(id);
+        setLookupState("loaded");
+      })
+      .catch((loadError: unknown) => {
+        if (!active) return;
+        const status = axios.isAxiosError(loadError)
+          ? loadError.response?.status
+          : undefined;
+
+        if (!sysAdmin && (status === 403 || status === 404)) {
+          setLookupState("denied");
+          return;
+        }
+
+        setLookupError(
+          status === 404
+            ? t("users.notFound", "Usuário não encontrado.")
+            : getApiErrorMessage(
+                loadError,
+                t("users.loadError", "Falha ao carregar usuário."),
+              ),
+        );
+        setLookupState("error");
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [dispatch, editing, id, sysAdmin, t]);
 
   useEffect(() => {
     if (existing) {
@@ -160,9 +211,34 @@ export function UserForm() {
     ? t("users.editUser", "Editar usuário")
     : t("users.addUser", "Novo usuário");
 
-  if (editing && existing && !sysAdmin && existing.tenantId !== ownTenant) {
+  if (
+    editing &&
+    (lookupState === "idle" ||
+      lookupState === "loading" ||
+      (lookupState === "loaded" && loadedUserId !== id))
+  ) {
+    return <div role="status">{t("common.loading", "Carregando...")}</div>;
+  }
+
+  if (editing && lookupState === "denied") {
     return (
-      <div className="rounded-lg border border-error-200 bg-error-50 p-4 text-error-600">
+      <div role="alert" className="rounded-lg border border-error-200 bg-error-50 p-4 text-error-600">
+        {t("users.noAccess", "Você não tem acesso a este usuário.")}
+      </div>
+    );
+  }
+
+  if (editing && lookupState === "error") {
+    return (
+      <div role="alert" className="rounded-lg border border-error-200 bg-error-50 p-4 text-error-600">
+        {lookupError}
+      </div>
+    );
+  }
+
+  if (editing && lookupState === "loaded" && existing && !sysAdmin && existing.tenantId !== ownTenant) {
+    return (
+      <div role="alert" className="rounded-lg border border-error-200 bg-error-50 p-4 text-error-600">
         {t("users.noAccess", "Você não tem acesso a este usuário.")}
       </div>
     );

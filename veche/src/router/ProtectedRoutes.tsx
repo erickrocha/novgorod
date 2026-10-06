@@ -1,5 +1,4 @@
 import {Suspense} from "react";
-import type React from "react";
 import {Navigate, Route, Routes} from "react-router-dom";
 import AppLayout from "@/layout/AppLayout.tsx";
 import UserProfiles from "@/pages/UserProfiles.tsx";
@@ -41,13 +40,8 @@ import TaxRules from "@/pages/Operations/TaxRules";
 import Inventory from "@/pages/Operations/Inventory";
 import ProductCategories from "@/pages/Catalog/ProductCategories";
 import SkuAttributes from "@/pages/Catalog/SkuAttributes";
-import { useAppSelector } from "@/store/hooks";
 import { ROLES } from "@/utils/enums";
-
-const SysAdminOnly = ({ children }: { children: React.ReactNode }) => {
-    const role = useAppSelector((state) => state.auth.user?.role);
-    return role === ROLES.SYS_ADMIN ? <>{children}</> : <Navigate to="/" replace />;
-};
+import { RoleRouteGuard } from "@/router/RoleRouteGuard";
 
 
 export const ProtectedRoutes = () => (
@@ -94,12 +88,12 @@ export const ProtectedRoutes = () => (
                 {/* Operations & Settings */}
                 <Route path="/operations/inventory" element={<Inventory />} />
                 <Route path="/operations/shipping-rates" element={<ShippingRates />} />
-                <Route path="/operations/shipping-settings" element={<ShippingSettings />} />
-                <Route path="/operations/payment-settings" element={<PaymentSettings />} />
+                <Route path="/operations/shipping-settings" element={<RoleRouteGuard allowedRoles={[ROLES.SYS_ADMIN, ROLES.TENANT_OWNER]}><ShippingSettings /></RoleRouteGuard>} />
+                <Route path="/operations/payment-settings" element={<RoleRouteGuard allowedRoles={[ROLES.SYS_ADMIN, ROLES.TENANT_OWNER]}><PaymentSettings /></RoleRouteGuard>} />
                 <Route path="/operations/tax-rules" element={<TaxRules />} />
 
-                <Route path="/system-settings/provinces" element={<SysAdminOnly><Locations kind="provinces" /></SysAdminOnly>} />
-                <Route path="/system-settings/cities" element={<SysAdminOnly><Locations kind="cities" /></SysAdminOnly>} />
+                <Route path="/system-settings/provinces" element={<RoleRouteGuard allowedRoles={[ROLES.SYS_ADMIN]}><Locations kind="provinces" /></RoleRouteGuard>} />
+                <Route path="/system-settings/cities" element={<RoleRouteGuard allowedRoles={[ROLES.SYS_ADMIN]}><Locations kind="cities" /></RoleRouteGuard>} />
                 <Route path="/calendar" element={<Calendar />} />
                 <Route path="/blank" element={<Blank />} />
 

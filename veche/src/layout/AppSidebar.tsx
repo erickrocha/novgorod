@@ -1,5 +1,5 @@
 import { useSidebar } from "@/context/SidebarContext";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link, useLocation } from "react-router-dom";
 import {
@@ -15,6 +15,7 @@ import { Megaphone, ShoppingBag, Truck, Users as UsersIcon } from "lucide-react"
 import { cn } from "../utils";
 import { useAppSelector } from "@/store/hooks";
 import { ROLES } from "@/utils/enums";
+import type { Role } from "@/services/types";
 
 type NavItem = {
   name: string;
@@ -30,6 +31,7 @@ type NavItem = {
     pro?: boolean;
     new?: boolean;
     target?: string;
+    roles?: Role[];
   }[];
 };
 
@@ -83,8 +85,8 @@ const navItems: NavItem[] = [
     subItems: [
       { name: "Inventory", key: "inventory", path: "/operations/inventory" },
       { name: "Shipping Rates", key: "shippingRates", path: "/operations/shipping-rates" },
-      { name: "Shipping Settings", key: "shippingSettings", path: "/operations/shipping-settings" },
-      { name: "Payment Settings", key: "paymentSettings", path: "/operations/payment-settings" },
+      { name: "Shipping Settings", key: "shippingSettings", path: "/operations/shipping-settings", roles: [ROLES.SYS_ADMIN, ROLES.TENANT_OWNER] },
+      { name: "Payment Settings", key: "paymentSettings", path: "/operations/payment-settings", roles: [ROLES.SYS_ADMIN, ROLES.TENANT_OWNER] },
       { name: "Tax Rules", key: "taxRules", path: "/operations/tax-rules" },
     ],
   },
@@ -114,7 +116,15 @@ const AppSidebar: React.FC = () => {
   const { isExpanded, isMobileOpen, isHovered, setIsHovered, setIsMobileOpen } =
     useSidebar();
   const { t } = useTranslation();
-  const isSysAdmin = useAppSelector((state) => state.auth.user?.role === ROLES.SYS_ADMIN);
+  const userRole = useAppSelector((state) => state.auth.user?.role);
+  const isSysAdmin = userRole === ROLES.SYS_ADMIN;
+  const visibleNavItems = useMemo(
+    () => navItems.map((nav) => ({
+      ...nav,
+      subItems: nav.subItems?.filter((item) => !item.roles || (userRole && item.roles.includes(userRole))),
+    })),
+    [userRole],
+  );
   const activeTenant = useAppSelector((state) => state.tenant.activeTenant);
   const location = useLocation();
   const [openSubmenu, setOpenSubmenu] = useState<{
@@ -145,7 +155,7 @@ const AppSidebar: React.FC = () => {
       let submenuMatched = false;
 
       const groups: { type: "main" | "systemSettings"; items: NavItem[] }[] = [
-        { type: "main", items: navItems },
+        { type: "main", items: visibleNavItems },
         ...(isSysAdmin
           ? [{ type: "systemSettings" as const, items: systemSettingsItems }]
           : []),
@@ -171,7 +181,7 @@ const AppSidebar: React.FC = () => {
         setOpenSubmenu(null);
       }
     });
-  }, [location, isActive, isSysAdmin]);
+  }, [location, isActive, isSysAdmin, visibleNavItems]);
 
   useEffect(() => {
     if (openSubmenu !== null) {
@@ -404,7 +414,7 @@ const AppSidebar: React.FC = () => {
                   <HorizontaLDots className="size-6" />
                 )}
               </h2>
-              {renderMenuItems(navItems, "main")}
+              {renderMenuItems(visibleNavItems, "main")}
             </div>
 
             {isSysAdmin && (
