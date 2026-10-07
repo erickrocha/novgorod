@@ -123,7 +123,6 @@ impl Modify for SecurityAddon {
         endpoints::customer_address_endpoint::add,
         endpoints::customer_address_endpoint::update,
         endpoints::person_endpoint::list_all,
-        endpoints::person_endpoint::paged,
         endpoints::person_endpoint::get_by_id,
         endpoints::person_endpoint::add,
         endpoints::person_endpoint::update,
@@ -819,6 +818,101 @@ mod c001_auth_middleware_tests {
             .header("content-type", "application/json")
             .body(Body::from(body.to_owned()))
             .unwrap()
+    }
+
+    async fn assert_routes_require_auth(app: &Router, routes: &[(&str, &str)]) -> usize {
+        for (method, path) in routes {
+            let response = app
+                .clone()
+                .oneshot(request(method, path, None))
+                .await
+                .unwrap();
+            assert_eq!(
+                response.status(),
+                StatusCode::FORBIDDEN,
+                "unauthenticated {method} {path} should be blocked by the shared middleware"
+            );
+        }
+        routes.len()
+    }
+
+    #[tokio::test]
+    async fn remaining_protected_routes_are_registered_and_require_auth() {
+        unsafe { std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET); }
+
+        let db = MockDatabase::new(DatabaseBackend::Postgres).into_connection();
+        let app_state = state(db);
+        let resources = crate::routes::resource_routes::resources_routes(app_state.clone())
+            .with_state(app_state.clone());
+        let marketing = crate::routes::marketing_routes::marketing_routes(app_state.clone())
+            .with_state(app_state.clone());
+        let orders = crate::routes::order_routes::order_routes(app_state.clone())
+            .with_state(app_state.clone());
+        let carts = crate::routes::cart_routes::cart_routes(app_state.clone())
+            .with_state(app_state);
+
+        let resource_routes = [
+            ("POST", "/catalog/import"),
+            ("POST", "/categories"),
+            ("PUT", "/categories/99"),
+            ("POST", "/products"),
+            ("PUT", "/products/99"),
+            ("POST", "/skus"),
+            ("PUT", "/skus/99"),
+            ("POST", "/sku-attributes"),
+            ("PUT", "/sku-attributes/99"),
+            ("DELETE", "/sku-attributes/99"),
+            ("POST", "/sku-attribute-values"),
+            ("PUT", "/sku-attribute-values/99"),
+            ("DELETE", "/sku-attribute-values/99"),
+            ("POST", "/sku-stocks"),
+            ("PUT", "/sku-stocks/99"),
+            ("DELETE", "/sku-stocks/99"),
+            ("POST", "/resource/avatar/presign"),
+        ];
+        let marketing_routes = [
+            ("POST", "/campaigns"),
+            ("PUT", "/campaigns/99"),
+            ("POST", "/campaign-targets"),
+            ("PUT", "/campaign-targets/99"),
+            ("POST", "/coupons"),
+            ("PUT", "/coupons/99"),
+            ("POST", "/coupon-redemptions"),
+        ];
+        let order_routes = [
+            ("POST", "/purchases"),
+            ("POST", "/checkout/quotes/99/shipping-selection"),
+            ("POST", "/checkout/quotes"),
+            ("GET", "/checkout/payment-config"),
+            ("POST", "/purchases/99/payments/submit"),
+            ("GET", "/purchases/99/payments/status"),
+            ("GET", "/purchases/paged"),
+            ("GET", "/purchases/99"),
+            ("GET", "/purchases/99/payments"),
+            ("GET", "/orders"),
+            ("GET", "/orders/paged"),
+            ("GET", "/orders/99"),
+            ("GET", "/orders/99/status-history"),
+            ("GET", "/payments/99/transactions"),
+        ];
+        let cart_routes = [
+            ("GET", "/carts"),
+            ("GET", "/carts/paged"),
+            ("POST", "/carts"),
+            ("GET", "/carts/99"),
+            ("PUT", "/carts/99"),
+            ("GET", "/cart-items"),
+            ("GET", "/cart-items/paged"),
+            ("POST", "/cart-items"),
+            ("GET", "/cart-items/99"),
+            ("PUT", "/cart-items/99"),
+        ];
+
+        let checked = assert_routes_require_auth(&resources, &resource_routes).await
+            + assert_routes_require_auth(&marketing, &marketing_routes).await
+            + assert_routes_require_auth(&orders, &order_routes).await
+            + assert_routes_require_auth(&carts, &cart_routes).await;
+        assert_eq!(checked, 48, "all remaining protected method/path pairs must be exercised");
     }
 
     #[tokio::test]
@@ -2413,6 +2507,2034 @@ mod c001_auth_middleware_tests {
                 "deny" => assert!(where_clause.contains("1 = 0"), "{}", user_query.sql),
                 _ => unreachable!("unknown expected scope"),
             }
+        }
+    }
+
+    #[tokio::test]
+    async fn campaign_paged_route_scopes_queries_by_role() {
+        unsafe { std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET); }
+
+        let cases = [
+            (Role::SysAdmin, None, "unrestricted"),
+            (Role::TenantOwner, Some(7), "tenant"),
+            (Role::TenantUser, Some(7), "tenant"),
+            (Role::Customer, None, "no_query"),
+        ];
+        let count_row = BTreeMap::from([("num_items".to_string(), Value::BigInt(Some(0)))]);
+
+        for (role, tenant_id, expected_scope) in cases {
+            let mut db = MockDatabase::new(DatabaseBackend::Postgres)
+                .append_query_results([vec![user_model_for(role.clone(), tenant_id)]]);
+            if expected_scope != "no_query" {
+                db = db
+                    .append_query_results([vec![count_row.clone()]])
+                    .append_query_results([Vec::<entity::campaign_entity::Model>::new()]);
+            }
+            let db = db.into_connection();
+            let db_for_log = db.clone();
+            let app_state = state(db);
+            let app = crate::routes::marketing_routes::marketing_routes(app_state.clone())
+                .with_state(app_state);
+            let response = app
+                .oneshot(request(
+                    "GET",
+                    "/campaigns/paged",
+                    Some(&format!(
+                        "Bearer {}",
+                        token_for(role.clone(), tenant_id, Utc::now().timestamp() + 3600)
+                    )),
+                ))
+                .await
+                .unwrap();
+
+            assert_eq!(response.status(), StatusCode::OK, "GET paged campaigns as {role:?}");
+            let campaign_queries: Vec<_> = db_for_log
+                .into_transaction_log()
+                .into_iter()
+                .flat_map(|transaction| transaction.statements().to_vec())
+                .filter(|statement| statement.sql.contains("FROM \"campaign\""))
+                .collect();
+            match expected_scope {
+                "unrestricted" => {
+                    let list_query = campaign_queries.last().expect("SysAdmin campaign query");
+                    let where_clause = list_query
+                        .sql
+                        .split_once(" WHERE ")
+                        .map(|(_, clause)| clause)
+                        .unwrap_or_default();
+                    assert!(!where_clause.contains("tenant_id"), "{}", list_query.sql);
+                }
+                "tenant" => {
+                    let list_query = campaign_queries.last().expect("tenant campaign query");
+                    assert!(list_query.sql.contains("tenant_id"), "{}", list_query.sql);
+                }
+                "no_query" => assert!(campaign_queries.is_empty(), "tenantless Customer query was issued"),
+                _ => unreachable!("unknown expected scope"),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn campaign_by_id_route_enforces_tenant_access() {
+        unsafe { std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET); }
+
+        let cases = [
+            (Role::SysAdmin, None, StatusCode::OK),
+            (Role::TenantOwner, Some(7), StatusCode::NOT_FOUND),
+            (Role::TenantOwner, Some(8), StatusCode::OK),
+            (Role::TenantUser, Some(7), StatusCode::NOT_FOUND),
+            (Role::Customer, None, StatusCode::NOT_FOUND),
+        ];
+        let now = Utc::now().naive_utc();
+
+        for (role, tenant_id, expected_status) in cases {
+            let campaign = entity::campaign_entity::Model {
+                id: 99,
+                uuid: uuid::Uuid::new_v4(),
+                tenant_id: Some(8),
+                name: "C001 campaign".into(),
+                campaign_type: "percentage".into(),
+                value: 10,
+                scope: "all".into(),
+                starts_at: now,
+                ends_at: now,
+                active: true,
+                created_at: now,
+                created_by: None,
+                updated_at: now,
+                updated_by: None,
+            };
+            let db = MockDatabase::new(DatabaseBackend::Postgres)
+                .append_query_results([vec![user_model_for(role.clone(), tenant_id)]])
+                .append_query_results([vec![campaign]])
+                .into_connection();
+            let app_state = state(db);
+            let app = crate::routes::marketing_routes::marketing_routes(app_state.clone())
+                .with_state(app_state);
+            let response = app
+                .oneshot(request(
+                    "GET",
+                    "/campaigns/99",
+                    Some(&format!(
+                        "Bearer {}",
+                        token_for(role.clone(), tenant_id, Utc::now().timestamp() + 3600)
+                    )),
+                ))
+                .await
+                .unwrap();
+
+            assert_eq!(
+                response.status(),
+                expected_status,
+                "GET campaign 99 as {role:?} for tenant {tenant_id:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn campaign_list_route_scopes_queries_by_role() {
+        unsafe { std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET); }
+
+        let cases = [
+            (Role::SysAdmin, None, "unrestricted"),
+            (Role::TenantOwner, Some(7), "tenant"),
+            (Role::TenantUser, Some(7), "tenant"),
+            (Role::Customer, None, "deny"),
+        ];
+
+        for (role, tenant_id, expected_scope) in cases {
+            let db = MockDatabase::new(DatabaseBackend::Postgres)
+                .append_query_results([vec![user_model_for(role.clone(), tenant_id)]])
+                .append_query_results([Vec::<entity::campaign_entity::Model>::new()])
+                .into_connection();
+            let db_for_log = db.clone();
+            let app_state = state(db);
+            let app = crate::routes::marketing_routes::marketing_routes(app_state.clone())
+                .with_state(app_state);
+            let response = app
+                .oneshot(request(
+                    "GET",
+                    "/campaigns",
+                    Some(&format!(
+                        "Bearer {}",
+                        token_for(role.clone(), tenant_id, Utc::now().timestamp() + 3600)
+                    )),
+                ))
+                .await
+                .unwrap();
+
+            assert_eq!(response.status(), StatusCode::OK, "GET campaigns as {role:?}");
+            let campaign_query = db_for_log
+                .into_transaction_log()
+                .into_iter()
+                .flat_map(|transaction| transaction.statements().to_vec())
+                .find(|statement| statement.sql.contains("FROM \"campaign\""))
+                .expect("campaign collection query should execute");
+            let where_clause = campaign_query
+                .sql
+                .split_once(" WHERE ")
+                .map(|(_, clause)| clause)
+                .unwrap_or_default();
+            match expected_scope {
+                "unrestricted" => assert!(!where_clause.contains("tenant_id"), "{}", campaign_query.sql),
+                "tenant" => assert!(where_clause.contains("tenant_id"), "{}", campaign_query.sql),
+                "deny" => assert!(where_clause.contains("1 = 0"), "{}", campaign_query.sql),
+                _ => unreachable!("unknown expected scope"),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn campaign_target_list_route_scopes_queries_by_role() {
+        unsafe { std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET); }
+
+        let cases = [
+            (Role::SysAdmin, None, "unrestricted"),
+            (Role::TenantOwner, Some(7), "tenant"),
+            (Role::TenantUser, Some(7), "tenant"),
+            (Role::Customer, None, "deny"),
+        ];
+
+        for (role, tenant_id, expected_scope) in cases {
+            let db = MockDatabase::new(DatabaseBackend::Postgres)
+                .append_query_results([vec![user_model_for(role.clone(), tenant_id)]])
+                .append_query_results([Vec::<entity::campaign_target_entity::Model>::new()])
+                .into_connection();
+            let db_for_log = db.clone();
+            let app_state = state(db);
+            let app = crate::routes::marketing_routes::marketing_routes(app_state.clone())
+                .with_state(app_state);
+            let response = app
+                .oneshot(request(
+                    "GET",
+                    "/campaign-targets",
+                    Some(&format!(
+                        "Bearer {}",
+                        token_for(role.clone(), tenant_id, Utc::now().timestamp() + 3600)
+                    )),
+                ))
+                .await
+                .unwrap();
+
+            assert_eq!(response.status(), StatusCode::OK, "GET campaign targets as {role:?}");
+            let query = db_for_log
+                .into_transaction_log()
+                .into_iter()
+                .flat_map(|transaction| transaction.statements().to_vec())
+                .find(|statement| statement.sql.contains("FROM \"campaign_target\""))
+                .expect("campaign-target collection query should execute");
+            let where_clause = query
+                .sql
+                .split_once(" WHERE ")
+                .map(|(_, clause)| clause)
+                .unwrap_or_default();
+            match expected_scope {
+                "unrestricted" => assert!(!where_clause.contains("tenant_id"), "{}", query.sql),
+                "tenant" => assert!(where_clause.contains("tenant_id"), "{}", query.sql),
+                "deny" => assert!(where_clause.contains("1 = 0"), "{}", query.sql),
+                _ => unreachable!("unknown expected scope"),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn campaign_target_paged_route_scopes_queries_by_role() {
+        unsafe { std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET); }
+
+        let cases = [
+            (Role::SysAdmin, None, "unrestricted"),
+            (Role::TenantOwner, Some(7), "tenant"),
+            (Role::TenantUser, Some(7), "tenant"),
+            (Role::Customer, None, "no_query"),
+        ];
+        let count_row = BTreeMap::from([("num_items".to_string(), Value::BigInt(Some(0)))]);
+
+        for (role, tenant_id, expected_scope) in cases {
+            let mut db = MockDatabase::new(DatabaseBackend::Postgres)
+                .append_query_results([vec![user_model_for(role.clone(), tenant_id)]]);
+            if expected_scope != "no_query" {
+                db = db
+                    .append_query_results([vec![count_row.clone()]])
+                    .append_query_results([Vec::<entity::campaign_target_entity::Model>::new()]);
+            }
+            let db = db.into_connection();
+            let db_for_log = db.clone();
+            let app_state = state(db);
+            let app = crate::routes::marketing_routes::marketing_routes(app_state.clone())
+                .with_state(app_state);
+            let response = app
+                .oneshot(request(
+                    "GET",
+                    "/campaign-targets/paged",
+                    Some(&format!(
+                        "Bearer {}",
+                        token_for(role.clone(), tenant_id, Utc::now().timestamp() + 3600)
+                    )),
+                ))
+                .await
+                .unwrap();
+
+            assert_eq!(response.status(), StatusCode::OK, "GET paged campaign targets as {role:?}");
+            let queries: Vec<_> = db_for_log
+                .into_transaction_log()
+                .into_iter()
+                .flat_map(|transaction| transaction.statements().to_vec())
+                .filter(|statement| statement.sql.contains("FROM \"campaign_target\""))
+                .collect();
+            match expected_scope {
+                "unrestricted" => {
+                    let list_query = queries.last().expect("SysAdmin campaign-target query");
+                    let where_clause = list_query
+                        .sql
+                        .split_once(" WHERE ")
+                        .map(|(_, clause)| clause)
+                        .unwrap_or_default();
+                    assert!(!where_clause.contains("tenant_id"), "{}", list_query.sql);
+                }
+                "tenant" => {
+                    let list_query = queries.last().expect("tenant campaign-target query");
+                    assert!(list_query.sql.contains("tenant_id"), "{}", list_query.sql);
+                }
+                "no_query" => assert!(queries.is_empty(), "tenantless Customer query was issued"),
+                _ => unreachable!("unknown expected scope"),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn coupon_list_route_scopes_queries_by_role() {
+        unsafe { std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET); }
+
+        let cases = [
+            (Role::SysAdmin, None, "unrestricted"),
+            (Role::TenantOwner, Some(7), "tenant"),
+            (Role::TenantUser, Some(7), "tenant"),
+            (Role::Customer, None, "deny"),
+        ];
+
+        for (role, tenant_id, expected_scope) in cases {
+            let db = MockDatabase::new(DatabaseBackend::Postgres)
+                .append_query_results([vec![user_model_for(role.clone(), tenant_id)]])
+                .append_query_results([Vec::<entity::coupon_entity::Model>::new()])
+                .into_connection();
+            let db_for_log = db.clone();
+            let app_state = state(db);
+            let app = crate::routes::marketing_routes::marketing_routes(app_state.clone())
+                .with_state(app_state);
+            let response = app
+                .oneshot(request(
+                    "GET",
+                    "/coupons",
+                    Some(&format!(
+                        "Bearer {}",
+                        token_for(role.clone(), tenant_id, Utc::now().timestamp() + 3600)
+                    )),
+                ))
+                .await
+                .unwrap();
+
+            assert_eq!(response.status(), StatusCode::OK, "GET coupons as {role:?}");
+            let query = db_for_log
+                .into_transaction_log()
+                .into_iter()
+                .flat_map(|transaction| transaction.statements().to_vec())
+                .find(|statement| statement.sql.contains("FROM \"coupon\""))
+                .expect("coupon collection query should execute");
+            let where_clause = query
+                .sql
+                .split_once(" WHERE ")
+                .map(|(_, clause)| clause)
+                .unwrap_or_default();
+            match expected_scope {
+                "unrestricted" => assert!(!where_clause.contains("tenant_id"), "{}", query.sql),
+                "tenant" => assert!(where_clause.contains("tenant_id"), "{}", query.sql),
+                "deny" => assert!(where_clause.contains("1 = 0"), "{}", query.sql),
+                _ => unreachable!("unknown expected scope"),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn coupon_paged_route_scopes_queries_by_role() {
+        unsafe { std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET); }
+
+        let cases = [
+            (Role::SysAdmin, None, "unrestricted"),
+            (Role::TenantOwner, Some(7), "tenant"),
+            (Role::TenantUser, Some(7), "tenant"),
+            (Role::Customer, None, "no_query"),
+        ];
+        let count_row = BTreeMap::from([("num_items".to_string(), Value::BigInt(Some(0)))]);
+
+        for (role, tenant_id, expected_scope) in cases {
+            let mut db = MockDatabase::new(DatabaseBackend::Postgres)
+                .append_query_results([vec![user_model_for(role.clone(), tenant_id)]]);
+            if expected_scope != "no_query" {
+                db = db
+                    .append_query_results([vec![count_row.clone()]])
+                    .append_query_results([Vec::<entity::coupon_entity::Model>::new()]);
+            }
+            let db = db.into_connection();
+            let db_for_log = db.clone();
+            let app_state = state(db);
+            let app = crate::routes::marketing_routes::marketing_routes(app_state.clone())
+                .with_state(app_state);
+            let response = app
+                .oneshot(request(
+                    "GET",
+                    "/coupons/paged",
+                    Some(&format!(
+                        "Bearer {}",
+                        token_for(role.clone(), tenant_id, Utc::now().timestamp() + 3600)
+                    )),
+                ))
+                .await
+                .unwrap();
+
+            assert_eq!(response.status(), StatusCode::OK, "GET paged coupons as {role:?}");
+            let queries: Vec<_> = db_for_log
+                .into_transaction_log()
+                .into_iter()
+                .flat_map(|transaction| transaction.statements().to_vec())
+                .filter(|statement| statement.sql.contains("FROM \"coupon\""))
+                .collect();
+            match expected_scope {
+                "unrestricted" => {
+                    let list_query = queries.last().expect("SysAdmin coupon query");
+                    let where_clause = list_query
+                        .sql
+                        .split_once(" WHERE ")
+                        .map(|(_, clause)| clause)
+                        .unwrap_or_default();
+                    assert!(!where_clause.contains("tenant_id"), "{}", list_query.sql);
+                }
+                "tenant" => {
+                    let list_query = queries.last().expect("tenant coupon query");
+                    assert!(list_query.sql.contains("tenant_id"), "{}", list_query.sql);
+                }
+                "no_query" => assert!(queries.is_empty(), "tenantless Customer query was issued"),
+                _ => unreachable!("unknown expected scope"),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn coupon_by_id_route_enforces_tenant_access() {
+        unsafe { std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET); }
+
+        let cases = [
+            (Role::SysAdmin, None, StatusCode::OK),
+            (Role::TenantOwner, Some(7), StatusCode::NOT_FOUND),
+            (Role::TenantOwner, Some(8), StatusCode::OK),
+            (Role::TenantUser, Some(7), StatusCode::NOT_FOUND),
+            (Role::Customer, None, StatusCode::NOT_FOUND),
+        ];
+        let now = Utc::now().naive_utc();
+
+        for (role, tenant_id, expected_status) in cases {
+            let coupon = entity::coupon_entity::Model {
+                id: 99,
+                uuid: uuid::Uuid::new_v4(),
+                tenant_id: Some(8),
+                code: "C001-TEST".into(),
+                campaign_id: Some(10),
+                coupon_type: "percentage".into(),
+                value: 10,
+                min_order_cents: None,
+                max_uses: None,
+                max_uses_per_customer: None,
+                starts_at: None,
+                expires_at: None,
+                active: true,
+                created_at: now,
+                created_by: None,
+                updated_at: now,
+                updated_by: None,
+            };
+            let db = MockDatabase::new(DatabaseBackend::Postgres)
+                .append_query_results([vec![user_model_for(role.clone(), tenant_id)]])
+                .append_query_results([vec![coupon]])
+                .into_connection();
+            let app_state = state(db);
+            let app = crate::routes::marketing_routes::marketing_routes(app_state.clone())
+                .with_state(app_state);
+            let response = app
+                .oneshot(request(
+                    "GET",
+                    "/coupons/99",
+                    Some(&format!(
+                        "Bearer {}",
+                        token_for(role.clone(), tenant_id, Utc::now().timestamp() + 3600)
+                    )),
+                ))
+                .await
+                .unwrap();
+
+            assert_eq!(
+                response.status(),
+                expected_status,
+                "GET coupon 99 as {role:?} for tenant {tenant_id:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn coupon_redemption_list_route_scopes_queries_by_role() {
+        unsafe { std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET); }
+
+        let cases = [
+            (Role::SysAdmin, None, "unrestricted"),
+            (Role::TenantOwner, Some(7), "tenant"),
+            (Role::TenantUser, Some(7), "tenant"),
+            (Role::Customer, None, "deny"),
+        ];
+
+        for (role, tenant_id, expected_scope) in cases {
+            let db = MockDatabase::new(DatabaseBackend::Postgres)
+                .append_query_results([vec![user_model_for(role.clone(), tenant_id)]])
+                .append_query_results([Vec::<entity::coupon_redemption_entity::Model>::new()])
+                .into_connection();
+            let db_for_log = db.clone();
+            let app_state = state(db);
+            let app = crate::routes::marketing_routes::marketing_routes(app_state.clone())
+                .with_state(app_state);
+            let response = app
+                .oneshot(request(
+                    "GET",
+                    "/coupon-redemptions",
+                    Some(&format!(
+                        "Bearer {}",
+                        token_for(role.clone(), tenant_id, Utc::now().timestamp() + 3600)
+                    )),
+                ))
+                .await
+                .unwrap();
+
+            assert_eq!(response.status(), StatusCode::OK, "GET redemptions as {role:?}");
+            let query = db_for_log
+                .into_transaction_log()
+                .into_iter()
+                .flat_map(|transaction| transaction.statements().to_vec())
+                .find(|statement| statement.sql.contains("FROM \"coupon_redemption\""))
+                .expect("redemption collection query should execute");
+            let where_clause = query
+                .sql
+                .split_once(" WHERE ")
+                .map(|(_, clause)| clause)
+                .unwrap_or_default();
+            match expected_scope {
+                "unrestricted" => assert!(!where_clause.contains("tenant_id"), "{}", query.sql),
+                "tenant" => assert!(where_clause.contains("tenant_id"), "{}", query.sql),
+                "deny" => assert!(where_clause.contains("1 = 0"), "{}", query.sql),
+                _ => unreachable!("unknown expected scope"),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn coupon_redemption_paged_route_scopes_queries_by_role() {
+        unsafe { std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET); }
+
+        let cases = [
+            (Role::SysAdmin, None, "unrestricted"),
+            (Role::TenantOwner, Some(7), "tenant"),
+            (Role::TenantUser, Some(7), "tenant"),
+            (Role::Customer, None, "no_query"),
+        ];
+        let count_row = BTreeMap::from([("num_items".to_string(), Value::BigInt(Some(0)))]);
+
+        for (role, tenant_id, expected_scope) in cases {
+            let mut db = MockDatabase::new(DatabaseBackend::Postgres)
+                .append_query_results([vec![user_model_for(role.clone(), tenant_id)]]);
+            if expected_scope != "no_query" {
+                db = db
+                    .append_query_results([vec![count_row.clone()]])
+                    .append_query_results([Vec::<entity::coupon_redemption_entity::Model>::new()]);
+            }
+            let db = db.into_connection();
+            let db_for_log = db.clone();
+            let app_state = state(db);
+            let app = crate::routes::marketing_routes::marketing_routes(app_state.clone())
+                .with_state(app_state);
+            let response = app
+                .oneshot(request(
+                    "GET",
+                    "/coupon-redemptions/paged",
+                    Some(&format!(
+                        "Bearer {}",
+                        token_for(role.clone(), tenant_id, Utc::now().timestamp() + 3600)
+                    )),
+                ))
+                .await
+                .unwrap();
+
+            assert_eq!(response.status(), StatusCode::OK, "GET paged redemptions as {role:?}");
+            let queries: Vec<_> = db_for_log
+                .into_transaction_log()
+                .into_iter()
+                .flat_map(|transaction| transaction.statements().to_vec())
+                .filter(|statement| statement.sql.contains("FROM \"coupon_redemption\""))
+                .collect();
+            match expected_scope {
+                "unrestricted" => {
+                    let list_query = queries.last().expect("SysAdmin redemption query");
+                    let where_clause = list_query
+                        .sql
+                        .split_once(" WHERE ")
+                        .map(|(_, clause)| clause)
+                        .unwrap_or_default();
+                    assert!(!where_clause.contains("tenant_id"), "{}", list_query.sql);
+                }
+                "tenant" => {
+                    let list_query = queries.last().expect("tenant redemption query");
+                    assert!(list_query.sql.contains("tenant_id"), "{}", list_query.sql);
+                }
+                "no_query" => assert!(queries.is_empty(), "tenantless Customer query was issued"),
+                _ => unreachable!("unknown expected scope"),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn coupon_redemption_by_id_route_enforces_tenant_access() {
+        unsafe { std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET); }
+
+        let cases = [
+            (Role::SysAdmin, None, StatusCode::OK),
+            (Role::TenantOwner, Some(7), StatusCode::NOT_FOUND),
+            (Role::TenantOwner, Some(8), StatusCode::OK),
+            (Role::TenantUser, Some(7), StatusCode::NOT_FOUND),
+            (Role::Customer, None, StatusCode::NOT_FOUND),
+        ];
+        let now = Utc::now().naive_utc();
+
+        for (role, tenant_id, expected_status) in cases {
+            let redemption = entity::coupon_redemption_entity::Model {
+                id: 99,
+                uuid: uuid::Uuid::new_v4(),
+                tenant_id: Some(8),
+                coupon_id: 10,
+                order_id: 20,
+                customer_id: 30,
+                created_at: now,
+                created_by: None,
+            };
+            let db = MockDatabase::new(DatabaseBackend::Postgres)
+                .append_query_results([vec![user_model_for(role.clone(), tenant_id)]])
+                .append_query_results([vec![redemption]])
+                .into_connection();
+            let app_state = state(db);
+            let app = crate::routes::marketing_routes::marketing_routes(app_state.clone())
+                .with_state(app_state);
+            let response = app
+                .oneshot(request(
+                    "GET",
+                    "/coupon-redemptions/99",
+                    Some(&format!(
+                        "Bearer {}",
+                        token_for(role.clone(), tenant_id, Utc::now().timestamp() + 3600)
+                    )),
+                ))
+                .await
+                .unwrap();
+
+            assert_eq!(
+                response.status(),
+                expected_status,
+                "GET redemption 99 as {role:?} for tenant {tenant_id:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn province_list_route_is_available_to_authenticated_roles() {
+        unsafe { std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET); }
+
+        let cases = [
+            (Role::SysAdmin, None),
+            (Role::TenantOwner, Some(7)),
+            (Role::TenantUser, Some(7)),
+            (Role::Customer, None),
+        ];
+
+        for (role, tenant_id) in cases {
+            let db = MockDatabase::new(DatabaseBackend::Postgres)
+                .append_query_results([vec![user_model_for(role.clone(), tenant_id)]])
+                .append_query_results([Vec::<entity::province_entity::Model>::new()])
+                .into_connection();
+            let db_for_log = db.clone();
+            let app_state = state(db);
+            let app = crate::routes::resource_routes::resources_routes(app_state.clone())
+                .with_state(app_state);
+            let response = app
+                .oneshot(request(
+                    "GET",
+                    "/province?countryCode=BR",
+                    Some(&format!(
+                        "Bearer {}",
+                        token_for(role.clone(), tenant_id, Utc::now().timestamp() + 3600)
+                    )),
+                ))
+                .await
+                .unwrap();
+
+            assert_eq!(response.status(), StatusCode::OK, "GET provinces as {role:?}");
+            let query = db_for_log
+                .into_transaction_log()
+                .into_iter()
+                .flat_map(|transaction| transaction.statements().to_vec())
+                .find(|statement| statement.sql.contains("FROM \"province\""))
+                .expect("province lookup query should execute");
+            assert!(query.sql.contains("country_code"), "{}", query.sql);
+            assert!(!query.sql.contains("tenant_id"), "{}", query.sql);
+        }
+    }
+
+    #[tokio::test]
+    async fn province_write_routes_are_sysadmin_only() {
+        unsafe { std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET); }
+
+        let cases = [
+            (Role::SysAdmin, None),
+            (Role::TenantOwner, Some(7)),
+            (Role::TenantUser, Some(7)),
+            (Role::Customer, None),
+        ];
+        let payload = r#"{"acronym":"SP","name":"Sao Paulo","countryCode":"BR","ibgeCode":"35"}"#;
+
+        for (role, tenant_id) in cases {
+            for (method, path) in [
+                ("POST", "/province"),
+                ("PUT", "/province/1"),
+                ("POST", "/province/import"),
+            ] {
+                let db = MockDatabase::new(DatabaseBackend::Postgres)
+                    .append_query_results([vec![user_model_for(role.clone(), tenant_id)]])
+                    .into_connection();
+                let app_state = state(db);
+                let app = crate::routes::resource_routes::resources_routes(app_state.clone())
+                    .with_state(app_state);
+                let authorization = format!(
+                    "Bearer {}",
+                    token_for(role.clone(), tenant_id, Utc::now().timestamp() + 3600)
+                );
+                let request = if path == "/province/import" {
+                    Request::builder()
+                        .method(method)
+                        .uri(path)
+                        .header("authorization", authorization)
+                        .header("content-type", "multipart/form-data; boundary=c001")
+                        .body(Body::from("--c001--\r\n"))
+                        .unwrap()
+                } else {
+                    json_request(method, path, &authorization, payload)
+                };
+                let response = app.oneshot(request).await.unwrap();
+
+                if role == Role::SysAdmin {
+                    assert_ne!(
+                        response.status(),
+                        StatusCode::FORBIDDEN,
+                        "SysAdmin should pass the role guard for {method} {path}"
+                    );
+                } else {
+                    assert_eq!(
+                        response.status(),
+                        StatusCode::FORBIDDEN,
+                        "{role:?} should be denied for {method} {path}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn city_collection_routes_are_available_to_authenticated_roles() {
+        unsafe { std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET); }
+
+        let roles = [
+            (Role::SysAdmin, None),
+            (Role::TenantOwner, Some(7)),
+            (Role::TenantUser, Some(7)),
+            (Role::Customer, None),
+        ];
+        let paths = [
+            ("/cities", false),
+            ("/cities/by-province/7", true),
+            ("/city/by-province/7", true),
+        ];
+
+        for (role, tenant_id) in roles {
+            for (path, filters_by_province) in paths {
+                let db = MockDatabase::new(DatabaseBackend::Postgres)
+                    .append_query_results([vec![user_model_for(role.clone(), tenant_id)]])
+                    .append_query_results([Vec::<entity::city_entity::Model>::new()])
+                    .into_connection();
+                let db_for_log = db.clone();
+                let app_state = state(db);
+                let app = crate::routes::resource_routes::resources_routes(app_state.clone())
+                    .with_state(app_state);
+                let response = app
+                    .oneshot(request(
+                        "GET",
+                        path,
+                        Some(&format!(
+                            "Bearer {}",
+                            token_for(role.clone(), tenant_id, Utc::now().timestamp() + 3600)
+                        )),
+                    ))
+                    .await
+                    .unwrap();
+
+                assert_eq!(response.status(), StatusCode::OK, "GET {path} as {role:?}");
+                let query = db_for_log
+                    .into_transaction_log()
+                    .into_iter()
+                    .flat_map(|transaction| transaction.statements().to_vec())
+                    .find(|statement| statement.sql.contains("FROM \"city\""))
+                    .expect("city collection query should execute");
+                let where_clause = query
+                    .sql
+                    .split_once(" WHERE ")
+                    .map(|(_, clause)| clause)
+                    .unwrap_or_default();
+                assert!(!query.sql.contains("tenant_id"), "{}", query.sql);
+                assert_eq!(
+                    where_clause.contains("province_id"),
+                    filters_by_province,
+                    "{path} query: {}",
+                    query.sql
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn city_paged_routes_are_available_to_authenticated_roles() {
+        unsafe { std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET); }
+
+        let roles = [
+            (Role::SysAdmin, None),
+            (Role::TenantOwner, Some(7)),
+            (Role::TenantUser, Some(7)),
+            (Role::Customer, None),
+        ];
+        let paths = ["/cities/paged", "/city/paged"];
+        let count_row = BTreeMap::from([("num_items".to_string(), Value::BigInt(Some(0)))]);
+
+        for (role, tenant_id) in roles {
+            for path in paths {
+                let db = MockDatabase::new(DatabaseBackend::Postgres)
+                    .append_query_results([vec![user_model_for(role.clone(), tenant_id)]])
+                    .append_query_results([vec![count_row.clone()]])
+                    .append_query_results([Vec::<entity::city_entity::Model>::new()])
+                    .into_connection();
+                let db_for_log = db.clone();
+                let app_state = state(db);
+                let app = crate::routes::resource_routes::resources_routes(app_state.clone())
+                    .with_state(app_state);
+                let response = app
+                    .oneshot(request(
+                        "GET",
+                        path,
+                        Some(&format!(
+                            "Bearer {}",
+                            token_for(role.clone(), tenant_id, Utc::now().timestamp() + 3600)
+                        )),
+                    ))
+                    .await
+                    .unwrap();
+
+                assert_eq!(response.status(), StatusCode::OK, "GET {path} as {role:?}");
+                let queries: Vec<_> = db_for_log
+                    .into_transaction_log()
+                    .into_iter()
+                    .flat_map(|transaction| transaction.statements().to_vec())
+                    .filter(|statement| statement.sql.contains("FROM \"city\""))
+                    .collect();
+                assert_eq!(queries.len(), 2, "{path} should count and fetch city rows");
+                assert!(queries.iter().all(|query| !query.sql.contains("tenant_id")));
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn city_by_id_route_is_available_to_authenticated_roles() {
+        unsafe { std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET); }
+
+        let roles = [
+            (Role::SysAdmin, None),
+            (Role::TenantOwner, Some(7)),
+            (Role::TenantUser, Some(7)),
+            (Role::Customer, None),
+        ];
+
+        for (role, tenant_id) in roles {
+            let city = entity::city_entity::Model {
+                id: 99,
+                uuid: uuid::Uuid::new_v4(),
+                province_id: 7,
+                name: "C001 city".into(),
+                ibge_code: Some("1234567".into()),
+            };
+            let db = MockDatabase::new(DatabaseBackend::Postgres)
+                .append_query_results([vec![user_model_for(role.clone(), tenant_id)]])
+                .append_query_results([vec![city]])
+                .into_connection();
+            let app_state = state(db);
+            let app = crate::routes::resource_routes::resources_routes(app_state.clone())
+                .with_state(app_state);
+            let response = app
+                .oneshot(request(
+                    "GET",
+                    "/city/99",
+                    Some(&format!(
+                        "Bearer {}",
+                        token_for(role.clone(), tenant_id, Utc::now().timestamp() + 3600)
+                    )),
+                ))
+                .await
+                .unwrap();
+
+            assert_eq!(response.status(), StatusCode::OK, "GET city as {role:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn city_write_routes_are_sysadmin_only() {
+        unsafe { std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET); }
+
+        let cases = [
+            (Role::SysAdmin, None),
+            (Role::TenantOwner, Some(7)),
+            (Role::TenantUser, Some(7)),
+            (Role::Customer, None),
+        ];
+        let payload = r#"{"provinceId":7,"name":"C001 city","ibgeCode":"1234567"}"#;
+
+        for (role, tenant_id) in cases {
+            for (method, path) in [
+                ("POST", "/city"),
+                ("PUT", "/city/1"),
+                ("POST", "/city/import"),
+            ] {
+                let db = MockDatabase::new(DatabaseBackend::Postgres)
+                    .append_query_results([vec![user_model_for(role.clone(), tenant_id)]])
+                    .into_connection();
+                let app_state = state(db);
+                let app = crate::routes::resource_routes::resources_routes(app_state.clone())
+                    .with_state(app_state);
+                let authorization = format!(
+                    "Bearer {}",
+                    token_for(role.clone(), tenant_id, Utc::now().timestamp() + 3600)
+                );
+                let request = if path == "/city/import" {
+                    Request::builder()
+                        .method(method)
+                        .uri(path)
+                        .header("authorization", authorization)
+                        .header("content-type", "multipart/form-data; boundary=c001")
+                        .body(Body::from("--c001--\r\n"))
+                        .unwrap()
+                } else {
+                    json_request(method, path, &authorization, payload)
+                };
+                let response = app.oneshot(request).await.unwrap();
+
+                if role == Role::SysAdmin {
+                    assert_ne!(
+                        response.status(),
+                        StatusCode::FORBIDDEN,
+                        "SysAdmin should pass the role guard for {method} {path}"
+                    );
+                } else {
+                    assert_eq!(
+                        response.status(),
+                        StatusCode::FORBIDDEN,
+                        "{role:?} should be denied for {method} {path}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn province_read_routes_are_available_to_authenticated_roles() {
+        unsafe { std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET); }
+
+        let roles = [
+            (Role::SysAdmin, None),
+            (Role::TenantOwner, Some(7)),
+            (Role::TenantUser, Some(7)),
+            (Role::Customer, None),
+        ];
+        let count_row = BTreeMap::from([("num_items".to_string(), Value::BigInt(Some(0)))]);
+
+        for (role, tenant_id) in roles {
+            let db = MockDatabase::new(DatabaseBackend::Postgres)
+                .append_query_results([vec![user_model_for(role.clone(), tenant_id)]])
+                .append_query_results([vec![count_row.clone()]])
+                .append_query_results([Vec::<entity::province_entity::Model>::new()])
+                .into_connection();
+            let db_for_log = db.clone();
+            let app_state = state(db);
+            let app = crate::routes::resource_routes::resources_routes(app_state.clone())
+                .with_state(app_state);
+            let response = app
+                .oneshot(request(
+                    "GET",
+                    "/province/paged",
+                    Some(&format!(
+                        "Bearer {}",
+                        token_for(role.clone(), tenant_id, Utc::now().timestamp() + 3600)
+                    )),
+                ))
+                .await
+                .unwrap();
+
+            assert_eq!(response.status(), StatusCode::OK, "GET paged provinces as {role:?}");
+            let queries: Vec<_> = db_for_log
+                .into_transaction_log()
+                .into_iter()
+                .flat_map(|transaction| transaction.statements().to_vec())
+                .filter(|statement| statement.sql.contains("FROM \"province\""))
+                .collect();
+            assert_eq!(queries.len(), 2, "province page should count and fetch rows");
+            assert!(queries.iter().all(|query| !query.sql.contains("tenant_id")));
+
+            let province = entity::province_entity::Model {
+                id: 7,
+                uuid: uuid::Uuid::new_v4(),
+                acronym: "SP".into(),
+                name: "Sao Paulo".into(),
+                country_code: "BR".into(),
+                ibge_code: Some("35".into()),
+            };
+            let db = MockDatabase::new(DatabaseBackend::Postgres)
+                .append_query_results([vec![user_model_for(role.clone(), tenant_id)]])
+                .append_query_results([vec![province]])
+                .into_connection();
+            let app_state = state(db);
+            let app = crate::routes::resource_routes::resources_routes(app_state.clone())
+                .with_state(app_state);
+            let response = app
+                .oneshot(request(
+                    "GET",
+                    "/province/7",
+                    Some(&format!(
+                        "Bearer {}",
+                        token_for(role.clone(), tenant_id, Utc::now().timestamp() + 3600)
+                    )),
+                ))
+                .await
+                .unwrap();
+
+            assert_eq!(response.status(), StatusCode::OK, "GET province by ID as {role:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn product_category_collection_routes_scope_queries_by_role() {
+        unsafe { std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET); }
+
+        let roles = [
+            (Role::SysAdmin, None, "unrestricted"),
+            (Role::TenantOwner, Some(7), "tenant"),
+            (Role::TenantUser, Some(7), "tenant"),
+            (Role::Customer, None, "deny"),
+        ];
+        let paths = [
+            "/product-categories",
+            "/product-categories/by-product/99",
+            "/product-categories/by-category/88",
+        ];
+        let now = Utc::now().naive_utc();
+
+        for (role, tenant_id, expected_scope) in roles {
+            for path in paths {
+                let row = entity::product_category_entity::Model {
+                    id: 1,
+                    uuid: uuid::Uuid::new_v4(),
+                    tenant_id: Some(8),
+                    product_id: 99,
+                    category_id: 88,
+                    is_primary: true,
+                    created_at: now,
+                    created_by: None,
+                };
+                let db = MockDatabase::new(DatabaseBackend::Postgres)
+                    .append_query_results([vec![user_model_for(role.clone(), tenant_id)]])
+                    .append_query_results([vec![row]])
+                    .into_connection();
+                let db_for_log = db.clone();
+                let app_state = state(db);
+                let app = crate::routes::resource_routes::resources_routes(app_state.clone())
+                    .with_state(app_state);
+                let response = app
+                    .oneshot(request(
+                        "GET",
+                        path,
+                        Some(&format!(
+                            "Bearer {}",
+                            token_for(role.clone(), tenant_id, Utc::now().timestamp() + 3600)
+                        )),
+                    ))
+                    .await
+                    .unwrap();
+
+                assert_eq!(response.status(), StatusCode::OK, "GET {path} as {role:?}");
+                let query = db_for_log
+                    .into_transaction_log()
+                    .into_iter()
+                    .flat_map(|transaction| transaction.statements().to_vec())
+                    .find(|statement| statement.sql.contains("FROM \"product_category\""))
+                    .expect("product-category query should execute");
+                let where_clause = query
+                    .sql
+                    .split_once(" WHERE ")
+                    .map(|(_, clause)| clause)
+                    .unwrap_or_default();
+                match expected_scope {
+                    "unrestricted" => assert!(!where_clause.contains("tenant_id"), "{}", query.sql),
+                    "tenant" => assert!(where_clause.contains("tenant_id"), "{}", query.sql),
+                    "deny" => assert!(where_clause.contains("1 = 0"), "{}", query.sql),
+                    _ => unreachable!("unknown expected scope"),
+                }
+            }
+
+            let count_row = BTreeMap::from([("num_items".to_string(), Value::BigInt(Some(0)))]);
+            let mut db = MockDatabase::new(DatabaseBackend::Postgres)
+                .append_query_results([vec![user_model_for(role.clone(), tenant_id)]]);
+            if expected_scope != "deny" {
+                db = db
+                    .append_query_results([vec![count_row]])
+                    .append_query_results([Vec::<entity::product_category_entity::Model>::new()]);
+            }
+            let db = db.into_connection();
+            let db_for_log = db.clone();
+            let app_state = state(db);
+            let app = crate::routes::resource_routes::resources_routes(app_state.clone())
+                .with_state(app_state);
+            let response = app
+                .oneshot(request(
+                    "GET",
+                    "/product-categories/paged",
+                    Some(&format!(
+                        "Bearer {}",
+                        token_for(role.clone(), tenant_id, Utc::now().timestamp() + 3600)
+                    )),
+                ))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "paged as {role:?}");
+            let queries: Vec<_> = db_for_log
+                .into_transaction_log()
+                .into_iter()
+                .flat_map(|transaction| transaction.statements().to_vec())
+                .filter(|statement| statement.sql.contains("FROM \"product_category\""))
+                .collect();
+            if expected_scope == "deny" {
+                assert!(queries.is_empty(), "tenantless Customer query was issued");
+            } else {
+                assert_eq!(queries.len(), 2, "paged route should count and fetch rows");
+                let list_query = queries.last().unwrap();
+                match expected_scope {
+                    "unrestricted" => assert!(!list_query.sql.contains(" WHERE \"product_category\".\"tenant_id\""), "{}", list_query.sql),
+                    "tenant" => assert!(list_query.sql.contains("tenant_id"), "{}", list_query.sql),
+                    _ => unreachable!("unknown expected scope"),
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn product_category_by_id_enforces_tenant_access() {
+        unsafe { std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET); }
+
+        let cases = [
+            (Role::SysAdmin, None, StatusCode::OK),
+            (Role::TenantOwner, Some(7), StatusCode::NOT_FOUND),
+            (Role::TenantOwner, Some(8), StatusCode::OK),
+            (Role::TenantUser, Some(7), StatusCode::NOT_FOUND),
+            (Role::Customer, None, StatusCode::NOT_FOUND),
+        ];
+        let now = Utc::now().naive_utc();
+
+        for (role, tenant_id, expected_status) in cases {
+            let row = entity::product_category_entity::Model {
+                id: 99,
+                uuid: uuid::Uuid::new_v4(),
+                tenant_id: Some(8),
+                product_id: 99,
+                category_id: 88,
+                is_primary: true,
+                created_at: now,
+                created_by: None,
+            };
+            let db = MockDatabase::new(DatabaseBackend::Postgres)
+                .append_query_results([vec![user_model_for(role.clone(), tenant_id)]])
+                .append_query_results([vec![row]])
+                .into_connection();
+            let app_state = state(db);
+            let app = crate::routes::resource_routes::resources_routes(app_state.clone())
+                .with_state(app_state);
+            let response = app
+                .oneshot(request(
+                    "GET",
+                    "/product-categories/99",
+                    Some(&format!(
+                        "Bearer {}",
+                        token_for(role.clone(), tenant_id, Utc::now().timestamp() + 3600)
+                    )),
+                ))
+                .await
+                .unwrap();
+            assert_eq!(
+                response.status(),
+                expected_status,
+                "GET product category as {role:?} for tenant {tenant_id:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn product_routes_scope_queries_by_role() {
+        unsafe { std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET); }
+
+        let roles = [
+            (Role::SysAdmin, None, "unrestricted"),
+            (Role::TenantOwner, Some(7), "tenant"),
+            (Role::TenantUser, Some(7), "tenant"),
+            (Role::Customer, None, "deny"),
+        ];
+        let count_row = BTreeMap::from([("num_items".to_string(), Value::BigInt(Some(0)))]);
+
+        for (role, tenant_id, expected_scope) in roles {
+            for (path, paged) in [("/products", false), ("/products/paged", true)] {
+                let mut db = MockDatabase::new(DatabaseBackend::Postgres)
+                    .append_query_results([vec![user_model_for(role.clone(), tenant_id)]]);
+                if paged && expected_scope == "deny" {
+                } else {
+                    if paged {
+                        db = db.append_query_results([vec![count_row.clone()]]);
+                    }
+                    db = db.append_query_results([Vec::<entity::product_entity::Model>::new()]);
+                }
+                let db = db.into_connection();
+                let db_for_log = db.clone();
+                let app_state = state(db);
+                let app = crate::routes::resource_routes::resources_routes(app_state.clone())
+                    .with_state(app_state);
+                let response = app
+                    .oneshot(request(
+                        "GET",
+                        path,
+                        Some(&format!(
+                            "Bearer {}",
+                            token_for(role.clone(), tenant_id, Utc::now().timestamp() + 3600)
+                        )),
+                    ))
+                    .await
+                    .unwrap();
+                assert_eq!(response.status(), StatusCode::OK, "GET {path} as {role:?}");
+
+                let queries: Vec<_> = db_for_log
+                    .into_transaction_log()
+                    .into_iter()
+                    .flat_map(|transaction| transaction.statements().to_vec())
+                    .filter(|statement| statement.sql.contains("FROM \"product\""))
+                    .collect();
+                if paged && expected_scope == "deny" {
+                    assert!(queries.is_empty(), "tenantless Customer product query was issued");
+                    continue;
+                }
+                let query = if paged {
+                    assert_eq!(queries.len(), 2, "paged products should count and fetch");
+                    &queries[1]
+                } else {
+                    assert_eq!(queries.len(), 1);
+                    &queries[0]
+                };
+                let where_clause = query
+                    .sql
+                    .split_once(" WHERE ")
+                    .map(|(_, clause)| clause)
+                    .unwrap_or_default();
+                match expected_scope {
+                    "unrestricted" => assert!(!where_clause.contains("tenant_id"), "{}", query.sql),
+                    "tenant" => assert!(where_clause.contains("tenant_id"), "{}", query.sql),
+                    "deny" => assert!(where_clause.contains("1 = 0"), "{}", query.sql),
+                    _ => unreachable!("unknown expected scope"),
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn sku_routes_scope_queries_by_role() {
+        unsafe { std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET); }
+
+        let roles = [
+            (Role::SysAdmin, None, "unrestricted"),
+            (Role::TenantOwner, Some(7), "tenant"),
+            (Role::TenantUser, Some(7), "tenant"),
+            (Role::Customer, None, "deny"),
+        ];
+        let count_row = BTreeMap::from([("num_items".to_string(), Value::BigInt(Some(0)))]);
+
+        for (role, tenant_id, expected_scope) in roles {
+            for (path, paged) in [("/skus", false), ("/skus/paged", true)] {
+                let mut db = MockDatabase::new(DatabaseBackend::Postgres)
+                    .append_query_results([vec![user_model_for(role.clone(), tenant_id)]]);
+                if !(paged && expected_scope == "deny") {
+                    if paged {
+                        db = db.append_query_results([vec![count_row.clone()]]);
+                    }
+                    db = db.append_query_results([Vec::<entity::sku_entity::Model>::new()]);
+                }
+                let db = db.into_connection();
+                let db_for_log = db.clone();
+                let app_state = state(db);
+                let app = crate::routes::resource_routes::resources_routes(app_state.clone())
+                    .with_state(app_state);
+                let response = app
+                    .oneshot(request(
+                        "GET",
+                        path,
+                        Some(&format!(
+                            "Bearer {}",
+                            token_for(role.clone(), tenant_id, Utc::now().timestamp() + 3600)
+                        )),
+                    ))
+                    .await
+                    .unwrap();
+                assert_eq!(response.status(), StatusCode::OK, "GET {path} as {role:?}");
+
+                let queries: Vec<_> = db_for_log
+                    .into_transaction_log()
+                    .into_iter()
+                    .flat_map(|transaction| transaction.statements().to_vec())
+                    .filter(|statement| statement.sql.contains("FROM \"sku\""))
+                    .collect();
+                if paged && expected_scope == "deny" {
+                    assert!(queries.is_empty(), "tenantless Customer SKU query was issued");
+                    continue;
+                }
+                let query = if paged {
+                    assert_eq!(queries.len(), 2, "paged SKUs should count and fetch");
+                    &queries[1]
+                } else {
+                    assert_eq!(queries.len(), 1);
+                    &queries[0]
+                };
+                let where_clause = query
+                    .sql
+                    .split_once(" WHERE ")
+                    .map(|(_, clause)| clause)
+                    .unwrap_or_default();
+                match expected_scope {
+                    "unrestricted" => assert!(!where_clause.contains("tenant_id"), "{}", query.sql),
+                    "tenant" => assert!(where_clause.contains("tenant_id"), "{}", query.sql),
+                    "deny" => assert!(where_clause.contains("1 = 0"), "{}", query.sql),
+                    _ => unreachable!("unknown expected scope"),
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn sku_stock_collection_routes_scope_queries_by_role() {
+        unsafe { std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET); }
+
+        let roles = [
+            (Role::SysAdmin, None, "unrestricted"),
+            (Role::TenantOwner, Some(7), "tenant"),
+            (Role::TenantUser, Some(7), "tenant"),
+            (Role::Customer, None, "deny"),
+        ];
+        let count_row = BTreeMap::from([("num_items".to_string(), Value::BigInt(Some(0)))]);
+
+        for (role, tenant_id, expected_scope) in roles {
+            for (path, paged) in [("/sku-stocks", false), ("/sku-stocks/paged", true)] {
+                let mut db = MockDatabase::new(DatabaseBackend::Postgres)
+                    .append_query_results([vec![user_model_for(role.clone(), tenant_id)]]);
+                if !(paged && expected_scope == "deny") {
+                    if paged {
+                        db = db.append_query_results([vec![count_row.clone()]]);
+                    }
+                    db = db.append_query_results([Vec::<entity::sku_stock_entity::Model>::new()]);
+                }
+                let db = db.into_connection();
+                let db_for_log = db.clone();
+                let app_state = state(db);
+                let app = crate::routes::resource_routes::resources_routes(app_state.clone())
+                    .with_state(app_state);
+                let response = app
+                    .oneshot(request(
+                        "GET",
+                        path,
+                        Some(&format!(
+                            "Bearer {}",
+                            token_for(role.clone(), tenant_id, Utc::now().timestamp() + 3600)
+                        )),
+                    ))
+                    .await
+                    .unwrap();
+                assert_eq!(response.status(), StatusCode::OK, "GET {path} as {role:?}");
+
+                let queries: Vec<_> = db_for_log
+                    .into_transaction_log()
+                    .into_iter()
+                    .flat_map(|transaction| transaction.statements().to_vec())
+                    .filter(|statement| statement.sql.contains("FROM \"sku_stock\""))
+                    .collect();
+                if paged && expected_scope == "deny" {
+                    assert!(queries.is_empty(), "tenantless Customer stock query was issued");
+                    continue;
+                }
+                let query = if paged {
+                    assert_eq!(queries.len(), 2, "paged stock should count and fetch");
+                    &queries[1]
+                } else {
+                    assert_eq!(queries.len(), 1);
+                    &queries[0]
+                };
+                let where_clause = query
+                    .sql
+                    .split_once(" WHERE ")
+                    .map(|(_, clause)| clause)
+                    .unwrap_or_default();
+                match expected_scope {
+                    "unrestricted" => assert!(!where_clause.contains("tenant_id"), "{}", query.sql),
+                    "tenant" => assert!(where_clause.contains("tenant_id"), "{}", query.sql),
+                    "deny" => assert!(where_clause.contains("1 = 0"), "{}", query.sql),
+                    _ => unreachable!("unknown expected scope"),
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn profile_put_aliases_update_authenticated_person_for_all_roles() {
+        unsafe { std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET); }
+
+        let roles = [
+            (Role::SysAdmin, None),
+            (Role::TenantOwner, Some(7)),
+            (Role::TenantUser, Some(7)),
+            (Role::Customer, None),
+        ];
+        let paths = ["/resource/profile", "/profile"];
+        let payload = r#"{"userId":999,"firstName":"  Updated Name  ","surname":"  Updated Surname  "}"#;
+
+        for (role, tenant_id) in roles {
+            for path in paths {
+                let mut updated_person = person_model(77, 42, tenant_id);
+                updated_person.first_name = "Updated Name".into();
+                updated_person.surname = Some("Updated Surname".into());
+                let db = MockDatabase::new(DatabaseBackend::Postgres)
+                    .append_query_results([vec![user_model_for(role.clone(), tenant_id)]])
+                    .append_query_results([vec![person_model(77, 42, tenant_id)]])
+                    .append_query_results([vec![updated_person]])
+                    .into_connection();
+                let db_for_log = db.clone();
+                let app_state = state(db);
+                let app = crate::routes::resource_routes::resources_routes(app_state.clone())
+                    .with_state(app_state);
+                let response = app
+                    .oneshot(json_request(
+                        "PUT",
+                        path,
+                        &format!(
+                            "Bearer {}",
+                            token_for(role.clone(), tenant_id, Utc::now().timestamp() + 3600)
+                        ),
+                        payload,
+                    ))
+                    .await
+                    .unwrap();
+
+                let status = response.status();
+                let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+                    .await
+                    .unwrap();
+                let statements: Vec<_> = db_for_log
+                    .into_transaction_log()
+                    .into_iter()
+                    .flat_map(|transaction| transaction.statements().to_vec())
+                    .into_iter()
+                    .map(|statement| statement.sql)
+                    .collect();
+                assert_eq!(
+                    status,
+                    StatusCode::OK,
+                    "PUT {path} as {role:?}: {}; SQL: {statements:?}",
+                    String::from_utf8_lossy(&body)
+                );
+                let person: serde_json::Value = serde_json::from_slice(&body).unwrap();
+                assert_eq!(person["id"], 77);
+                assert_eq!(person["userId"], 42);
+                assert_eq!(person["firstName"], "Updated Name");
+                assert_eq!(person["surname"], "Updated Surname");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn profile_get_aliases_return_authenticated_person_for_all_roles() {
+        unsafe { std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET); }
+
+        let roles = [
+            (Role::SysAdmin, None),
+            (Role::TenantOwner, Some(7)),
+            (Role::TenantUser, Some(7)),
+            (Role::Customer, None),
+        ];
+        let paths = ["/resource/profile", "/resource", "/resource/me", "/profile"];
+
+        for (role, tenant_id) in roles {
+            for path in paths {
+                let db = MockDatabase::new(DatabaseBackend::Postgres)
+                    .append_query_results([vec![user_model_for(role.clone(), tenant_id)]])
+                    .append_query_results([vec![person_model(77, 42, tenant_id)]])
+                    .append_query_results([Vec::<entity::person_address_entity::Model>::new()])
+                    .into_connection();
+                let app_state = state(db);
+                let app = crate::routes::resource_routes::resources_routes(app_state.clone())
+                    .with_state(app_state);
+                let response = app
+                    .oneshot(request(
+                        "GET",
+                        path,
+                        Some(&format!(
+                            "Bearer {}",
+                            token_for(role.clone(), tenant_id, Utc::now().timestamp() + 3600)
+                        )),
+                    ))
+                    .await
+                    .unwrap();
+
+                assert_eq!(response.status(), StatusCode::OK, "GET {path} as {role:?}");
+                let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+                    .await
+                    .unwrap();
+                let profile: serde_json::Value = serde_json::from_slice(&body).unwrap();
+                assert_eq!(profile["user"]["role"], role.to_string());
+                assert_eq!(profile["person"]["userId"], 42);
+                assert_eq!(profile["person"]["id"], 77);
+                assert!(profile["addresses"].as_array().unwrap().is_empty());
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn product_image_list_enforces_product_tenant_access() {
+        unsafe { std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET); }
+
+        let cases = [
+            (Role::SysAdmin, None, StatusCode::OK),
+            (Role::TenantOwner, Some(7), StatusCode::FORBIDDEN),
+            (Role::TenantOwner, Some(8), StatusCode::OK),
+            (Role::TenantUser, Some(7), StatusCode::FORBIDDEN),
+            (Role::Customer, None, StatusCode::FORBIDDEN),
+        ];
+        let now = Utc::now().naive_utc();
+
+        for (role, tenant_id, expected_status) in cases {
+            let product = entity::product_entity::Model {
+                id: 99,
+                uuid: uuid::Uuid::new_v4(),
+                tenant_id: Some(8),
+                name: "C001 product".into(),
+                slug: "c001-product".into(),
+                description: None,
+                brand: None,
+                active: true,
+                ncm: "12345678".into(),
+                cest: None,
+                origem_mercadoria: 0,
+                created_at: now,
+                created_by: None,
+                updated_at: now,
+                updated_by: None,
+            };
+            let mut db = MockDatabase::new(DatabaseBackend::Postgres)
+                .append_query_results([vec![user_model_for(role.clone(), tenant_id)]])
+                .append_query_results([vec![product]]);
+            if expected_status == StatusCode::OK {
+                db = db.append_query_results([Vec::<entity::product_image_entity::Model>::new()]);
+            }
+            let app_state = state(db.into_connection());
+            let app = crate::routes::resource_routes::resources_routes(app_state.clone())
+                .with_state(app_state);
+            let response = app
+                .oneshot(request(
+                    "GET",
+                    "/products/99/images",
+                    Some(&format!(
+                        "Bearer {}",
+                        token_for(role.clone(), tenant_id, Utc::now().timestamp() + 3600)
+                    )),
+                ))
+                .await
+                .unwrap();
+            assert_eq!(
+                response.status(),
+                expected_status,
+                "GET product images as {role:?} for tenant {tenant_id:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn product_image_mutations_require_product_access_before_storage() {
+        unsafe { std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET); }
+
+        let roles = [
+            (Role::TenantOwner, Some(7)),
+            (Role::TenantUser, Some(7)),
+            (Role::Customer, None),
+        ];
+        let payload = r#"{"images":[{"originalFilename":"image.jpg","mimeType":"image/jpeg","sizeBytes":1024}]}"#;
+
+        for (role, tenant_id) in roles {
+            for (method, path) in [
+                ("POST", "/products/99/images/presign"),
+                ("DELETE", "/products/99/images/101"),
+                ("PUT", "/products/99/images/101/primary"),
+            ] {
+                let db = MockDatabase::new(DatabaseBackend::Postgres)
+                    .append_query_results([vec![user_model_for(role.clone(), tenant_id)]])
+                    .append_query_results([Vec::<entity::product_entity::Model>::new()])
+                    .into_connection();
+                let app_state = state(db);
+                let app = crate::routes::resource_routes::resources_routes(app_state.clone())
+                    .with_state(app_state);
+                let authorization = format!(
+                    "Bearer {}",
+                    token_for(role.clone(), tenant_id, Utc::now().timestamp() + 3600)
+                );
+                let request = if method == "POST" {
+                    json_request(method, path, &authorization, payload)
+                } else {
+                    request(method, path, Some(&authorization))
+                };
+                let response = app.oneshot(request).await.unwrap();
+                assert_eq!(
+                    response.status(),
+                    StatusCode::NOT_FOUND,
+                    "{role:?} should not operate on inaccessible product via {method} {path}"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn sku_stock_by_id_and_sku_enforce_tenant_access() {
+        unsafe { std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET); }
+
+        let roles = [
+            (Role::SysAdmin, None, StatusCode::OK),
+            (Role::TenantOwner, Some(7), StatusCode::NOT_FOUND),
+            (Role::TenantOwner, Some(8), StatusCode::OK),
+            (Role::TenantUser, Some(7), StatusCode::NOT_FOUND),
+            (Role::Customer, None, StatusCode::NOT_FOUND),
+        ];
+        let now = Utc::now().naive_utc();
+
+        for (role, tenant_id, expected_status) in roles {
+            for path in ["/sku-stocks/99", "/sku-stocks/by-sku/99"] {
+                let stock = entity::sku_stock_entity::Model {
+                    id: 99,
+                    uuid: uuid::Uuid::new_v4(),
+                    tenant_id: Some(8),
+                    sku_id: 99,
+                    warehouse_id: Some(1),
+                    quantity: 10,
+                    reserved: 0,
+                    created_at: now,
+                    created_by: None,
+                    updated_at: now,
+                    updated_by: None,
+                };
+                let db = MockDatabase::new(DatabaseBackend::Postgres)
+                    .append_query_results([vec![user_model_for(role.clone(), tenant_id)]])
+                    .append_query_results([vec![stock]])
+                    .into_connection();
+                let app_state = state(db);
+                let app = crate::routes::resource_routes::resources_routes(app_state.clone())
+                    .with_state(app_state);
+                let response = app
+                    .oneshot(request(
+                        "GET",
+                        path,
+                        Some(&format!(
+                            "Bearer {}",
+                            token_for(role.clone(), tenant_id, Utc::now().timestamp() + 3600)
+                        )),
+                    ))
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    response.status(),
+                    expected_status,
+                    "GET {path} as {role:?} for tenant {tenant_id:?}"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn sku_attribute_list_routes_scope_queries_by_role() {
+        unsafe { std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET); }
+
+        let roles = [
+            (Role::SysAdmin, None, "unrestricted"),
+            (Role::TenantOwner, Some(7), "tenant"),
+            (Role::TenantUser, Some(7), "tenant"),
+            (Role::Customer, None, "deny"),
+        ];
+        let routes = [
+            ("/sku-attributes", false),
+            ("/sku-attributes/paged", true),
+            ("/sku-attributes/by-sku/99", false),
+            ("/sku-attributes/by-product/99", false),
+            ("/sku-attribute-values", false),
+            ("/sku-attribute-values/paged", true),
+            ("/sku-attribute-values/by-sku/99", false),
+        ];
+        let count_row = BTreeMap::from([("num_items".to_string(), Value::BigInt(Some(0)))]);
+        let now = Utc::now().naive_utc();
+
+        for (role, tenant_id, expected_scope) in roles {
+            for (path, paged) in routes {
+                let mut db = MockDatabase::new(DatabaseBackend::Postgres)
+                    .append_query_results([vec![user_model_for(role.clone(), tenant_id)]]);
+                if !(paged && expected_scope == "deny") {
+                    if paged {
+                        db = db.append_query_results([vec![count_row.clone()]]);
+                    }
+                    let row = entity::sku_attribute_value_entity::Model {
+                        id: 99,
+                        uuid: uuid::Uuid::new_v4(),
+                        tenant_id: Some(8),
+                        product_id: 44,
+                        sku_id: 99,
+                        product_attribute_id: 55,
+                        attribute_id: 66,
+                        attribute_value_id: 77,
+                        created_at: now,
+                        created_by: None,
+                        updated_at: now,
+                        updated_by: None,
+                    };
+                    db = db.append_query_results([vec![row]]);
+                }
+                let db = db.into_connection();
+                let db_for_log = db.clone();
+                let app_state = state(db);
+                let app = crate::routes::resource_routes::resources_routes(app_state.clone())
+                    .with_state(app_state);
+                let response = app
+                    .oneshot(request(
+                        "GET",
+                        path,
+                        Some(&format!(
+                            "Bearer {}",
+                            token_for(role.clone(), tenant_id, Utc::now().timestamp() + 3600)
+                        )),
+                    ))
+                    .await
+                    .unwrap();
+                assert_eq!(response.status(), StatusCode::OK, "GET {path} as {role:?}");
+
+                let queries: Vec<_> = db_for_log
+                    .into_transaction_log()
+                    .into_iter()
+                    .flat_map(|transaction| transaction.statements().to_vec())
+                    .filter(|statement| statement.sql.contains("FROM \"sku_attribute_value\""))
+                    .collect();
+                if paged && expected_scope == "deny" {
+                    assert!(queries.is_empty(), "tenantless Customer query was issued for {path}");
+                    continue;
+                }
+                let query = if paged {
+                    assert_eq!(queries.len(), 2, "{path} should count and fetch rows");
+                    &queries[1]
+                } else {
+                    assert_eq!(queries.len(), 1, "{path} should execute one query");
+                    &queries[0]
+                };
+                let where_clause = query
+                    .sql
+                    .split_once(" WHERE ")
+                    .map(|(_, clause)| clause)
+                    .unwrap_or_default();
+                match expected_scope {
+                    "unrestricted" => assert!(!where_clause.contains("tenant_id"), "{}", query.sql),
+                    "tenant" => assert!(where_clause.contains("tenant_id"), "{}", query.sql),
+                    "deny" => assert!(where_clause.contains("1 = 0"), "{}", query.sql),
+                    _ => unreachable!("unknown expected scope"),
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn sku_attribute_id_aliases_enforce_tenant_access() {
+        unsafe { std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET); }
+
+        let roles = [
+            (Role::SysAdmin, None, StatusCode::OK),
+            (Role::TenantOwner, Some(7), StatusCode::NOT_FOUND),
+            (Role::TenantOwner, Some(8), StatusCode::OK),
+            (Role::TenantUser, Some(7), StatusCode::NOT_FOUND),
+            (Role::Customer, None, StatusCode::NOT_FOUND),
+        ];
+        let now = Utc::now().naive_utc();
+
+        for (role, tenant_id, expected_status) in roles {
+            for path in ["/sku-attributes/99", "/sku-attribute-values/99"] {
+                let row = entity::sku_attribute_value_entity::Model {
+                    id: 99,
+                    uuid: uuid::Uuid::new_v4(),
+                    tenant_id: Some(8),
+                    product_id: 44,
+                    sku_id: 99,
+                    product_attribute_id: 55,
+                    attribute_id: 66,
+                    attribute_value_id: 77,
+                    created_at: now,
+                    created_by: None,
+                    updated_at: now,
+                    updated_by: None,
+                };
+                let db = MockDatabase::new(DatabaseBackend::Postgres)
+                    .append_query_results([vec![user_model_for(role.clone(), tenant_id)]])
+                    .append_query_results([vec![row]])
+                    .into_connection();
+                let app_state = state(db);
+                let app = crate::routes::resource_routes::resources_routes(app_state.clone())
+                    .with_state(app_state);
+                let response = app
+                    .oneshot(request(
+                        "GET",
+                        path,
+                        Some(&format!(
+                            "Bearer {}",
+                            token_for(role.clone(), tenant_id, Utc::now().timestamp() + 3600)
+                        )),
+                    ))
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    response.status(),
+                    expected_status,
+                    "GET {path} as {role:?} for tenant {tenant_id:?}"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn catalog_attribute_routes_scope_queries_by_role() {
+        unsafe { std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET); }
+
+        let roles = [
+            (Role::SysAdmin, None, "unrestricted"),
+            (Role::TenantOwner, Some(7), "tenant"),
+            (Role::TenantUser, Some(7), "tenant"),
+            (Role::Customer, None, "deny"),
+        ];
+        let routes = [
+            ("/catalog-attributes", "catalog_attribute", false),
+            ("/catalog-attributes/paged", "catalog_attribute", true),
+            ("/catalog-attribute-values", "catalog_attribute_value", false),
+            ("/catalog-attribute-values/paged", "catalog_attribute_value", true),
+            ("/product-attributes", "product_attribute", false),
+            ("/product-attributes/paged", "product_attribute", true),
+        ];
+        let count_row = BTreeMap::from([("num_items".to_string(), Value::BigInt(Some(0)))]);
+
+        for (role, tenant_id, expected_scope) in roles {
+            for (path, table, paged) in routes {
+                let mut db = MockDatabase::new(DatabaseBackend::Postgres)
+                    .append_query_results([vec![user_model_for(role.clone(), tenant_id)]]);
+                if paged && expected_scope == "deny" {
+                    // Tenantless paged reads return before querying the resource table.
+                } else {
+                    if paged {
+                        db = db.append_query_results([vec![count_row.clone()]]);
+                    }
+                    db = match table {
+                        "catalog_attribute" => db
+                            .append_query_results([Vec::<entity::catalog_attribute_entity::Model>::new()]),
+                        "catalog_attribute_value" => db
+                            .append_query_results([Vec::<entity::catalog_attribute_value_entity::Model>::new()]),
+                        "product_attribute" => db
+                            .append_query_results([Vec::<entity::product_attribute_entity::Model>::new()]),
+                        _ => unreachable!("unknown catalog attribute table"),
+                    };
+                }
+
+                let db = db.into_connection();
+                let db_for_log = db.clone();
+                let app_state = state(db);
+                let app = crate::routes::resource_routes::resources_routes(app_state.clone())
+                    .with_state(app_state);
+                let response = app
+                    .oneshot(request(
+                        "GET",
+                        path,
+                        Some(&format!(
+                            "Bearer {}",
+                            token_for(role.clone(), tenant_id, Utc::now().timestamp() + 3600)
+                        )),
+                    ))
+                    .await
+                    .unwrap();
+                assert_eq!(response.status(), StatusCode::OK, "GET {path} as {role:?}");
+
+                let queries: Vec<_> = db_for_log
+                    .into_transaction_log()
+                    .into_iter()
+                    .flat_map(|transaction| transaction.statements().to_vec())
+                    .filter(|statement| statement.sql.contains(&format!("FROM \"{table}\"")))
+                    .collect();
+                if paged && expected_scope == "deny" {
+                    assert!(queries.is_empty(), "tenantless Customer query was issued for {path}");
+                    continue;
+                }
+
+                let resource_query = if paged {
+                    assert_eq!(queries.len(), 2, "{path} should count and fetch rows");
+                    &queries[1]
+                } else {
+                    assert_eq!(queries.len(), 1, "{path} should execute one query");
+                    &queries[0]
+                };
+                let where_clause = resource_query
+                    .sql
+                    .split_once(" WHERE ")
+                    .map(|(_, clause)| clause)
+                    .unwrap_or_default();
+                match expected_scope {
+                    "unrestricted" => assert!(!where_clause.contains("tenant_id"), "{}", resource_query.sql),
+                    "tenant" => assert!(where_clause.contains("tenant_id"), "{}", resource_query.sql),
+                    "deny" => assert!(where_clause.contains("1 = 0"), "{}", resource_query.sql),
+                    _ => unreachable!("unknown expected scope"),
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn category_collection_and_paged_routes_scope_queries_by_role() {
+        unsafe { std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET); }
+
+        let roles = [
+            (Role::SysAdmin, None, "unrestricted"),
+            (Role::TenantOwner, Some(7), "tenant"),
+            (Role::TenantUser, Some(7), "tenant"),
+            (Role::Customer, None, "deny"),
+        ];
+        let now = Utc::now().naive_utc();
+
+        for (role, tenant_id, expected_scope) in roles {
+            let category = entity::category_entity::Model {
+                id: 11,
+                uuid: uuid::Uuid::new_v4(),
+                tenant_id: Some(8),
+                name: "C001 category".into(),
+                slug: "c001-category".into(),
+                parent_id: None,
+                active: true,
+                created_at: now,
+                created_by: None,
+                updated_at: now,
+                updated_by: None,
+            };
+            let db = MockDatabase::new(DatabaseBackend::Postgres)
+                .append_query_results([vec![user_model_for(role.clone(), tenant_id)]])
+                .append_query_results([vec![category.clone()]])
+                .into_connection();
+            let db_for_log = db.clone();
+            let app_state = state(db);
+            let app = crate::routes::resource_routes::resources_routes(app_state.clone())
+                .with_state(app_state);
+            let response = app
+                .oneshot(request(
+                    "GET",
+                    "/categories",
+                    Some(&format!(
+                        "Bearer {}",
+                        token_for(role.clone(), tenant_id, Utc::now().timestamp() + 3600)
+                    )),
+                ))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "GET categories as {role:?}");
+            let query = db_for_log
+                .into_transaction_log()
+                .into_iter()
+                .flat_map(|transaction| transaction.statements().to_vec())
+                .find(|statement| statement.sql.contains("FROM \"category\""))
+                .expect("category collection query should execute");
+            let where_clause = query
+                .sql
+                .split_once(" WHERE ")
+                .map(|(_, clause)| clause)
+                .unwrap_or_default();
+            match expected_scope {
+                "unrestricted" => assert!(!where_clause.contains("tenant_id"), "{}", query.sql),
+                "tenant" => assert!(where_clause.contains("tenant_id"), "{}", query.sql),
+                "deny" => assert!(where_clause.contains("1 = 0"), "{}", query.sql),
+                _ => unreachable!("unknown expected scope"),
+            }
+
+            let count_row = BTreeMap::from([("num_items".to_string(), Value::BigInt(Some(0)))]);
+            let mut db = MockDatabase::new(DatabaseBackend::Postgres)
+                .append_query_results([vec![user_model_for(role.clone(), tenant_id)]]);
+            if expected_scope != "deny" {
+                db = db
+                    .append_query_results([vec![count_row]])
+                    .append_query_results([Vec::<entity::category_entity::Model>::new()]);
+            }
+            let db = db.into_connection();
+            let db_for_log = db.clone();
+            let app_state = state(db);
+            let app = crate::routes::resource_routes::resources_routes(app_state.clone())
+                .with_state(app_state);
+            let response = app
+                .oneshot(request(
+                    "GET",
+                    "/categories/paged",
+                    Some(&format!(
+                        "Bearer {}",
+                        token_for(role.clone(), tenant_id, Utc::now().timestamp() + 3600)
+                    )),
+                ))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "paged categories as {role:?}");
+            let queries: Vec<_> = db_for_log
+                .into_transaction_log()
+                .into_iter()
+                .flat_map(|transaction| transaction.statements().to_vec())
+                .filter(|statement| statement.sql.contains("FROM \"category\""))
+                .collect();
+            if expected_scope == "deny" {
+                assert!(queries.is_empty(), "tenantless Customer category query was issued");
+            } else {
+                assert_eq!(queries.len(), 2);
+                let list_query = queries.last().unwrap();
+                match expected_scope {
+                    "unrestricted" => assert!(!list_query.sql.contains(" WHERE \"category\".\"tenant_id\""), "{}", list_query.sql),
+                    "tenant" => assert!(list_query.sql.contains("tenant_id"), "{}", list_query.sql),
+                    _ => unreachable!("unknown expected scope"),
+                }
+            }
+
         }
     }
 }
