@@ -90,7 +90,20 @@ PAYMENT_ACTIVE_KEY_VERSION="v1"
 ```
 *(Se `PAYMENT_ENCRYPTION_KEYS` não for informada, o sistema reutilizará automaticamente `SHIPPING_ENCRYPTION_KEYS`).*
 
-### 2.3 Iniciar os Serviços
+### 2.3 Mock offline do gateway no backend
+
+Para validar o fluxo de pagamento do `kremlin` sem chamar gateways externos, configure:
+
+```dotenv
+PAYMENT_PROVIDER_MODE=mock
+PAYMENT_MOCK_PROVIDER=pagseguro
+```
+
+No payload de `POST /purchases/{id}/payments/submit`, use `token` com o cenário desejado: `mock:approved`, `mock:authorized`, `mock:pending`, `mock:declined` ou `mock:error`. Aliases como `mock:paid`, `mock:waiting` e `mock:rejected` também são aceitos. Um token JSON como `{"mockOutcome":"in_analysis"}` simula status pendente. A referência `mock:` retornada permite testar a consulta de status sem rede.
+
+O mock é ativado somente com `PAYMENT_PROVIDER_MODE=mock`; sem essa variável, o backend mantém a resolução real. `PAYMENT_MOCK_PROVIDER` aceita `pagseguro` ou `mercado_pago`. Use somente em desenvolvimento/testes. O modo simula o backend do gateway, não a tokenização do SDK PagBank no navegador; para o checkout web, configure as chaves Sandbox do SDK.
+
+### 2.4 Iniciar os Serviços
 Em terminais separados:
 
 - **Terminal 1 — Banco de Dados**:

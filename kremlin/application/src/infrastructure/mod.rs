@@ -7,3 +7,4 @@ pub mod correios;
 pub mod shipping_credentials;
 pub mod pagseguro;
 pub mod payment_credentials;
+pub mod mock_payment;

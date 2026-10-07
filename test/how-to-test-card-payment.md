@@ -75,7 +75,20 @@ MP_COLLECTOR_ID=123456789
 MP_WEBHOOK_SECRET=sua_chave_secreta_webhook
 ```
 
-### 2.3 Iniciar os Serviços
+### 2.3 Mock offline do gateway no backend
+
+Para validar o fluxo de pagamento do `kremlin` sem chamar o Mercado Pago ou o PagSeguro, configure explicitamente:
+
+```dotenv
+PAYMENT_PROVIDER_MODE=mock
+PAYMENT_MOCK_PROVIDER=mercado_pago
+```
+
+No payload de `POST /purchases/{id}/payments/submit`, use `token` com um cenário mock, por exemplo `mock:approved`. Cenários aceitos: `approved`/`captured`, `authorized`, `pending`, `declined`/`failed` e `error`. Também é aceito um token JSON como `{"mockOutcome":"pending"}`. O resultado inclui uma referência `mock:` que permite testar `GET /purchases/{id}/payments/status` sem rede.
+
+O modo é opt-in; sem `PAYMENT_PROVIDER_MODE=mock`, o backend segue a resolução real. `PAYMENT_MOCK_PROVIDER` deve ser `mercado_pago` ou `pagseguro`. Use somente em desenvolvimento/testes e nunca envie número ou dados reais de cartão no payload mock. Este modo simula a resposta do backend gateway; não simula a tokenização do SDK de cartão no navegador.
+
+### 2.4 Iniciar os Serviços
 Em terminais separados:
 
 - **Terminal 1 — Banco de Dados**:

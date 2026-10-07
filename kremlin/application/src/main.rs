@@ -584,5 +584,9 @@ mod shipping_api_tests {
 mod shipping_http_tests;
 
 #[cfg(test)]
+#[path = "../tests/unit/infrastructure/checkout_payment_http_test.rs"]
+mod checkout_payment_http_tests;
+
+#[cfg(test)]
 #[path = "../tests/unit/endpoints/c001_auth_middleware_test.rs"]
 mod c001_auth_middleware_tests;

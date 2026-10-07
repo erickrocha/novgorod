@@ -2,6 +2,7 @@ use crate::{
     AppState,
     infrastructure::{
         mercado_pago::MercadoPago,
+        mock_payment::{MockPaymentProvider, MockProviderKind},
         pagseguro::PagSeguro,
         payment_credentials::TenantCredentialsPayload,
     },
@@ -142,6 +143,7 @@ pub struct PaymentState {
 enum ResolvedProvider {
     MercadoPago(MercadoPago),
     PagSeguro(PagSeguro),
+    Mock(MockPaymentProvider),
 }
 
 impl ResolvedProvider {
@@ -149,6 +151,7 @@ impl ResolvedProvider {
         match self {
             Self::MercadoPago(_) => "mercado_pago",
             Self::PagSeguro(_) => "pagseguro",
+            Self::Mock(mock) => mock.name(),
         }
     }
 
@@ -156,6 +159,7 @@ impl ResolvedProvider {
         match self {
             Self::MercadoPago(mp) => mp.collector_id,
             Self::PagSeguro(_) => 0,
+            Self::Mock(_) => 0,
         }
     }
 
@@ -163,6 +167,7 @@ impl ResolvedProvider {
         match self {
             Self::MercadoPago(mp) => mp.charge(request).await,
             Self::PagSeguro(ps) => ps.charge(request).await,
+            Self::Mock(mock) => mock.charge(request).await,
         }
     }
 
@@ -170,6 +175,7 @@ impl ResolvedProvider {
         match self {
             Self::MercadoPago(mp) => mp.status(reference).await,
             Self::PagSeguro(ps) => ps.status(reference).await,
+            Self::Mock(mock) => mock.status(reference).await,
         }
     }
 
@@ -177,11 +183,43 @@ impl ResolvedProvider {
         match self {
             Self::MercadoPago(mp) => mp.search(external_reference).await,
             Self::PagSeguro(ps) => ps.search(external_reference).await,
+            Self::Mock(mock) => mock.search(external_reference).await,
         }
     }
 }
 
+fn mock_provider_for_config(
+    mode: Option<&str>,
+    provider: Option<&str>,
+) -> Result<Option<MockPaymentProvider>, ApiError> {
+    match mode {
+        None | Some("") | Some("real") => Ok(None),
+        Some("mock") => {
+            let provider = provider.ok_or_else(unavailable)?;
+            let kind = MockProviderKind::parse(provider).map_err(|_| unavailable())?;
+            Ok(Some(MockPaymentProvider::new(kind)))
+        }
+        Some(_) => Err(unavailable()),
+    }
+}
+
+fn configured_mock_provider() -> Result<Option<MockPaymentProvider>, ApiError> {
+    match std::env::var("PAYMENT_PROVIDER_MODE") {
+        Ok(mode) if mode == "mock" => {
+            let provider = std::env::var("PAYMENT_MOCK_PROVIDER").map_err(|_| unavailable())?;
+            mock_provider_for_config(Some(&mode), Some(&provider))
+        }
+        Ok(mode) => mock_provider_for_config(Some(&mode), None),
+        Err(std::env::VarError::NotPresent) => mock_provider_for_config(None, None),
+        Err(std::env::VarError::NotUnicode(_)) => Err(unavailable()),
+    }
+}
+
 async fn resolve_provider(state: &AppState, purchase_id: i64) -> Result<ResolvedProvider, ApiError> {
+    if let Some(provider) = configured_mock_provider()? {
+        return Ok(ResolvedProvider::Mock(provider));
+    }
+
     let order = orders_entity::Entity::find()
         .filter(orders_entity::Column::PurchaseId.eq(purchase_id))
         .one(state.conn.as_ref())

@@ -3,25 +3,27 @@ use crate::{AppState, infrastructure};
 use axum::{
     Extension, Router,
     body::Body,
+    extract::State,
     http::{Request, StatusCode},
     middleware,
-    routing::{get, post},
+    routing::{delete, get, post},
 };
 use business::{
     domain::{enums::Role, shipping::ShippingOption, user::User},
     gateway::shipping_provider_gateway::{
         ShippingProviderError, ShippingProviderGateway, ShippingRequest,
     },
-    sea_orm::{DatabaseBackend, DbConn, MockDatabase, MockExecResult, Value},
+    sea_orm::{DatabaseBackend, DbConn, DbErr, MockDatabase, MockExecResult, Value},
 };
 use chrono::Utc;
 use entity::user_entity;
 use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tower::ServiceExt;
 
 const TEST_SECRET: &str = "c001-test-secret-long-enough-for-hs512-auth-middleware-tests";
+static PAYMENT_CONFIG_ENV_LOCK: Mutex<()> = Mutex::new(());
 
 struct UnusedShippingProvider;
 
@@ -53,6 +55,77 @@ fn state(db: DbConn) -> AppState {
         payment_keys: Arc::new(infrastructure::payment_credentials::PaymentKeyRing::default()),
         gateway_token: None,
     }
+}
+
+fn state_with_test_storage_credentials(db: DbConn) -> AppState {
+    let credentials = aws_sdk_s3::config::Credentials::new(
+        "test-access-key",
+        "test-secret-key",
+        None,
+        None,
+        "c001-test",
+    );
+    let storage_client = aws_sdk_s3::Client::from_conf(
+        aws_sdk_s3::Config::builder()
+            .behavior_version(aws_config::BehaviorVersion::latest())
+            .region(aws_config::Region::new("us-east-1"))
+            .credentials_provider(credentials)
+            .build(),
+    );
+    AppState {
+        conn: Arc::new(db),
+        storage: Arc::new(business::gateway::storage_gateway::StorageGateway::new(
+            "unused-test-bucket".into(),
+            "http://localhost.invalid/unused-test-bucket".into(),
+            storage_client,
+        )),
+        shipping: Arc::new(UnusedShippingProvider),
+        shipping_keys: Arc::new(infrastructure::shipping_credentials::ShippingKeyRing::default()),
+        payment_keys: Arc::new(infrastructure::payment_credentials::PaymentKeyRing::default()),
+        gateway_token: None,
+    }
+}
+
+fn state_with_test_storage_endpoint(db: DbConn, endpoint: &str) -> AppState {
+    let credentials = aws_sdk_s3::config::Credentials::new(
+        "test-access-key",
+        "test-secret-key",
+        None,
+        None,
+        "c001-test",
+    );
+    let storage_client = aws_sdk_s3::Client::from_conf(
+        aws_sdk_s3::Config::builder()
+            .behavior_version(aws_config::BehaviorVersion::latest())
+            .region(aws_config::Region::new("us-east-1"))
+            .credentials_provider(credentials)
+            .endpoint_url(endpoint)
+            .force_path_style(true)
+            .build(),
+    );
+    AppState {
+        conn: Arc::new(db),
+        storage: Arc::new(business::gateway::storage_gateway::StorageGateway::new(
+            "unused-test-bucket".into(),
+            "http://localhost.invalid/unused-test-bucket".into(),
+            storage_client,
+        )),
+        shipping: Arc::new(UnusedShippingProvider),
+        shipping_keys: Arc::new(infrastructure::shipping_credentials::ShippingKeyRing::default()),
+        payment_keys: Arc::new(infrastructure::payment_credentials::PaymentKeyRing::default()),
+        gateway_token: None,
+    }
+}
+
+async fn accept_s3_delete(
+    State(calls): State<Arc<Mutex<Vec<String>>>>,
+    request: Request<Body>,
+) -> StatusCode {
+    calls
+        .lock()
+        .unwrap()
+        .push(format!("{} {}", request.method(), request.uri().path()));
+    StatusCode::NO_CONTENT
 }
 
 fn user_model() -> user_entity::Model {
@@ -294,6 +367,7 @@ async fn cart_read_routes_characterize_role_tenant_and_customer_owner() {
     let cases = [
         (Role::SysAdmin, None, "unrestricted", None),
         (Role::TenantOwner, Some(8), "tenant", None),
+        (Role::TenantUser, Some(8), "tenant", None),
         (Role::TenantOwner, Some(7), "foreign", None),
         (Role::TenantUser, Some(7), "foreign", None),
         (Role::Customer, None, "customer", Some(77)),
@@ -409,6 +483,7 @@ async fn cart_update_enforces_tenant_and_customer_ownership() {
     let cases = [
         (Role::SysAdmin, None, Some(8), None, StatusCode::OK),
         (Role::TenantOwner, Some(7), Some(7), None, StatusCode::OK),
+        (Role::TenantUser, Some(7), Some(7), None, StatusCode::OK),
         (
             Role::TenantOwner,
             Some(7),
@@ -953,6 +1028,131 @@ async fn marketing_updates_refuse_foreign_tenant_rows() {
 }
 
 #[tokio::test]
+async fn marketing_updates_allow_admin_and_owning_tenant() {
+    unsafe {
+        std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET);
+    }
+
+    let cases = [
+        (Role::SysAdmin, None, StatusCode::OK),
+        (Role::TenantOwner, Some(8), StatusCode::OK),
+        (Role::TenantUser, Some(8), StatusCode::OK),
+        (Role::TenantOwner, Some(7), StatusCode::FORBIDDEN),
+        (Role::Customer, None, StatusCode::FORBIDDEN),
+    ];
+    let now = Utc::now().naive_utc();
+    let routes = [
+        (
+            "/campaigns/99",
+            "campaign",
+            r#"{"name":"Updated","campaignType":"discount","value":10,"scope":"all","startsAt":"2026-10-01T00:00:00","endsAt":"2026-10-31T00:00:00"}"#,
+        ),
+        (
+            "/campaign-targets/99",
+            "campaign_target",
+            r#"{"campaignId":10,"targetType":"product","targetId":20}"#,
+        ),
+        (
+            "/coupons/99",
+            "coupon",
+            r#"{"code":"SAVE10","couponType":"PERCENTAGE","value":10}"#,
+        ),
+    ];
+
+    for (role, tenant_id, expected_status) in cases {
+        for (path, table, payload) in routes {
+            let mut db = MockDatabase::new(DatabaseBackend::Postgres)
+                .append_query_results([vec![user_model_for(role.clone(), tenant_id)]]);
+            db = match table {
+                "campaign" => {
+                    let current = entity::campaign_entity::Model {
+                        id: 99,
+                        uuid: uuid::Uuid::new_v4(),
+                        tenant_id: Some(8),
+                        name: "Existing".into(),
+                        campaign_type: "discount".into(),
+                        value: 5,
+                        scope: "all".into(),
+                        starts_at: now,
+                        ends_at: now,
+                        active: true,
+                        created_at: now,
+                        created_by: None,
+                        updated_at: now,
+                        updated_by: None,
+                    };
+                    let mut updated = current.clone();
+                    updated.name = "Updated".into();
+                    db.append_query_results([vec![current], vec![updated]])
+                }
+                "campaign_target" => {
+                    let current = entity::campaign_target_entity::Model {
+                        id: 99,
+                        uuid: uuid::Uuid::new_v4(),
+                        tenant_id: Some(8),
+                        campaign_id: 10,
+                        target_type: "product".into(),
+                        target_id: 20,
+                        created_at: now,
+                        created_by: None,
+                    };
+                    db.append_query_results([vec![current.clone()], vec![current]])
+                }
+                "coupon" => {
+                    let current = entity::coupon_entity::Model {
+                        id: 99,
+                        uuid: uuid::Uuid::new_v4(),
+                        tenant_id: Some(8),
+                        code: "OLD".into(),
+                        campaign_id: None,
+                        coupon_type: "PERCENTAGE".into(),
+                        value: 5,
+                        min_order_cents: None,
+                        max_uses: None,
+                        max_uses_per_customer: None,
+                        starts_at: None,
+                        expires_at: None,
+                        active: true,
+                        created_at: now,
+                        created_by: None,
+                        updated_at: now,
+                        updated_by: None,
+                    };
+                    let mut updated = current.clone();
+                    updated.code = "SAVE10".into();
+                    updated.value = 10;
+                    db.append_query_results([vec![current], vec![updated]])
+                }
+                _ => unreachable!("unknown marketing table"),
+            };
+            let app_state = state(db.into_connection());
+            let app = crate::routes::marketing_routes::marketing_routes(app_state.clone())
+                .with_state(app_state);
+            let response = app
+                .oneshot(json_request(
+                    "PUT",
+                    path,
+                    &format!(
+                        "Bearer {}",
+                        token_for(role.clone(), tenant_id, Utc::now().timestamp() + 3600)
+                    ),
+                    payload,
+                ))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), expected_status, "PUT {path} as {role:?}");
+            if expected_status == StatusCode::OK {
+                let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+                    .await
+                    .unwrap();
+                let saved: serde_json::Value = serde_json::from_slice(&body).unwrap();
+                assert_eq!(saved["tenantId"], 8);
+            }
+        }
+    }
+}
+
+#[tokio::test]
 async fn payment_config_is_customer_only() {
     unsafe {
         std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET);
@@ -988,6 +1188,119 @@ async fn payment_config_is_customer_only() {
             "payment config should refuse {role:?} without provider access"
         );
     }
+}
+
+#[tokio::test]
+async fn payment_config_uses_fake_pagseguro_public_key_without_provider_call() {
+    let _env_guard = PAYMENT_CONFIG_ENV_LOCK.lock().unwrap();
+    unsafe {
+        std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET);
+    }
+    let original_pagseguro_key = std::env::var_os("PAGSEGURO_PUBLIC_KEY");
+    let original_mp_key = std::env::var_os("MP_PUBLIC_KEY");
+    unsafe {
+        std::env::set_var("PAGSEGURO_PUBLIC_KEY", "pk_test_dummy");
+        std::env::remove_var("MP_PUBLIC_KEY");
+    }
+
+    let db = MockDatabase::new(DatabaseBackend::Postgres)
+        .append_query_results([vec![user_model_for(Role::Customer, None)]])
+        .append_query_results([Vec::<BTreeMap<String, Value>>::new()])
+        .into_connection();
+    let app_state = state(db);
+    let app = crate::routes::order_routes::order_routes(app_state.clone()).with_state(app_state);
+    let response = app
+        .oneshot(request(
+            "GET",
+            "/checkout/payment-config",
+            Some(&format!(
+                "Bearer {}",
+                token_for(Role::Customer, None, Utc::now().timestamp() + 3600)
+            )),
+        ))
+        .await
+        .unwrap();
+    let status = response.status();
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    unsafe {
+        if let Some(value) = original_pagseguro_key {
+            std::env::set_var("PAGSEGURO_PUBLIC_KEY", value);
+        } else {
+            std::env::remove_var("PAGSEGURO_PUBLIC_KEY");
+        }
+        if let Some(value) = original_mp_key {
+            std::env::set_var("MP_PUBLIC_KEY", value);
+        } else {
+            std::env::remove_var("MP_PUBLIC_KEY");
+        }
+    }
+
+    assert_eq!(status, StatusCode::OK);
+    let config: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(config["provider"], "pagseguro");
+    assert_eq!(config["publicKey"], "pk_test_dummy");
+}
+
+#[tokio::test]
+async fn payment_config_prefers_tenant_public_key_over_global_fallback() {
+    let _env_guard = PAYMENT_CONFIG_ENV_LOCK.lock().unwrap();
+    unsafe {
+        std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET);
+    }
+    let original_pagseguro_key = std::env::var_os("PAGSEGURO_PUBLIC_KEY");
+    let original_mp_key = std::env::var_os("MP_PUBLIC_KEY");
+    unsafe {
+        std::env::set_var("PAGSEGURO_PUBLIC_KEY", "pk_global_dummy");
+        std::env::remove_var("MP_PUBLIC_KEY");
+    }
+
+    let tenant_settings: BTreeMap<String, Value> = BTreeMap::from([
+        ("provider".into(), "pagseguro".into()),
+        (
+            "configuration".into(),
+            serde_json::json!({"publicKey": "pk_tenant_dummy"}).into(),
+        ),
+    ]);
+    let db = MockDatabase::new(DatabaseBackend::Postgres)
+        .append_query_results([vec![user_model_for(Role::Customer, None)]])
+        .append_query_results([vec![tenant_settings]])
+        .into_connection();
+    let app_state = state(db);
+    let app = crate::routes::order_routes::order_routes(app_state.clone()).with_state(app_state);
+    let response = app
+        .oneshot(request(
+            "GET",
+            "/checkout/payment-config?tenantId=7",
+            Some(&format!(
+                "Bearer {}",
+                token_for(Role::Customer, None, Utc::now().timestamp() + 3600)
+            )),
+        ))
+        .await
+        .unwrap();
+    let status = response.status();
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    unsafe {
+        if let Some(value) = original_pagseguro_key {
+            std::env::set_var("PAGSEGURO_PUBLIC_KEY", value);
+        } else {
+            std::env::remove_var("PAGSEGURO_PUBLIC_KEY");
+        }
+        if let Some(value) = original_mp_key {
+            std::env::set_var("MP_PUBLIC_KEY", value);
+        } else {
+            std::env::remove_var("MP_PUBLIC_KEY");
+        }
+    }
+
+    assert_eq!(status, StatusCode::OK);
+    let config: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(config["provider"], "pagseguro");
+    assert_eq!(config["publicKey"], "pk_tenant_dummy");
 }
 
 #[tokio::test]
@@ -1087,6 +1400,11 @@ async fn catalog_create_routes_stamp_authenticated_tenant() {
         ),
         (
             "/sku-attributes",
+            "sku_attribute_value",
+            r#"{"tenantId":8,"productId":44,"skuId":55,"productAttributeId":66,"attributeId":66,"attributeValueId":77}"#,
+        ),
+        (
+            "/sku-attribute-values",
             "sku_attribute_value",
             r#"{"tenantId":8,"productId":44,"skuId":55,"productAttributeId":66,"attributeId":66,"attributeValueId":77}"#,
         ),
@@ -1239,6 +1557,222 @@ async fn catalog_create_routes_stamp_authenticated_tenant() {
                     .unwrap();
                 let saved: serde_json::Value = serde_json::from_slice(&body).unwrap();
                 assert_eq!(saved["tenantId"], expected_tenant.unwrap());
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn catalog_updates_allow_admin_and_owning_tenant() {
+    unsafe {
+        std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET);
+    }
+
+    let roles = [
+        (Role::SysAdmin, None, StatusCode::OK),
+        (Role::TenantOwner, Some(8), StatusCode::OK),
+        (Role::TenantUser, Some(8), StatusCode::OK),
+        (Role::TenantOwner, Some(7), StatusCode::FORBIDDEN),
+        (Role::Customer, None, StatusCode::FORBIDDEN),
+    ];
+    let routes = [
+        (
+            "/categories/99",
+            "category",
+            r#"{"name":"Updated category","slug":"updated-category","active":true}"#,
+        ),
+        (
+            "/products/99",
+            "product",
+            r#"{"name":"Updated product","slug":"updated-product","active":true,"ncm":"12345678","origemMercadoria":0}"#,
+        ),
+        (
+            "/skus/99",
+            "sku",
+            r#"{"productId":44,"code":"SKU-44","variantKey":"default","priceCents":5000,"active":true}"#,
+        ),
+        (
+            "/product-categories/99",
+            "product_category",
+            r#"{"productId":44,"categoryId":66,"isPrimary":true}"#,
+        ),
+        (
+            "/sku-stocks/99",
+            "sku_stock",
+            r#"{"skuId":55,"quantity":7,"reserved":1}"#,
+        ),
+        (
+            "/sku-attributes/99",
+            "sku_attribute_value",
+            r#"{"productId":44,"skuId":55,"productAttributeId":66,"attributeId":66,"attributeValueId":77}"#,
+        ),
+    ];
+    let now = Utc::now().naive_utc();
+
+    for (role, tenant_id, expected_status) in roles {
+        for (path, table, payload) in routes {
+            let mut db = MockDatabase::new(DatabaseBackend::Postgres)
+                .append_query_results([vec![user_model_for(role.clone(), tenant_id)]]);
+            db = match table {
+                "category" => {
+                    let existing = entity::category_entity::Model {
+                        id: 99,
+                        uuid: uuid::Uuid::new_v4(),
+                        tenant_id: Some(8),
+                        name: "Existing category".into(),
+                        slug: "existing-category".into(),
+                        parent_id: None,
+                        active: true,
+                        created_at: now,
+                        created_by: None,
+                        updated_at: now,
+                        updated_by: None,
+                    };
+                    let mut updated = existing.clone();
+                    updated.name = "Updated category".into();
+                    updated.slug = "updated-category".into();
+                    db.append_query_results([vec![existing], vec![updated]])
+                }
+                "product" => {
+                    let existing = entity::product_entity::Model {
+                        id: 99,
+                        uuid: uuid::Uuid::new_v4(),
+                        tenant_id: Some(8),
+                        name: "Existing product".into(),
+                        slug: "existing-product".into(),
+                        description: None,
+                        brand: None,
+                        active: true,
+                        ncm: "12345678".into(),
+                        cest: None,
+                        origem_mercadoria: 0,
+                        created_at: now,
+                        created_by: None,
+                        updated_at: now,
+                        updated_by: None,
+                    };
+                    let mut updated = existing.clone();
+                    updated.name = "Updated product".into();
+                    updated.slug = "updated-product".into();
+                    db.append_query_results([vec![existing], vec![updated]])
+                }
+                "sku" => {
+                    let existing = entity::sku_entity::Model {
+                        id: 99,
+                        uuid: uuid::Uuid::new_v4(),
+                        tenant_id: Some(8),
+                        product_id: 44,
+                        code: "SKU-44".into(),
+                        variant_key: "default".into(),
+                        price_cents: 4000,
+                        compare_at_price_cents: None,
+                        weight_g: None,
+                        width_mm: None,
+                        height_mm: None,
+                        length_mm: None,
+                        active: true,
+                        created_at: now,
+                        created_by: None,
+                        updated_at: now,
+                        updated_by: None,
+                    };
+                    let mut updated = existing.clone();
+                    updated.price_cents = 5000;
+                    db.append_query_results([vec![existing]])
+                        .append_query_results([vec![entity::product_entity::Model {
+                            id: 44,
+                            uuid: uuid::Uuid::new_v4(),
+                            tenant_id: Some(8),
+                            name: "Product".into(),
+                            slug: "product".into(),
+                            description: None,
+                            brand: None,
+                            active: true,
+                            ncm: "12345678".into(),
+                            cest: None,
+                            origem_mercadoria: 0,
+                            created_at: now,
+                            created_by: None,
+                            updated_at: now,
+                            updated_by: None,
+                        }]])
+                        .append_query_results([vec![updated]])
+                }
+                "product_category" => {
+                    let existing = entity::product_category_entity::Model {
+                        id: 99,
+                        uuid: uuid::Uuid::new_v4(),
+                        tenant_id: Some(8),
+                        product_id: 44,
+                        category_id: 66,
+                        is_primary: false,
+                        created_at: now,
+                        created_by: None,
+                    };
+                    let mut updated = existing.clone();
+                    updated.is_primary = true;
+                    db.append_query_results([vec![existing], vec![updated]])
+                }
+                "sku_stock" => {
+                    let existing = entity::sku_stock_entity::Model {
+                        id: 99,
+                        uuid: uuid::Uuid::new_v4(),
+                        tenant_id: Some(8),
+                        sku_id: 55,
+                        warehouse_id: None,
+                        quantity: 2,
+                        reserved: 0,
+                        created_at: now,
+                        created_by: None,
+                        updated_at: now,
+                        updated_by: None,
+                    };
+                    let mut updated = existing.clone();
+                    updated.quantity = 7;
+                    updated.reserved = 1;
+                    db.append_query_results([vec![existing], vec![updated]])
+                }
+                "sku_attribute_value" => {
+                    let existing = entity::sku_attribute_value_entity::Model {
+                        id: 99,
+                        uuid: uuid::Uuid::new_v4(),
+                        tenant_id: Some(8),
+                        product_id: 44,
+                        sku_id: 55,
+                        product_attribute_id: 66,
+                        attribute_id: 66,
+                        attribute_value_id: 77,
+                        created_at: now,
+                        created_by: None,
+                        updated_at: now,
+                        updated_by: None,
+                    };
+                    db.append_query_results([vec![existing.clone()], vec![existing]])
+                }
+                _ => unreachable!("unknown catalog table"),
+            };
+            let app_state = state(db.into_connection());
+            let app = crate::routes::resource_routes::resources_routes(app_state.clone())
+                .with_state(app_state);
+            let response = app
+                .oneshot(json_request(
+                    "PUT",
+                    path,
+                    &format!(
+                        "Bearer {}",
+                        token_for(role.clone(), tenant_id, Utc::now().timestamp() + 3600)
+                    ),
+                    payload,
+                ))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), expected_status, "PUT {path} as {role:?}");
+            if expected_status == StatusCode::OK {
+                let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+                    .await
+                    .unwrap();
+                let saved: serde_json::Value = serde_json::from_slice(&body).unwrap();
+                assert_eq!(saved["tenantId"], 8);
             }
         }
     }
@@ -1608,6 +2142,213 @@ async fn order_and_purchase_reads_hide_foreign_resources() {
 }
 
 #[tokio::test]
+async fn checkout_creation_routes_reject_non_customer_roles() {
+    unsafe {
+        std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET);
+    }
+
+    let roles = [
+        (Role::SysAdmin, None),
+        (Role::TenantOwner, Some(8)),
+        (Role::TenantUser, Some(8)),
+    ];
+    let routes = [
+        (
+            "/checkout/quotes",
+            r#"{"items":[{"skuId":1,"quantity":1}],"addressId":null,"shippingAddress":{"recipient":"Buyer","addressLine1":"Street","addressLine2":null,"locality":"Sao Paulo","administrativeArea":"SP","postalCode":"01001000","countryCode":"BR"},"coupons":[]}"#,
+        ),
+        ("/checkout/quotes/99/shipping-selection", "[]"),
+        (
+            "/purchases",
+            r#"{"quoteId":99,"email":"buyer@example.test","phone":"11999999999"}"#,
+        ),
+    ];
+
+    for (role, tenant_id) in roles {
+        for (path, body) in routes {
+            let mut db = MockDatabase::new(DatabaseBackend::Postgres)
+                .append_query_results([vec![user_model_for(role.clone(), tenant_id)]]);
+            if path == "/purchases" {
+                db = db.append_query_results([Vec::<entity::customer_entity::Model>::new()]);
+            }
+            let app_state = state(db.into_connection());
+            let app = crate::routes::order_routes::order_routes(app_state.clone())
+                .layer(middleware::from_fn_with_state(
+                    app_state.clone(),
+                    crate::commons::tenant_context::tenant_context,
+                ))
+                .with_state(app_state);
+            let mut builder = Request::builder()
+                .method("POST")
+                .uri(path)
+                .header(
+                    "authorization",
+                    format!(
+                        "Bearer {}",
+                        token_for(role.clone(), tenant_id, Utc::now().timestamp() + 3600)
+                    ),
+                )
+                .header("content-type", "application/json");
+            if path == "/purchases" {
+                builder = builder.header("Idempotency-Key", "tc03-non-customer");
+            }
+            let response = app
+                .oneshot(builder.body(Body::from(body)).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(
+                response.status(),
+                StatusCode::FORBIDDEN,
+                "POST {path} as {role:?}"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn order_collections_scope_roles_and_purchase_list_is_customer_admin_only() {
+    unsafe {
+        std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET);
+    }
+
+    let count_row = BTreeMap::from([("num_items".to_string(), Value::BigInt(Some(0)))]);
+    let order_roles = [
+        (Role::SysAdmin, None, "admin"),
+        (Role::TenantOwner, Some(8), "tenant"),
+        (Role::TenantUser, Some(8), "tenant"),
+        (Role::Customer, None, "customer"),
+    ];
+
+    for (role, tenant_id, expected_scope) in order_roles {
+        for path in ["/orders", "/orders/paged"] {
+            let mut db = MockDatabase::new(DatabaseBackend::Postgres)
+                .append_query_results([vec![user_model_for(role.clone(), tenant_id)]]);
+            if role == Role::Customer {
+                db = db.append_query_results([vec![customer_model(77, 42)]]);
+            }
+            db = db
+                .append_query_results([vec![count_row.clone()]])
+                .append_query_results([Vec::<entity::orders_entity::Model>::new()]);
+            let db = db.into_connection();
+            let db_for_log = db.clone();
+            let app_state = state(db);
+            let app = crate::routes::order_routes::order_routes(app_state.clone())
+                .layer(middleware::from_fn_with_state(
+                    app_state.clone(),
+                    crate::commons::tenant_context::tenant_context,
+                ))
+                .with_state(app_state);
+            let response = app
+                .oneshot(request(
+                    "GET",
+                    path,
+                    Some(&format!(
+                        "Bearer {}",
+                        token_for(role.clone(), tenant_id, Utc::now().timestamp() + 3600)
+                    )),
+                ))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "GET {path} as {role:?}");
+
+            let queries: Vec<_> = db_for_log
+                .into_transaction_log()
+                .into_iter()
+                .flat_map(|transaction| transaction.statements().to_vec())
+                .filter(|statement| statement.sql.contains("FROM \"orders\""))
+                .collect();
+            assert_eq!(queries.len(), 2, "{path} should count and fetch orders");
+            for query in queries {
+                let where_clause = query
+                    .sql
+                    .split_once(" WHERE ")
+                    .map(|(_, clause)| clause)
+                    .unwrap_or_default();
+                match expected_scope {
+                    "admin" => {
+                        assert!(!where_clause.contains("tenant_id"), "{}", query.sql);
+                        assert!(!where_clause.contains("customer_id"), "{}", query.sql);
+                    }
+                    "tenant" => assert!(where_clause.contains("tenant_id"), "{}", query.sql),
+                    "customer" => {
+                        assert!(where_clause.contains("customer_id"), "{}", query.sql)
+                    }
+                    _ => unreachable!("unknown expected order scope"),
+                }
+            }
+        }
+    }
+
+    let purchase_roles = [
+        (Role::SysAdmin, None, StatusCode::OK, "admin"),
+        (Role::TenantOwner, Some(8), StatusCode::FORBIDDEN, "denied"),
+        (Role::TenantUser, Some(8), StatusCode::FORBIDDEN, "denied"),
+        (Role::Customer, None, StatusCode::OK, "customer"),
+    ];
+    for (role, tenant_id, expected_status, expected_scope) in purchase_roles {
+        let mut db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![user_model_for(role.clone(), tenant_id)]]);
+        if role == Role::Customer {
+            db = db.append_query_results([vec![customer_model(77, 42)]]);
+        }
+        if expected_status == StatusCode::OK {
+            db = db
+                .append_query_results([vec![count_row.clone()]])
+                .append_query_results([Vec::<entity::purchase_entity::Model>::new()]);
+        }
+        let db = db.into_connection();
+        let db_for_log = db.clone();
+        let app_state = state(db);
+        let app = crate::routes::order_routes::order_routes(app_state.clone())
+            .layer(middleware::from_fn_with_state(
+                app_state.clone(),
+                crate::commons::tenant_context::tenant_context,
+            ))
+            .with_state(app_state);
+        let response = app
+            .oneshot(request(
+                "GET",
+                "/purchases/paged",
+                Some(&format!(
+                    "Bearer {}",
+                    token_for(role.clone(), tenant_id, Utc::now().timestamp() + 3600)
+                )),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            expected_status,
+            "GET /purchases/paged as {role:?}"
+        );
+
+        let purchase_queries: Vec<_> = db_for_log
+            .into_transaction_log()
+            .into_iter()
+            .flat_map(|transaction| transaction.statements().to_vec())
+            .filter(|statement| statement.sql.contains("FROM \"purchase\""))
+            .collect();
+        if expected_scope == "denied" {
+            assert!(purchase_queries.is_empty(), "seller queried purchases");
+        } else {
+            assert_eq!(purchase_queries.len(), 2);
+            for query in purchase_queries {
+                let where_clause = query
+                    .sql
+                    .split_once(" WHERE ")
+                    .map(|(_, clause)| clause)
+                    .unwrap_or_default();
+                if expected_scope == "admin" {
+                    assert!(!where_clause.contains("customer_id"), "{}", query.sql);
+                } else {
+                    assert!(where_clause.contains("customer_id"), "{}", query.sql);
+                }
+            }
+        }
+    }
+}
+
+#[tokio::test]
 async fn remaining_protected_routes_are_registered_and_require_auth() {
     unsafe {
         std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET);
@@ -1621,7 +2362,10 @@ async fn remaining_protected_routes_are_registered_and_require_auth() {
         .with_state(app_state.clone());
     let orders =
         crate::routes::order_routes::order_routes(app_state.clone()).with_state(app_state.clone());
-    let carts = crate::routes::cart_routes::cart_routes(app_state.clone()).with_state(app_state);
+    let carts =
+        crate::routes::cart_routes::cart_routes(app_state.clone()).with_state(app_state.clone());
+    let shipping_tax = crate::routes::shipping_tax_routes::shipping_tax_routes(app_state.clone())
+        .with_state(app_state);
 
     let resource_routes = [
         ("POST", "/catalog/import"),
@@ -1679,13 +2423,33 @@ async fn remaining_protected_routes_are_registered_and_require_auth() {
         ("GET", "/cart-items/99"),
         ("PUT", "/cart-items/99"),
     ];
+    let shipping_tax_routes = [
+        ("GET", "/warehouses"),
+        ("GET", "/warehouses/paged"),
+        ("POST", "/warehouses"),
+        ("GET", "/warehouses/99"),
+        ("PUT", "/warehouses/99"),
+        ("DELETE", "/warehouses/99"),
+        ("GET", "/shipping-rates"),
+        ("GET", "/shipping-rates/paged"),
+        ("POST", "/shipping-rates"),
+        ("GET", "/shipping-rates/99"),
+        ("PUT", "/shipping-rates/99"),
+        ("DELETE", "/shipping-rates/99"),
+        ("GET", "/tax-rules"),
+        ("GET", "/tax-rules/paged"),
+        ("POST", "/tax-rules"),
+        ("GET", "/tax-rules/99"),
+        ("PUT", "/tax-rules/99"),
+    ];
 
     let checked = assert_routes_require_auth(&resources, &resource_routes).await
         + assert_routes_require_auth(&marketing, &marketing_routes).await
         + assert_routes_require_auth(&orders, &order_routes).await
-        + assert_routes_require_auth(&carts, &cart_routes).await;
+        + assert_routes_require_auth(&carts, &cart_routes).await
+        + assert_routes_require_auth(&shipping_tax, &shipping_tax_routes).await;
     assert_eq!(
-        checked, 48,
+        checked, 65,
         "all remaining protected method/path pairs must be exercised"
     );
 }
@@ -1864,6 +2628,89 @@ async fn customer_list_route_scopes_query_for_authenticated_roles() {
                     customer_query.sql
                 ),
                 _ => unreachable!("unknown expected scope"),
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn customer_create_and_update_routes_characterize_role_and_tenant_policy() {
+    unsafe {
+        std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET);
+    }
+
+    let roles = [
+        (Role::SysAdmin, None, Some(8)),
+        (Role::TenantOwner, Some(7), Some(7)),
+        (Role::TenantUser, Some(7), Some(7)),
+        (Role::Customer, None, None),
+    ];
+    let now = Utc::now().naive_utc();
+    let payload = r#"{"tenantId":8,"userId":999,"name":"Supplied customer","email":"supplied@example.test","cpf":null,"phone":null,"marketingConsent":false,"active":true}"#;
+
+    for (role, tenant_id, expected_tenant) in roles {
+        for (method, path) in [("POST", "/customers"), ("PUT", "/customers/99")] {
+            let mut saved = customer_model(99, 999);
+            saved.tenant_id = expected_tenant;
+            saved.name = "Supplied customer".into();
+            saved.email = "supplied@example.test".into();
+            saved.updated_at = now;
+            let db = MockDatabase::new(DatabaseBackend::Postgres)
+                .append_query_results([vec![user_model_for(role.clone(), tenant_id)]])
+                .append_query_results([vec![saved]])
+                .into_connection();
+            let db_for_log = db.clone();
+            let app_state = state(db);
+            let app = crate::routes::customer_routes::customer_routes(app_state.clone())
+                .with_state(app_state);
+            let response = app
+                .oneshot(json_request(
+                    method,
+                    path,
+                    &format!(
+                        "Bearer {}",
+                        token_for(role.clone(), tenant_id, Utc::now().timestamp() + 3600)
+                    ),
+                    payload,
+                ))
+                .await
+                .unwrap();
+            assert_eq!(
+                response.status(),
+                if method == "POST" {
+                    StatusCode::CREATED
+                } else {
+                    StatusCode::OK
+                },
+                "{method} {path} as {role:?}"
+            );
+            let response_body = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            let customer: serde_json::Value = serde_json::from_slice(&response_body).unwrap();
+            assert_eq!(
+                customer["tenantId"],
+                expected_tenant.map_or(serde_json::Value::Null, serde_json::Value::from)
+            );
+            assert_eq!(customer["userId"], 999);
+
+            if method == "PUT" {
+                let update = db_for_log
+                    .into_transaction_log()
+                    .into_iter()
+                    .flat_map(|transaction| transaction.statements().to_vec())
+                    .find(|statement| statement.sql.starts_with("UPDATE \"customer\""))
+                    .expect("customer update statement");
+                let where_clause = update
+                    .sql
+                    .split_once(" WHERE ")
+                    .map(|(_, clause)| clause)
+                    .unwrap_or_default()
+                    .split_once(" RETURNING ")
+                    .map(|(where_clause, _)| where_clause)
+                    .unwrap_or_default();
+                assert!(where_clause.contains("\"id\""), "{}", update.sql);
+                assert!(!where_clause.contains("tenant_id"), "{}", update.sql);
             }
         }
     }
@@ -2275,6 +3122,133 @@ async fn shipping_settings_routes_characterize_role_and_tenant_matrix() {
                 "{method} shipping settings as {role:?} for tenant {tenant_id:?}"
             );
         }
+    }
+}
+
+#[tokio::test]
+async fn tenant_create_uuid_and_update_routes_characterize_role_access() {
+    unsafe {
+        std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET);
+    }
+
+    let roles = [
+        (Role::SysAdmin, None, true),
+        (Role::TenantOwner, Some(7), true),
+        (Role::TenantUser, Some(7), true),
+        (Role::TenantOwner, Some(8), false),
+        (Role::TenantUser, Some(8), false),
+        (Role::Customer, None, false),
+    ];
+    let create_payload = r#"{"businessName":"Created tenant","companyName":"Created Tenant Ltd","taxId":"12345678000100","countryCode":"BR"}"#;
+    let update_payload = r#"{"businessName":"Updated tenant","companyName":"Updated Tenant Ltd","taxId":"12345678000100","countryCode":"BR"}"#;
+
+    for (role, tenant_id, can_access_target) in roles {
+        let create_db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![user_model_for(role.clone(), tenant_id)]])
+            .append_query_results(if role == Role::SysAdmin {
+                vec![vec![tenant_model(9)]]
+            } else {
+                Vec::new()
+            })
+            .into_connection();
+        let create_state = state(create_db);
+        let create_app = Router::new()
+            .nest(
+                "/tenant",
+                crate::routes::tenant_routes::tenant_routes(create_state.clone()),
+            )
+            .with_state(create_state);
+        let create_response = create_app
+            .oneshot(json_request(
+                "POST",
+                "/tenant",
+                &format!(
+                    "Bearer {}",
+                    token_for(role.clone(), tenant_id, Utc::now().timestamp() + 3600)
+                ),
+                create_payload,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            create_response.status(),
+            if role == Role::SysAdmin {
+                StatusCode::CREATED
+            } else {
+                StatusCode::FORBIDDEN
+            },
+            "POST /tenant as {role:?}"
+        );
+
+        let tenant = tenant_model(7);
+        let tenant_uuid = tenant.uuid.to_string();
+        let uuid_db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![user_model_for(role.clone(), tenant_id)]])
+            .append_query_results([vec![tenant.clone()]])
+            .into_connection();
+        let uuid_state = state(uuid_db);
+        let uuid_app = Router::new()
+            .nest(
+                "/tenant",
+                crate::routes::tenant_routes::tenant_routes(uuid_state.clone()),
+            )
+            .with_state(uuid_state);
+        let uuid_response = uuid_app
+            .oneshot(request(
+                "GET",
+                &format!("/tenant/uuid/{tenant_uuid}"),
+                Some(&format!(
+                    "Bearer {}",
+                    token_for(role.clone(), tenant_id, Utc::now().timestamp() + 3600)
+                )),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            uuid_response.status(),
+            if can_access_target {
+                StatusCode::OK
+            } else {
+                StatusCode::NOT_FOUND
+            },
+            "GET /tenant/uuid as {role:?} for tenant {tenant_id:?}"
+        );
+
+        let mut update_db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![user_model_for(role.clone(), tenant_id)]]);
+        if can_access_target {
+            update_db = update_db
+                .append_query_results([vec![tenant_model(7)]])
+                .append_query_results([vec![tenant_model(7)]]);
+        }
+        let update_state = state(update_db.into_connection());
+        let update_app = Router::new()
+            .nest(
+                "/tenant",
+                crate::routes::tenant_routes::tenant_routes(update_state.clone()),
+            )
+            .with_state(update_state);
+        let update_response = update_app
+            .oneshot(json_request(
+                "PUT",
+                "/tenant/7",
+                &format!(
+                    "Bearer {}",
+                    token_for(role.clone(), tenant_id, Utc::now().timestamp() + 3600)
+                ),
+                update_payload,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            update_response.status(),
+            if can_access_target {
+                StatusCode::OK
+            } else {
+                StatusCode::NOT_FOUND
+            },
+            "PUT /tenant/7 as {role:?} for tenant {tenant_id:?}"
+        );
     }
 }
 
@@ -2796,6 +3770,161 @@ async fn tenant_listing_update_route_characterizes_role_and_tenant_matrix() {
 }
 
 #[tokio::test]
+async fn person_write_routes_enforce_role_and_tenant_matrix() {
+    unsafe {
+        std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET);
+    }
+
+    let roles = [
+        (Role::SysAdmin, None, true),
+        (Role::TenantOwner, Some(8), true),
+        (Role::TenantUser, Some(8), true),
+        (Role::TenantOwner, Some(7), false),
+        (Role::TenantUser, Some(7), false),
+        (Role::Customer, None, false),
+    ];
+    let routes = [
+        (
+            "POST",
+            "/persons",
+            "person",
+            r#"{"tenantId":8,"userId":42,"firstName":"Matrix person","surname":"Test"}"#,
+        ),
+        (
+            "PUT",
+            "/persons/99",
+            "person",
+            r#"{"tenantId":8,"userId":42,"firstName":"Updated person","surname":"Test"}"#,
+        ),
+        ("DELETE", "/persons/99", "person", ""),
+        (
+            "POST",
+            "/person-addresses",
+            "person_address",
+            r#"{"tenantId":8,"personId":99,"addressLine1":"Street 1","locality":"Sao Paulo","administrativeArea":"SP","postalCode":"01001000","countryCode":"BR"}"#,
+        ),
+        (
+            "PUT",
+            "/person-addresses/88",
+            "person_address",
+            r#"{"tenantId":8,"personId":99,"addressLine1":"Updated Street","locality":"Sao Paulo","administrativeArea":"SP","postalCode":"01001000","countryCode":"BR"}"#,
+        ),
+        ("DELETE", "/person-addresses/88", "person_address", ""),
+    ];
+    for (role, tenant_id, allowed) in roles {
+        for (method, path, table, body) in routes {
+            let expected_status = if allowed {
+                match method {
+                    "POST" => StatusCode::CREATED,
+                    "PUT" => StatusCode::OK,
+                    "DELETE" => StatusCode::NO_CONTENT,
+                    _ => unreachable!("unknown person operation"),
+                }
+            } else if method == "POST" && role == Role::Customer {
+                StatusCode::FORBIDDEN
+            } else if method == "POST" {
+                StatusCode::CREATED
+            } else {
+                StatusCode::NOT_FOUND
+            };
+            let mut db = MockDatabase::new(DatabaseBackend::Postgres)
+                .append_query_results([vec![user_model_for(role.clone(), tenant_id)]]);
+            if method == "POST" && role != Role::Customer {
+                let created_tenant = if role == Role::SysAdmin {
+                    Some(8)
+                } else {
+                    tenant_id
+                };
+                db = match table {
+                    "person" => {
+                        db.append_query_results([vec![person_model(99, 42, created_tenant)]])
+                    }
+                    "person_address" => db.append_query_results([vec![person_address_model(
+                        88,
+                        99,
+                        created_tenant,
+                    )]]),
+                    _ => unreachable!("unknown person table"),
+                };
+            } else if allowed {
+                db = match table {
+                    "person" => {
+                        let existing = person_model(99, 42, Some(8));
+                        if method == "PUT" {
+                            db.append_query_results([vec![existing.clone()]])
+                                .append_query_results([vec![existing]])
+                        } else {
+                            db.append_query_results([vec![existing]])
+                                .append_exec_results([MockExecResult {
+                                    last_insert_id: 0,
+                                    rows_affected: 1,
+                                }])
+                        }
+                    }
+                    "person_address" => {
+                        let existing = person_address_model(88, 99, Some(8));
+                        if method == "PUT" {
+                            db.append_query_results([vec![existing.clone()]])
+                                .append_query_results([vec![existing]])
+                        } else {
+                            db.append_query_results([vec![existing]])
+                                .append_exec_results([MockExecResult {
+                                    last_insert_id: 0,
+                                    rows_affected: 1,
+                                }])
+                        }
+                    }
+                    _ => unreachable!("unknown person table"),
+                };
+            } else if method != "POST" {
+                db = match table {
+                    "person" => {
+                        db.append_query_results([Vec::<entity::person_entity::Model>::new()])
+                    }
+                    "person_address" => db
+                        .append_query_results([Vec::<entity::person_address_entity::Model>::new()]),
+                    _ => unreachable!("unknown person table"),
+                };
+            }
+
+            let app_state = state(db.into_connection());
+            let app = crate::routes::person_routes::person_routes(app_state.clone())
+                .with_state(app_state);
+            let authorization = format!(
+                "Bearer {}",
+                token_for(role.clone(), tenant_id, Utc::now().timestamp() + 3600)
+            );
+            let request = if method == "DELETE" {
+                request(method, path, Some(&authorization))
+            } else {
+                json_request(method, path, &authorization, body)
+            };
+            let response = app.oneshot(request).await.unwrap();
+            assert_eq!(
+                response.status(),
+                expected_status,
+                "{method} {path} as {role:?} tenant={tenant_id:?}"
+            );
+            if method == "POST" && role != Role::Customer {
+                let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+                    .await
+                    .unwrap();
+                let created: serde_json::Value = serde_json::from_slice(&body).unwrap();
+                assert_eq!(
+                    created["tenantId"],
+                    if role == Role::SysAdmin {
+                        serde_json::json!(8)
+                    } else {
+                        serde_json::json!(tenant_id.unwrap())
+                    },
+                    "{method} {path} tenant stamping as {role:?}"
+                );
+            }
+        }
+    }
+}
+
+#[tokio::test]
 async fn customer_self_routes_are_restricted_to_customer_role() {
     unsafe {
         std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET);
@@ -2855,6 +3984,555 @@ async fn customer_self_routes_are_restricted_to_customer_role() {
                 response.status(),
                 expected_status,
                 "{method} {path} as {role:?}"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn shipping_tax_read_routes_scope_roles_and_ids() {
+    unsafe {
+        std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET);
+    }
+
+    fn warehouse_row(
+        tenant_id: Option<i64>,
+        now: chrono::NaiveDateTime,
+    ) -> entity::warehouse_entity::Model {
+        entity::warehouse_entity::Model {
+            id: 99,
+            uuid: uuid::Uuid::new_v4(),
+            tenant_id,
+            name: "Test warehouse".into(),
+            origin_cep: "01001000".into(),
+            street: None,
+            number: None,
+            complement: None,
+            district: None,
+            city: "Sao Paulo".into(),
+            uf: "SP".into(),
+            is_default: false,
+            active: true,
+            created_at: now,
+            created_by: None,
+            updated_at: now,
+            updated_by: None,
+        }
+    }
+
+    fn shipping_rate_row(
+        tenant_id: Option<i64>,
+        now: chrono::NaiveDateTime,
+    ) -> entity::shipping_rate_entity::Model {
+        entity::shipping_rate_entity::Model {
+            id: 99,
+            uuid: uuid::Uuid::new_v4(),
+            tenant_id,
+            origin_warehouse_id: None,
+            region_name: Some("Sao Paulo".into()),
+            uf: "SP".into(),
+            destination_cep_start: None,
+            destination_cep_end: None,
+            price_cents: 1500,
+            transit_days_min: 1,
+            transit_days_max: 2,
+            max_weight_g: None,
+            extra_weight_per_kg_cents: None,
+            free_shipping_threshold_cents: None,
+            created_at: now,
+            created_by: None,
+            updated_at: now,
+            updated_by: None,
+        }
+    }
+
+    fn tax_rule_row(
+        tenant_id: Option<i64>,
+        now: chrono::NaiveDateTime,
+    ) -> entity::tax_rule_entity::Model {
+        entity::tax_rule_entity::Model {
+            id: 99,
+            uuid: uuid::Uuid::new_v4(),
+            tenant_id,
+            uf_origem: "SP".into(),
+            uf_destino: "RJ".into(),
+            ncm_prefix: None,
+            regime: "simples".into(),
+            csosn: Some("102".into()),
+            cfop: "5102".into(),
+            icms_rate_bp: 1800,
+            active: true,
+            created_at: now,
+            created_by: None,
+            updated_at: now,
+            updated_by: None,
+        }
+    }
+
+    let roles = [
+        (Role::SysAdmin, None, "unrestricted"),
+        (Role::TenantOwner, Some(8), "tenant"),
+        (Role::TenantUser, Some(8), "tenant"),
+        (Role::TenantOwner, Some(7), "foreign"),
+        (Role::TenantUser, Some(7), "foreign"),
+        (Role::Customer, None, "denied"),
+    ];
+    let count_row = BTreeMap::from([("num_items".to_string(), Value::BigInt(Some(1)))]);
+    let now = Utc::now().naive_utc();
+    let routes = [
+        ("/warehouses", "warehouse", "list"),
+        ("/warehouses/paged", "warehouse", "paged"),
+        ("/warehouses/99", "warehouse", "by_id"),
+        ("/shipping-rates", "shipping_rate", "list"),
+        ("/shipping-rates/paged", "shipping_rate", "paged"),
+        ("/shipping-rates/99", "shipping_rate", "by_id"),
+        ("/tax-rules", "tax_rule", "list"),
+        ("/tax-rules/paged", "tax_rule", "paged"),
+        ("/tax-rules/99", "tax_rule", "by_id"),
+    ];
+
+    for (role, tenant_id, scope) in roles {
+        for (path, table, operation) in routes {
+            let customer_no_query = scope == "denied"
+                && (operation == "paged" || table == "warehouse" && operation == "list");
+            let row_is_visible = scope == "unrestricted" || scope == "tenant";
+            let mut db = MockDatabase::new(DatabaseBackend::Postgres)
+                .append_query_results([vec![user_model_for(role.clone(), tenant_id)]]);
+            if !customer_no_query {
+                if operation == "paged" {
+                    db = db.append_query_results([vec![count_row.clone()]]);
+                }
+                let rows = row_is_visible;
+                db = match table {
+                    "warehouse" => db.append_query_results([if rows {
+                        vec![warehouse_row(Some(8), now)]
+                    } else {
+                        Vec::<entity::warehouse_entity::Model>::new()
+                    }]),
+                    "shipping_rate" => db.append_query_results([if rows {
+                        vec![shipping_rate_row(Some(8), now)]
+                    } else {
+                        Vec::<entity::shipping_rate_entity::Model>::new()
+                    }]),
+                    "tax_rule" => db.append_query_results([if rows {
+                        vec![tax_rule_row(Some(8), now)]
+                    } else {
+                        Vec::<entity::tax_rule_entity::Model>::new()
+                    }]),
+                    _ => unreachable!("unknown shipping-tax table"),
+                };
+            }
+
+            let db = db.into_connection();
+            let db_for_log = db.clone();
+            let app_state = state(db);
+            let app = crate::routes::shipping_tax_routes::shipping_tax_routes(app_state.clone())
+                .with_state(app_state);
+            let method = if operation == "by_id" { "GET" } else { "GET" };
+            let response = app
+                .oneshot(request(
+                    method,
+                    path,
+                    Some(&format!(
+                        "Bearer {}",
+                        token_for(role.clone(), tenant_id, Utc::now().timestamp() + 3600)
+                    )),
+                ))
+                .await
+                .unwrap();
+            let expected_status = if operation == "by_id" && !row_is_visible {
+                StatusCode::NOT_FOUND
+            } else {
+                StatusCode::OK
+            };
+            assert_eq!(
+                response.status(),
+                expected_status,
+                "GET {path} as {role:?} with scope {scope}"
+            );
+
+            let statements: Vec<_> = db_for_log
+                .into_transaction_log()
+                .into_iter()
+                .flat_map(|transaction| transaction.statements().to_vec())
+                .collect();
+            let queries: Vec<_> = statements
+                .iter()
+                .filter(|statement| statement.sql.contains(&format!("FROM \"{table}\"")))
+                .collect();
+            if customer_no_query {
+                assert!(queries.is_empty(), "tenantless Customer queried {path}");
+                continue;
+            }
+            let expected_query_count = if operation == "paged" { 2 } else { 1 };
+            assert_eq!(
+                queries.len(),
+                expected_query_count,
+                "{path} query count; SQL: {:?}",
+                statements
+                    .iter()
+                    .map(|statement| statement.sql.as_str())
+                    .collect::<Vec<_>>()
+            );
+            for query in queries {
+                let where_clause = query
+                    .sql
+                    .split_once(" WHERE ")
+                    .map(|(_, clause)| clause)
+                    .unwrap_or_default();
+                match scope {
+                    "unrestricted" => assert!(!where_clause.contains("tenant_id"), "{}", query.sql),
+                    "tenant" | "foreign" => {
+                        assert!(where_clause.contains("tenant_id"), "{}", query.sql)
+                    }
+                    "denied" => assert!(where_clause.contains("1 = 0"), "{}", query.sql),
+                    _ => unreachable!("unknown shipping-tax scope"),
+                }
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn shipping_tax_create_routes_enforce_or_stamp_tenant_by_role() {
+    unsafe {
+        std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET);
+    }
+
+    let roles = [
+        (Role::SysAdmin, None, Some(8)),
+        (Role::TenantOwner, Some(7), Some(7)),
+        (Role::TenantUser, Some(7), Some(7)),
+        (Role::Customer, None, None),
+    ];
+    let now = Utc::now().naive_utc();
+    let routes = [
+        (
+            "/warehouses",
+            "warehouse",
+            r#"{"tenantId":8,"name":"Test warehouse","originCep":"01001-000","city":"Sao Paulo","uf":"SP","isDefault":false,"active":true}"#,
+        ),
+        (
+            "/shipping-rates",
+            "shipping_rate",
+            r#"{"tenantId":8,"uf":"SP","priceCents":1500,"transitDaysMin":1,"transitDaysMax":2}"#,
+        ),
+        (
+            "/tax-rules",
+            "tax_rule",
+            r#"{"tenantId":8,"ufOrigem":"SP","ufDestino":"RJ","regime":"simples","cfop":"5102","icmsRateBp":1800,"active":true}"#,
+        ),
+    ];
+
+    for (role, token_tenant, expected_tenant) in roles {
+        for (path, table, body) in routes {
+            let expected_status = match (table, role.clone()) {
+                ("warehouse", Role::Customer) => StatusCode::BAD_REQUEST,
+                ("warehouse", _) => StatusCode::OK,
+                (_, Role::Customer) => StatusCode::FORBIDDEN,
+                _ => StatusCode::CREATED,
+            };
+            let mut db = MockDatabase::new(DatabaseBackend::Postgres)
+                .append_query_results([vec![user_model_for(role.clone(), token_tenant)]]);
+            if expected_status == StatusCode::OK || expected_status == StatusCode::CREATED {
+                db = match table {
+                    "warehouse" => {
+                        db.append_query_results([vec![entity::warehouse_entity::Model {
+                            id: 99,
+                            uuid: uuid::Uuid::new_v4(),
+                            tenant_id: expected_tenant,
+                            name: "Test warehouse".into(),
+                            origin_cep: "01001000".into(),
+                            street: None,
+                            number: None,
+                            complement: None,
+                            district: None,
+                            city: "Sao Paulo".into(),
+                            uf: "SP".into(),
+                            is_default: false,
+                            active: true,
+                            created_at: now,
+                            created_by: None,
+                            updated_at: now,
+                            updated_by: None,
+                        }]])
+                    }
+                    "shipping_rate" => {
+                        db.append_query_results([vec![entity::shipping_rate_entity::Model {
+                            id: 99,
+                            uuid: uuid::Uuid::new_v4(),
+                            tenant_id: expected_tenant,
+                            origin_warehouse_id: None,
+                            region_name: None,
+                            uf: "SP".into(),
+                            destination_cep_start: None,
+                            destination_cep_end: None,
+                            price_cents: 1500,
+                            transit_days_min: 1,
+                            transit_days_max: 2,
+                            max_weight_g: None,
+                            extra_weight_per_kg_cents: None,
+                            free_shipping_threshold_cents: None,
+                            created_at: now,
+                            created_by: None,
+                            updated_at: now,
+                            updated_by: None,
+                        }]])
+                    }
+                    "tax_rule" => db.append_query_results([vec![entity::tax_rule_entity::Model {
+                        id: 99,
+                        uuid: uuid::Uuid::new_v4(),
+                        tenant_id: expected_tenant,
+                        uf_origem: "SP".into(),
+                        uf_destino: "RJ".into(),
+                        ncm_prefix: None,
+                        regime: "simples".into(),
+                        csosn: None,
+                        cfop: "5102".into(),
+                        icms_rate_bp: 1800,
+                        active: true,
+                        created_at: now,
+                        created_by: None,
+                        updated_at: now,
+                        updated_by: None,
+                    }]]),
+                    _ => unreachable!("unknown shipping-tax table"),
+                };
+            } else if table == "warehouse" {
+                db = db.append_exec_errors([DbErr::Custom(
+                    "warehouse tenant_id violates NOT NULL".into(),
+                )]);
+            }
+
+            let app_state = state(db.into_connection());
+            let app = crate::routes::shipping_tax_routes::shipping_tax_routes(app_state.clone())
+                .with_state(app_state);
+            let response = app
+                .oneshot(json_request(
+                    "POST",
+                    path,
+                    &format!(
+                        "Bearer {}",
+                        token_for(role.clone(), token_tenant, Utc::now().timestamp() + 3600)
+                    ),
+                    body,
+                ))
+                .await
+                .unwrap();
+            assert_eq!(
+                response.status(),
+                expected_status,
+                "POST {path} as {role:?}"
+            );
+            if expected_status == StatusCode::OK || expected_status == StatusCode::CREATED {
+                let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+                    .await
+                    .unwrap();
+                let created: serde_json::Value = serde_json::from_slice(&body).unwrap();
+                assert_eq!(
+                    created["tenantId"],
+                    expected_tenant.map_or(serde_json::Value::Null, serde_json::Value::from),
+                    "POST {path} as {role:?}"
+                );
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn shipping_tax_update_and_delete_routes_enforce_tenant_access() {
+    unsafe {
+        std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET);
+    }
+
+    fn warehouse_row_for_shipping_tax(
+        tenant_id: Option<i64>,
+        now: chrono::NaiveDateTime,
+    ) -> entity::warehouse_entity::Model {
+        entity::warehouse_entity::Model {
+            id: 99,
+            uuid: uuid::Uuid::new_v4(),
+            tenant_id,
+            name: "Test warehouse".into(),
+            origin_cep: "01001000".into(),
+            street: None,
+            number: None,
+            complement: None,
+            district: None,
+            city: "Sao Paulo".into(),
+            uf: "SP".into(),
+            is_default: false,
+            active: true,
+            created_at: now,
+            created_by: None,
+            updated_at: now,
+            updated_by: None,
+        }
+    }
+
+    fn shipping_rate_row_for_shipping_tax(
+        tenant_id: Option<i64>,
+        now: chrono::NaiveDateTime,
+    ) -> entity::shipping_rate_entity::Model {
+        entity::shipping_rate_entity::Model {
+            id: 99,
+            uuid: uuid::Uuid::new_v4(),
+            tenant_id,
+            origin_warehouse_id: None,
+            region_name: Some("Sao Paulo".into()),
+            uf: "SP".into(),
+            destination_cep_start: None,
+            destination_cep_end: None,
+            price_cents: 1500,
+            transit_days_min: 1,
+            transit_days_max: 2,
+            max_weight_g: None,
+            extra_weight_per_kg_cents: None,
+            free_shipping_threshold_cents: None,
+            created_at: now,
+            created_by: None,
+            updated_at: now,
+            updated_by: None,
+        }
+    }
+
+    fn tax_rule_row_for_shipping_tax(
+        tenant_id: Option<i64>,
+        now: chrono::NaiveDateTime,
+    ) -> entity::tax_rule_entity::Model {
+        entity::tax_rule_entity::Model {
+            id: 99,
+            uuid: uuid::Uuid::new_v4(),
+            tenant_id,
+            uf_origem: "SP".into(),
+            uf_destino: "RJ".into(),
+            ncm_prefix: None,
+            regime: "simples".into(),
+            csosn: Some("102".into()),
+            cfop: "5102".into(),
+            icms_rate_bp: 1800,
+            active: true,
+            created_at: now,
+            created_by: None,
+            updated_at: now,
+            updated_by: None,
+        }
+    }
+
+    let roles = [
+        (Role::SysAdmin, None, true),
+        (Role::TenantOwner, Some(8), true),
+        (Role::TenantUser, Some(8), true),
+        (Role::TenantOwner, Some(7), false),
+        (Role::TenantUser, Some(7), false),
+        (Role::Customer, None, false),
+    ];
+    let routes = [
+        (
+            "PUT",
+            "/warehouses/99",
+            "warehouse",
+            r#"{"tenantId":8,"name":"Updated warehouse","originCep":"01001000","city":"Sao Paulo","uf":"SP","isDefault":false,"active":true}"#,
+        ),
+        ("DELETE", "/warehouses/99", "warehouse", ""),
+        (
+            "PUT",
+            "/shipping-rates/99",
+            "shipping_rate",
+            r#"{"tenantId":8,"uf":"SP","priceCents":1600,"transitDaysMin":1,"transitDaysMax":2}"#,
+        ),
+        ("DELETE", "/shipping-rates/99", "shipping_rate", ""),
+        (
+            "PUT",
+            "/tax-rules/99",
+            "tax_rule",
+            r#"{"tenantId":8,"ufOrigem":"SP","ufDestino":"RJ","regime":"simples","cfop":"5102","icmsRateBp":1900,"active":true}"#,
+        ),
+    ];
+    let now = Utc::now().naive_utc();
+
+    for (role, tenant_id, allowed) in roles {
+        for (method, path, table, body) in routes {
+            let mut db = MockDatabase::new(DatabaseBackend::Postgres)
+                .append_query_results([vec![user_model_for(role.clone(), tenant_id)]]);
+            db = match table {
+                "warehouse" => {
+                    let existing = warehouse_row_for_shipping_tax(Some(8), now);
+                    if allowed && method == "PUT" {
+                        db.append_query_results([vec![existing]])
+                            .append_query_results([vec![warehouse_row_for_shipping_tax(
+                                Some(8),
+                                now,
+                            )]])
+                    } else if allowed {
+                        db.append_query_results([vec![existing]])
+                            .append_exec_results([MockExecResult {
+                                last_insert_id: 0,
+                                rows_affected: 1,
+                            }])
+                    } else {
+                        db.append_query_results([Vec::<entity::warehouse_entity::Model>::new()])
+                    }
+                }
+                "shipping_rate" => {
+                    let existing = shipping_rate_row_for_shipping_tax(Some(8), now);
+                    if allowed && method == "PUT" {
+                        db.append_query_results([vec![existing]])
+                            .append_query_results([vec![shipping_rate_row_for_shipping_tax(
+                                Some(8),
+                                now,
+                            )]])
+                    } else if allowed {
+                        db.append_query_results([vec![existing]])
+                            .append_exec_results([MockExecResult {
+                                last_insert_id: 0,
+                                rows_affected: 1,
+                            }])
+                    } else {
+                        db.append_query_results([Vec::<entity::shipping_rate_entity::Model>::new()])
+                    }
+                }
+                "tax_rule" => {
+                    let existing = tax_rule_row_for_shipping_tax(Some(8), now);
+                    if allowed {
+                        db.append_query_results([vec![existing]])
+                            .append_query_results([vec![tax_rule_row_for_shipping_tax(
+                                Some(8),
+                                now,
+                            )]])
+                    } else {
+                        db.append_query_results([Vec::<entity::tax_rule_entity::Model>::new()])
+                    }
+                }
+                _ => unreachable!("unknown shipping-tax table"),
+            };
+
+            let app_state = state(db.into_connection());
+            let app = crate::routes::shipping_tax_routes::shipping_tax_routes(app_state.clone())
+                .with_state(app_state);
+            let authorization = format!(
+                "Bearer {}",
+                token_for(role.clone(), tenant_id, Utc::now().timestamp() + 3600)
+            );
+            let request = if method == "PUT" {
+                json_request(method, path, &authorization, body)
+            } else {
+                request(method, path, Some(&authorization))
+            };
+            let response = app.oneshot(request).await.unwrap();
+            let expected_status = if allowed {
+                if method == "DELETE" {
+                    StatusCode::NO_CONTENT
+                } else {
+                    StatusCode::OK
+                }
+            } else {
+                StatusCode::NOT_FOUND
+            };
+            assert_eq!(
+                response.status(),
+                expected_status,
+                "{method} {path} as {role:?} for tenant {tenant_id:?}"
             );
         }
     }
@@ -3458,6 +5136,65 @@ async fn user_change_password_route_scopes_user_lookup_by_role() {
             "deny" => assert!(where_clause.contains("1 = 0"), "{}", user_query.sql),
             _ => unreachable!("unknown expected scope"),
         }
+    }
+}
+
+#[tokio::test]
+async fn campaign_target_by_id_enforces_tenant_access() {
+    unsafe {
+        std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET);
+    }
+
+    let roles = [
+        (Role::SysAdmin, None, true),
+        (Role::TenantOwner, Some(8), true),
+        (Role::TenantUser, Some(8), true),
+        (Role::TenantOwner, Some(7), false),
+        (Role::TenantUser, Some(7), false),
+        (Role::Customer, None, false),
+    ];
+    let now = Utc::now().naive_utc();
+
+    for (role, tenant_id, resource_visible) in roles {
+        let mut db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![user_model_for(role.clone(), tenant_id)]]);
+        db = db.append_query_results([if resource_visible {
+            vec![entity::campaign_target_entity::Model {
+                id: 99,
+                uuid: uuid::Uuid::new_v4(),
+                tenant_id: Some(8),
+                campaign_id: 10,
+                target_type: "product".into(),
+                target_id: 20,
+                created_at: now,
+                created_by: None,
+            }]
+        } else {
+            Vec::<entity::campaign_target_entity::Model>::new()
+        }]);
+        let app_state = state(db.into_connection());
+        let app = crate::routes::marketing_routes::marketing_routes(app_state.clone())
+            .with_state(app_state);
+        let response = app
+            .oneshot(request(
+                "GET",
+                "/campaign-targets/99",
+                Some(&format!(
+                    "Bearer {}",
+                    token_for(role.clone(), tenant_id, Utc::now().timestamp() + 3600)
+                )),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            if resource_visible {
+                StatusCode::OK
+            } else {
+                StatusCode::NOT_FOUND
+            },
+            "GET /campaign-targets/99 as {role:?} tenant={tenant_id:?}"
+        );
     }
 }
 
@@ -5096,6 +6833,389 @@ async fn profile_get_aliases_return_authenticated_person_for_all_roles() {
 }
 
 #[tokio::test]
+async fn avatar_presign_generates_sandbox_signed_url_for_authenticated_roles() {
+    unsafe {
+        std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET);
+    }
+
+    let roles = [
+        (Role::SysAdmin, None, 0),
+        (Role::TenantOwner, Some(7), 7),
+        (Role::TenantUser, Some(7), 7),
+        (Role::Customer, None, 0),
+    ];
+
+    for (role, tenant_id, key_tenant) in roles {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![user_model_for(role.clone(), tenant_id)]])
+            .into_connection();
+        let app_state = state_with_test_storage_credentials(db);
+        let app = crate::routes::resource_routes::resources_routes(app_state.clone())
+            .with_state(app_state);
+        let response = app
+            .oneshot(json_request(
+                "POST",
+                "/resource/avatar/presign",
+                &format!(
+                    "Bearer {}",
+                    token_for(role.clone(), tenant_id, Utc::now().timestamp() + 3600)
+                ),
+                r#"{"originalFilename":"avatar profile.png","mimeType":"image/png","sizeBytes":1024}"#,
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "avatar presign as {role:?}"
+        );
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let result: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let object_key = result["objectKey"].as_str().unwrap();
+        assert!(object_key.starts_with(&format!("tenants/{key_tenant}/avatars/42-")));
+        assert!(object_key.ends_with("-avatar_profile.png"));
+        assert!(
+            result["uploadUrl"]
+                .as_str()
+                .unwrap()
+                .contains("X-Amz-Signature=")
+        );
+        assert_eq!(
+            result["cdnUrl"],
+            format!("http://localhost.invalid/unused-test-bucket/{object_key}")
+        );
+    }
+}
+
+#[tokio::test]
+async fn product_image_presign_succeeds_for_product_tenant_without_s3_call() {
+    unsafe {
+        std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET);
+    }
+
+    let roles = [
+        (Role::SysAdmin, None),
+        (Role::TenantOwner, Some(8)),
+        (Role::TenantUser, Some(8)),
+    ];
+    let now = Utc::now().naive_utc();
+
+    for (role, tenant_id) in roles {
+        let product = entity::product_entity::Model {
+            id: 99,
+            uuid: uuid::Uuid::new_v4(),
+            tenant_id: Some(8),
+            name: "C001 product".into(),
+            slug: "c001-product".into(),
+            description: None,
+            brand: None,
+            active: true,
+            ncm: "12345678".into(),
+            cest: None,
+            origem_mercadoria: 0,
+            created_at: now,
+            created_by: None,
+            updated_at: now,
+            updated_by: None,
+        };
+        let image = entity::product_image_entity::Model {
+            id: 501,
+            uuid: uuid::Uuid::new_v4().as_bytes().to_vec(),
+            tenant_id: Some(8),
+            product_id: 99,
+            sku_id: None,
+            alt_text: Some("Primary product image".into()),
+            sort_order: 0,
+            is_primary: true,
+            storage_provider: "s3".into(),
+            bucket: "unused-test-bucket".into(),
+            object_key: "tenants/8/products/99/images/c001-fixture.png".into(),
+            storage_identity_hash: vec![7; 32],
+            object_version: None,
+            etag: None,
+            checksum_sha256: None,
+            original_filename: "product image.png".into(),
+            mime_type: "image/png".into(),
+            size_bytes: 1024,
+            width_px: None,
+            height_px: None,
+            storage_status: "pending".into(),
+            created_at: now,
+            created_by: None,
+            updated_at: now,
+            updated_by: None,
+            deleted_at: None,
+            deleted_by: None,
+        };
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![user_model_for(role.clone(), tenant_id)]])
+            .append_query_results([vec![product]])
+            .append_query_results([Vec::<entity::product_image_entity::Model>::new()])
+            .append_query_results([vec![image]])
+            .into_connection();
+        let app_state = state_with_test_storage_credentials(db);
+        let app = crate::routes::resource_routes::resources_routes(app_state.clone())
+            .with_state(app_state);
+        let response = app
+            .oneshot(json_request(
+                "POST",
+                "/products/99/images/presign",
+                &format!(
+                    "Bearer {}",
+                    token_for(role.clone(), tenant_id, Utc::now().timestamp() + 3600)
+                ),
+                r#"{"images":[{"originalFilename":"product image.png","mimeType":"image/png","sizeBytes":1024,"isPrimary":true}]}"#,
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            response.status(),
+            StatusCode::CREATED,
+            "presign as {role:?}"
+        );
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let results: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(results.as_array().unwrap().len(), 1);
+        let result = &results[0];
+        assert_eq!(result["image"]["tenantId"], 8);
+        assert_eq!(result["image"]["storageStatus"], "pending");
+        assert!(
+            result["uploadUrl"]
+                .as_str()
+                .unwrap()
+                .contains("X-Amz-Signature=")
+        );
+        assert!(
+            result["objectKey"]
+                .as_str()
+                .unwrap()
+                .starts_with("tenants/8/products/99/images/")
+        );
+    }
+}
+
+#[tokio::test]
+async fn product_image_set_primary_uses_mock_database_for_owner() {
+    unsafe {
+        std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET);
+    }
+
+    fn image_row(
+        is_primary: bool,
+        now: chrono::NaiveDateTime,
+    ) -> entity::product_image_entity::Model {
+        entity::product_image_entity::Model {
+            id: 501,
+            uuid: uuid::Uuid::new_v4().as_bytes().to_vec(),
+            tenant_id: Some(8),
+            product_id: 99,
+            sku_id: None,
+            alt_text: Some("Product image".into()),
+            sort_order: 0,
+            is_primary,
+            storage_provider: "s3".into(),
+            bucket: "unused-test-bucket".into(),
+            object_key: "tenants/8/products/99/images/c001-fixture.png".into(),
+            storage_identity_hash: vec![7; 32],
+            object_version: None,
+            etag: None,
+            checksum_sha256: None,
+            original_filename: "fixture.png".into(),
+            mime_type: "image/png".into(),
+            size_bytes: 1024,
+            width_px: None,
+            height_px: None,
+            storage_status: "available".into(),
+            created_at: now,
+            created_by: None,
+            updated_at: now,
+            updated_by: None,
+            deleted_at: None,
+            deleted_by: None,
+        }
+    }
+
+    let cases = [
+        (Role::SysAdmin, None, StatusCode::OK),
+        (Role::TenantOwner, Some(8), StatusCode::OK),
+        (Role::TenantUser, Some(8), StatusCode::OK),
+        (Role::TenantOwner, Some(7), StatusCode::NOT_FOUND),
+        (Role::Customer, None, StatusCode::NOT_FOUND),
+    ];
+    let now = Utc::now().naive_utc();
+
+    for (role, tenant_id, expected_status) in cases {
+        let mut db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![user_model_for(role.clone(), tenant_id)]]);
+        if expected_status == StatusCode::OK {
+            db = db
+                .append_query_results([vec![entity::product_entity::Model {
+                    id: 99,
+                    uuid: uuid::Uuid::new_v4(),
+                    tenant_id: Some(8),
+                    name: "C001 product".into(),
+                    slug: "c001-product".into(),
+                    description: None,
+                    brand: None,
+                    active: true,
+                    ncm: "12345678".into(),
+                    cest: None,
+                    origem_mercadoria: 0,
+                    created_at: now,
+                    created_by: None,
+                    updated_at: now,
+                    updated_by: None,
+                }]])
+                .append_query_results([vec![image_row(false, now)]])
+                .append_query_results([Vec::<entity::product_image_entity::Model>::new()])
+                .append_query_results([vec![image_row(false, now)]])
+                .append_query_results([vec![image_row(true, now)]]);
+        } else {
+            db = db.append_query_results([Vec::<entity::product_entity::Model>::new()]);
+        }
+        let app_state = state(db.into_connection());
+        let app = crate::routes::resource_routes::resources_routes(app_state.clone())
+            .with_state(app_state);
+        let response = app
+            .oneshot(request(
+                "PUT",
+                "/products/99/images/501/primary",
+                Some(&format!(
+                    "Bearer {}",
+                    token_for(role.clone(), tenant_id, Utc::now().timestamp() + 3600)
+                )),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            expected_status,
+            "set primary image as {role:?} for tenant {tenant_id:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn product_image_delete_soft_deletes_and_calls_s3_for_authorized_roles() {
+    unsafe {
+        std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET);
+    }
+
+    fn product(now: chrono::NaiveDateTime) -> entity::product_entity::Model {
+        entity::product_entity::Model {
+            id: 99,
+            uuid: uuid::Uuid::new_v4(),
+            tenant_id: Some(8),
+            name: "C001 product".into(),
+            slug: "c001-product".into(),
+            description: None,
+            brand: None,
+            active: true,
+            ncm: "12345678".into(),
+            cest: None,
+            origem_mercadoria: 0,
+            created_at: now,
+            created_by: None,
+            updated_at: now,
+            updated_by: None,
+        }
+    }
+
+    fn image(
+        storage_status: &str,
+        deleted_at: Option<chrono::NaiveDateTime>,
+        now: chrono::NaiveDateTime,
+    ) -> entity::product_image_entity::Model {
+        entity::product_image_entity::Model {
+            id: 501,
+            uuid: uuid::Uuid::new_v4().as_bytes().to_vec(),
+            tenant_id: Some(8),
+            product_id: 99,
+            sku_id: None,
+            alt_text: Some("Product image".into()),
+            sort_order: 0,
+            is_primary: false,
+            storage_provider: "s3".into(),
+            bucket: "unused-test-bucket".into(),
+            object_key: "tenants/8/products/99/images/c001-delete.png".into(),
+            storage_identity_hash: vec![7; 32],
+            object_version: None,
+            etag: None,
+            checksum_sha256: None,
+            original_filename: "fixture.png".into(),
+            mime_type: "image/png".into(),
+            size_bytes: 1024,
+            width_px: None,
+            height_px: None,
+            storage_status: storage_status.into(),
+            created_at: now,
+            created_by: None,
+            updated_at: now,
+            updated_by: None,
+            deleted_at,
+            deleted_by: None,
+        }
+    }
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let s3_app = Router::new()
+        .route("/{*key}", delete(accept_s3_delete))
+        .with_state(calls.clone());
+    let s3_server = tokio::spawn(async move {
+        axum::serve(listener, s3_app).await.unwrap();
+    });
+
+    let now = Utc::now().naive_utc();
+    for (role, tenant_id) in [
+        (Role::SysAdmin, None),
+        (Role::TenantOwner, Some(8)),
+        (Role::TenantUser, Some(8)),
+    ] {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![user_model_for(role.clone(), tenant_id)]])
+            .append_query_results([vec![product(now)]])
+            .append_query_results([vec![image("available", None, now)]])
+            .append_query_results([vec![image("available", None, now)]])
+            .append_query_results([vec![image("deleted", Some(now), now)]])
+            .into_connection();
+        let app_state = state_with_test_storage_endpoint(db, &endpoint);
+        let app = crate::routes::resource_routes::resources_routes(app_state.clone())
+            .with_state(app_state);
+        let response = app
+            .oneshot(request(
+                "DELETE",
+                "/products/99/images/501",
+                Some(&format!(
+                    "Bearer {}",
+                    token_for(role.clone(), tenant_id, Utc::now().timestamp() + 3600)
+                )),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::NO_CONTENT,
+            "delete image as {role:?} for tenant {tenant_id:?}"
+        );
+    }
+
+    let calls = calls.lock().unwrap();
+    assert_eq!(calls.len(), 3);
+    assert!(calls.iter().all(|call| {
+        call.starts_with("DELETE /unused-test-bucket/tenants/8/products/99/images/c001-delete.png")
+    }));
+    s3_server.abort();
+}
+
+#[tokio::test]
 async fn product_image_list_enforces_product_tenant_access() {
     unsafe {
         std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET);
@@ -5105,6 +7225,7 @@ async fn product_image_list_enforces_product_tenant_access() {
         (Role::SysAdmin, None, StatusCode::OK),
         (Role::TenantOwner, Some(7), StatusCode::FORBIDDEN),
         (Role::TenantOwner, Some(8), StatusCode::OK),
+        (Role::TenantUser, Some(8), StatusCode::OK),
         (Role::TenantUser, Some(7), StatusCode::FORBIDDEN),
         (Role::Customer, None, StatusCode::FORBIDDEN),
     ];
@@ -5203,6 +7324,65 @@ async fn product_image_mutations_require_product_access_before_storage() {
 }
 
 #[tokio::test]
+async fn customer_cannot_mutate_existing_tenant_product_images() {
+    unsafe {
+        std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET);
+    }
+
+    let now = Utc::now().naive_utc();
+    for (method, path, body) in [
+        (
+            "POST",
+            "/products/99/images/presign",
+            Some(
+                r#"{"images":[{"originalFilename":"image.jpg","mimeType":"image/jpeg","sizeBytes":1024}]}"#,
+            ),
+        ),
+        ("DELETE", "/products/99/images/501", None),
+        ("PUT", "/products/99/images/501/primary", None),
+    ] {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![user_model_for(Role::Customer, None)]])
+            .append_query_results([vec![entity::product_entity::Model {
+                id: 99,
+                uuid: uuid::Uuid::new_v4(),
+                tenant_id: Some(8),
+                name: "Accessible seller product".into(),
+                slug: "accessible-seller-product".into(),
+                description: None,
+                brand: None,
+                active: true,
+                ncm: "12345678".into(),
+                cest: None,
+                origem_mercadoria: 0,
+                created_at: now,
+                created_by: None,
+                updated_at: now,
+                updated_by: None,
+            }]])
+            .into_connection();
+        let app_state = state(db);
+        let app = crate::routes::resource_routes::resources_routes(app_state.clone())
+            .with_state(app_state);
+        let authorization = format!(
+            "Bearer {}",
+            token_for(Role::Customer, None, Utc::now().timestamp() + 3600)
+        );
+        let request = if let Some(body) = body {
+            json_request(method, path, &authorization, body)
+        } else {
+            request(method, path, Some(&authorization))
+        };
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::FORBIDDEN,
+            "Customer {method} {path} for an existing seller product"
+        );
+    }
+}
+
+#[tokio::test]
 async fn sku_stock_by_id_and_sku_enforce_tenant_access() {
     unsafe {
         std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET);
@@ -5254,6 +7434,90 @@ async fn sku_stock_by_id_and_sku_enforce_tenant_access() {
                 response.status(),
                 expected_status,
                 "GET {path} as {role:?} for tenant {tenant_id:?}"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn sku_attribute_and_stock_delete_routes_enforce_role_tenant_matrix() {
+    unsafe {
+        std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET);
+    }
+
+    let now = Utc::now().naive_utc();
+    let cases = [
+        (Role::SysAdmin, None, StatusCode::NO_CONTENT),
+        (Role::TenantOwner, Some(8), StatusCode::NO_CONTENT),
+        (Role::TenantUser, Some(8), StatusCode::NO_CONTENT),
+        (Role::TenantOwner, Some(7), StatusCode::FORBIDDEN),
+        (Role::TenantUser, Some(7), StatusCode::FORBIDDEN),
+        (Role::Customer, None, StatusCode::FORBIDDEN),
+    ];
+    let paths = [
+        "/sku-attributes/99",
+        "/sku-attribute-values/99",
+        "/sku-stocks/99",
+    ];
+
+    for (role, tenant_id, expected_status) in cases {
+        for path in paths {
+            let mut db = MockDatabase::new(DatabaseBackend::Postgres)
+                .append_query_results([vec![user_model_for(role.clone(), tenant_id)]]);
+            if path == "/sku-stocks/99" {
+                db = db.append_query_results([vec![entity::sku_stock_entity::Model {
+                    id: 99,
+                    uuid: uuid::Uuid::new_v4(),
+                    tenant_id: Some(8),
+                    sku_id: 99,
+                    warehouse_id: Some(1),
+                    quantity: 10,
+                    reserved: 0,
+                    created_at: now,
+                    created_by: None,
+                    updated_at: now,
+                    updated_by: None,
+                }]]);
+            } else {
+                db = db.append_query_results([vec![entity::sku_attribute_value_entity::Model {
+                    id: 99,
+                    uuid: uuid::Uuid::new_v4(),
+                    tenant_id: Some(8),
+                    product_id: 44,
+                    sku_id: 99,
+                    product_attribute_id: 55,
+                    attribute_id: 66,
+                    attribute_value_id: 77,
+                    created_at: now,
+                    created_by: None,
+                    updated_at: now,
+                    updated_by: None,
+                }]]);
+            }
+            if expected_status == StatusCode::NO_CONTENT {
+                db = db.append_exec_results([MockExecResult {
+                    last_insert_id: 0,
+                    rows_affected: 1,
+                }]);
+            }
+            let app_state = state(db.into_connection());
+            let app = crate::routes::resource_routes::resources_routes(app_state.clone())
+                .with_state(app_state);
+            let response = app
+                .oneshot(request(
+                    "DELETE",
+                    path,
+                    Some(&format!(
+                        "Bearer {}",
+                        token_for(role.clone(), tenant_id, Utc::now().timestamp() + 3600)
+                    )),
+                ))
+                .await
+                .unwrap();
+            assert_eq!(
+                response.status(),
+                expected_status,
+                "DELETE {path} as {role:?} for tenant {tenant_id:?}"
             );
         }
     }

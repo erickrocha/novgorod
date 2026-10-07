@@ -2,6 +2,30 @@ use super::*;
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 
+#[test]
+fn mock_provider_mode_is_opt_in_and_validates_provider() {
+    assert!(mock_provider_for_config(None, None).unwrap().is_none());
+    assert!(mock_provider_for_config(Some("real"), Some("invalid")).unwrap().is_none());
+    assert!(mock_provider_for_config(Some("unknown"), None).is_err());
+    assert!(mock_provider_for_config(Some("mock"), None).is_err());
+    assert!(mock_provider_for_config(Some("mock"), Some("invalid")).is_err());
+
+    assert_eq!(
+        mock_provider_for_config(Some("mock"), Some("mercado_pago"))
+            .unwrap()
+            .unwrap()
+            .name(),
+        "mercado_pago"
+    );
+    assert_eq!(
+        mock_provider_for_config(Some("mock"), Some("pagseguro"))
+            .unwrap()
+            .unwrap()
+            .name(),
+        "pagseguro"
+    );
+}
+
 fn compute_signature(secret: &str, ts: &str, request_id: &str, data_id: &str) -> String {
     let manifest = format!("id:{data_id};request-id:{request_id};ts:{ts};");
     let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).expect("valid HMAC key");
