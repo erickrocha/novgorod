@@ -2,6 +2,7 @@ use crate::commons::entity_mapper::EntityMapper;
 use crate::commons::gateway::Gateway;
 use crate::domain::customer::{Customer, CustomerEntityMapper};
 use crate::gateway::customer_gateway::CustomerGateway;
+use sea_orm::DbErr;
 
 pub struct CustomerUseCase {
     gateway: CustomerGateway,
@@ -46,6 +47,19 @@ impl CustomerUseCase {
             log::error!("Failed to update customer: {}", e);
         }).ok()?;
         Some(CustomerEntityMapper::from_active_model(entity))
+    }
+
+    pub async fn update_in_tenant(
+        &self,
+        id: i64,
+        tenant_id: i64,
+        mut customer: Customer,
+    ) -> Result<Option<Customer>, DbErr> {
+        customer.id = Some(id);
+        self.gateway
+            .update_in_tenant(id, tenant_id, customer)
+            .await
+            .map(|model| model.map(CustomerEntityMapper::from_model))
     }
 
     pub async fn delete_by_id(&self, id: i64) -> Option<()> {

@@ -117,6 +117,8 @@ impl Modify for SecurityAddon {
         endpoints::customer_endpoint::get_by_id,
         endpoints::customer_endpoint::add,
         endpoints::customer_endpoint::update,
+        endpoints::checkout_customer_endpoint::deactivate,
+        endpoints::checkout_customer_endpoint::erase,
         endpoints::customer_address_endpoint::list_all,
         endpoints::customer_address_endpoint::paged,
         endpoints::customer_address_endpoint::get_by_id,
@@ -536,6 +538,10 @@ mod shipping_api_tests {
             );
         }
 
+        assert!(doc["paths"]["/customers/me"]["delete"].is_object());
+        assert!(doc["paths"]["/customers/me"]["get"].is_null());
+        assert!(doc["paths"]["/customers/me/erasure"]["delete"].is_object());
+
         for path in ["/api/public/products/query", "/api/public/products/{slug}"] {
             assert_eq!(
                 doc["paths"][path]["get"]["security"][0]["bearer_auth"].is_array(),
@@ -547,7 +553,6 @@ mod shipping_api_tests {
         for path in [
             "/login",
             "/signup",
-            "/customers/me",
             "/customers/me/tax-id",
             "/api/public/categories",
             "/api/public/categories/paged",

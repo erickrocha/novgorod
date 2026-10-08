@@ -1,8 +1,9 @@
 use crate::AppState;
 use crate::commons::{exception_response::{ExceptionResponse, HttpResponse}, i18n::{ErrorKey, Locale}};
-use axum::{Json, extract::{Extension, State}};
-use business::{domain::{enums::Role, user::User}, sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, QueryOrder, Set}};
-use entity::{customer_address_entity, customer_entity};
+use axum::{Json, body::to_bytes, extract::{Extension, Request, State}, http::StatusCode};
+use business::{domain::{enums::Role, user::User}, sea_orm::{ActiveModelTrait, ColumnTrait, ConnectionTrait, DbBackend, EntityTrait, QueryFilter, QueryOrder, Set, Statement, TransactionTrait}};
+use business::sea_orm::sea_query::Expr;
+use entity::{coupon_redemption_entity, customer_address_entity, customer_entity, person_address_entity, person_entity, user_entity};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize)]
@@ -46,13 +47,53 @@ fn valid_cpf(cpf: &str) -> bool {
     true
 }
 
-async fn owned(state: &AppState, user: &User, locale: Locale) -> Result<customer_entity::Model, ExceptionResponse> {
-    if user.role != Role::Customer { return Err(ExceptionResponse::Forbidden(locale, ErrorKey::PurchaseForbidden)); }
+async fn owned_on<C: ConnectionTrait>(
+    connection: &C,
+    user: &User,
+    locale: Locale,
+) -> Result<customer_entity::Model, ExceptionResponse> {
+    if user.role != Role::Customer {
+        return Err(if user.role == Role::SysAdmin {
+            ExceptionResponse::NotFound(locale, ErrorKey::PurchaseForbidden)
+        } else {
+            ExceptionResponse::Forbidden(locale, ErrorKey::PurchaseForbidden)
+        });
+    }
     let id = user.id.ok_or(ExceptionResponse::Forbidden(locale, ErrorKey::PurchaseForbidden))?;
     customer_entity::Entity::find().filter(customer_entity::Column::UserId.eq(id))
-        .filter(customer_entity::Column::Active.eq(true)).one(state.conn.as_ref()).await
+        .filter(customer_entity::Column::Active.eq(true)).one(connection).await
         .map_err(|_| ExceptionResponse::InternalServerError(locale, ErrorKey::PurchaseUnavailable))?
-        .ok_or(ExceptionResponse::Forbidden(locale, ErrorKey::PurchaseForbidden))
+        .ok_or(ExceptionResponse::NotFound(locale, ErrorKey::PurchaseForbidden))
+}
+
+async fn owned(
+    state: &AppState,
+    user: &User,
+    locale: Locale,
+) -> Result<customer_entity::Model, ExceptionResponse> {
+    owned_on(state.conn.as_ref(), user, locale).await
+}
+
+async fn require_identity_only_request(
+    request: Request,
+    locale: Locale,
+) -> Result<(), ExceptionResponse> {
+    if request.uri().query().is_some() {
+        return Err(ExceptionResponse::BadRequest(
+            locale,
+            ErrorKey::InvalidParameterValue,
+        ));
+    }
+    let body = to_bytes(request.into_body(), 1_048_576)
+        .await
+        .map_err(|_| ExceptionResponse::BadRequest(locale, ErrorKey::InvalidParameterValue))?;
+    if !body.is_empty() {
+        return Err(ExceptionResponse::BadRequest(
+            locale,
+            ErrorKey::InvalidParameterValue,
+        ));
+    }
+    Ok(())
 }
 
 pub async fn me(State(state): State<AppState>, Extension(user): Extension<User>, Extension(locale): Extension<Locale>) -> HttpResponse<Json<CheckoutCustomer>> {
@@ -69,6 +110,198 @@ pub async fn me(State(state): State<AppState>, Extension(user): Extension<User>,
             country_code: a.country_code, is_default: a.is_default }).collect();
     Ok(Json(CheckoutCustomer { id: customer.id, name: customer.name, cpf: customer.cpf,
         email: customer.email, phone: customer.phone, addresses }))
+}
+
+#[utoipa::path(
+    delete,
+    path = "/customers/me",
+    tag = "Customer",
+    responses(
+        (status = 204, description = "Customer account deactivated"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden", body = crate::endpoints::json::error_response_json::ForbiddenErrorJson),
+        (status = 500, description = "Internal server error", body = crate::endpoints::json::error_response_json::InternalServerErrorJson),
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn deactivate(
+    State(state): State<AppState>,
+    Extension(user): Extension<User>,
+    Extension(locale): Extension<Locale>,
+    request: Request,
+) -> HttpResponse<StatusCode> {
+    require_identity_only_request(request, locale).await?;
+    let customer = owned(&state, &user, locale).await?;
+    let user_id = user.id.ok_or(ExceptionResponse::Forbidden(
+        locale,
+        ErrorKey::PurchaseForbidden,
+    ))?;
+    let now = chrono::Utc::now().naive_utc();
+    let transaction = state
+        .conn
+        .begin()
+        .await
+        .map_err(|_| ExceptionResponse::InternalServerError(locale, ErrorKey::PurchaseUnavailable))?;
+
+    let customer_update = customer_entity::Entity::update_many()
+        .col_expr(customer_entity::Column::Active, Expr::value(false))
+        .col_expr(customer_entity::Column::UpdatedAt, Expr::value(now))
+        .col_expr(
+            customer_entity::Column::UpdatedBy,
+            Expr::value(Some(user.email.clone())),
+        )
+        .filter(customer_entity::Column::Id.eq(customer.id))
+        .filter(customer_entity::Column::UserId.eq(user_id))
+        .filter(customer_entity::Column::Active.eq(true))
+        .exec(&transaction)
+        .await
+        .map_err(|_| ExceptionResponse::InternalServerError(locale, ErrorKey::PurchaseUnavailable))?;
+
+    if customer_update.rows_affected != 1 {
+        let _ = transaction.rollback().await;
+        return Err(ExceptionResponse::Forbidden(locale, ErrorKey::PurchaseForbidden));
+    }
+
+    let user_update = user_entity::Entity::update_many()
+        .col_expr(user_entity::Column::Enabled, Expr::value(false))
+        .col_expr(user_entity::Column::UpdatedAt, Expr::value(now))
+        .col_expr(
+            user_entity::Column::UpdatedBy,
+            Expr::value(Some(user.email)),
+        )
+        .filter(user_entity::Column::Id.eq(user_id))
+        .exec(&transaction)
+        .await
+        .map_err(|_| ExceptionResponse::InternalServerError(locale, ErrorKey::PurchaseUnavailable))?;
+
+    if user_update.rows_affected != 1 {
+        let _ = transaction.rollback().await;
+        return Err(ExceptionResponse::InternalServerError(
+            locale,
+            ErrorKey::PurchaseUnavailable,
+        ));
+    }
+
+    transaction
+        .commit()
+        .await
+        .map_err(|_| ExceptionResponse::InternalServerError(locale, ErrorKey::PurchaseUnavailable))?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[utoipa::path(
+    delete,
+    path = "/customers/me/erasure",
+    tag = "Customer",
+    responses(
+        (status = 204, description = "Customer account erased; avatar cleanup is pending"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden", body = crate::endpoints::json::error_response_json::ForbiddenErrorJson),
+        (status = 404, description = "Customer not found", body = crate::endpoints::json::error_response_json::NotFoundErrorJson),
+        (status = 500, description = "Internal server error", body = crate::endpoints::json::error_response_json::InternalServerErrorJson),
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn erase(
+    State(state): State<AppState>,
+    Extension(user): Extension<User>,
+    Extension(locale): Extension<Locale>,
+    request: Request,
+) -> HttpResponse<StatusCode> {
+    require_identity_only_request(request, locale).await?;
+    let user_id = user.id.ok_or(ExceptionResponse::NotFound(
+        locale,
+        ErrorKey::PurchaseForbidden,
+    ))?;
+    let transaction = state
+        .conn
+        .begin()
+        .await
+        .map_err(|_| ExceptionResponse::InternalServerError(locale, ErrorKey::PurchaseUnavailable))?;
+
+    let customer = owned_on(&transaction, &user, locale).await?;
+    let persons = person_entity::Entity::find()
+        .filter(person_entity::Column::UserId.eq(user_id))
+        .all(&transaction)
+        .await
+        .map_err(|_| ExceptionResponse::InternalServerError(locale, ErrorKey::PurchaseUnavailable))?;
+
+    for object_key in persons.iter().filter_map(|person| person.avatar.as_deref()) {
+        transaction
+            .execute_raw(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "INSERT INTO avatar_sanitation_queue (object_key) VALUES ($1) ON CONFLICT (object_key) DO NOTHING",
+                [object_key.to_owned().into()],
+            ))
+            .await
+            .map_err(|_| {
+                ExceptionResponse::InternalServerError(locale, ErrorKey::PurchaseUnavailable)
+            })?;
+    }
+
+    for sql in [
+        "DELETE FROM checkout_quote WHERE customer_id = $1",
+        "DELETE FROM checkout_coupon_reservation WHERE customer_id = $1",
+    ] {
+        transaction
+            .execute_raw(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                sql,
+                [customer.id.into()],
+            ))
+            .await
+            .map_err(|_| {
+                ExceptionResponse::InternalServerError(locale, ErrorKey::PurchaseUnavailable)
+            })?;
+    }
+
+    coupon_redemption_entity::Entity::delete_many()
+        .filter(coupon_redemption_entity::Column::CustomerId.eq(customer.id))
+        .exec(&transaction)
+        .await
+        .map_err(|_| ExceptionResponse::InternalServerError(locale, ErrorKey::PurchaseUnavailable))?;
+    customer_address_entity::Entity::delete_many()
+        .filter(customer_address_entity::Column::CustomerId.eq(customer.id))
+        .exec(&transaction)
+        .await
+        .map_err(|_| ExceptionResponse::InternalServerError(locale, ErrorKey::PurchaseUnavailable))?;
+
+    let person_ids: Vec<i64> = persons.iter().map(|person| person.id).collect();
+    if !person_ids.is_empty() {
+        person_address_entity::Entity::delete_many()
+            .filter(person_address_entity::Column::PersonId.is_in(person_ids))
+            .exec(&transaction)
+            .await
+            .map_err(|_| ExceptionResponse::InternalServerError(locale, ErrorKey::PurchaseUnavailable))?;
+    }
+    person_entity::Entity::delete_many()
+        .filter(person_entity::Column::UserId.eq(user_id))
+        .exec(&transaction)
+        .await
+        .map_err(|_| ExceptionResponse::InternalServerError(locale, ErrorKey::PurchaseUnavailable))?;
+
+    let customer_deleted = customer_entity::Entity::delete_by_id(customer.id)
+        .exec(&transaction)
+        .await
+        .map_err(|_| ExceptionResponse::InternalServerError(locale, ErrorKey::PurchaseUnavailable))?;
+    if customer_deleted.rows_affected != 1 {
+        return Err(ExceptionResponse::NotFound(locale, ErrorKey::PurchaseForbidden));
+    }
+
+    let user_deleted = user_entity::Entity::delete_by_id(user_id)
+        .exec(&transaction)
+        .await
+        .map_err(|_| ExceptionResponse::InternalServerError(locale, ErrorKey::PurchaseUnavailable))?;
+    if user_deleted.rows_affected != 1 {
+        return Err(ExceptionResponse::NotFound(locale, ErrorKey::PurchaseForbidden));
+    }
+
+    transaction
+        .commit()
+        .await
+        .map_err(|_| ExceptionResponse::InternalServerError(locale, ErrorKey::PurchaseUnavailable))?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 pub async fn complete_tax_id(State(state): State<AppState>, Extension(user): Extension<User>,

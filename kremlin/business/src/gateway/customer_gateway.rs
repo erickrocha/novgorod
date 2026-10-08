@@ -36,6 +36,24 @@ impl CustomerGateway {
             .one(db)
             .await
     }
+
+    pub async fn update_in_tenant(
+        &self,
+        id: i64,
+        tenant_id: i64,
+        customer: Customer,
+    ) -> Result<Option<customer_entity::Model>, DbErr> {
+        let active_model = CustomerEntityMapper::build_active_model(customer);
+        let active_model = entity::audit_entity::enforce_tenant(active_model).await;
+        let active_model = entity::audit_entity::stamp_audit(active_model, false).await;
+        let updated = customer_entity::Entity::update_many()
+            .set(active_model)
+            .filter(customer_entity::Column::Id.eq(id))
+            .filter(customer_entity::Column::TenantId.eq(tenant_id))
+            .exec_with_returning(&self.db)
+            .await?;
+        Ok(updated.into_iter().next())
+    }
 }
 
 #[async_trait]

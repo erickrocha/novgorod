@@ -4,8 +4,8 @@ use crate::commons::i18n::{ErrorKey, Locale};
 use crate::commons::pagination::{NormalizedPagination, PagedResponse};
 use crate::endpoints::json::customer_json::*;
 use crate::endpoints::json::error_response_json::{
-    BadRequestErrorJson, ForbiddenErrorJson, InternalServerErrorJson, NotFoundErrorJson,
-    UnauthorizedErrorJson,
+    BadRequestErrorJson, ErrorResponseJson, ForbiddenErrorJson, InternalServerErrorJson,
+    NotFoundErrorJson, UnauthorizedErrorJson,
 };
 use crate::infrastructure::mapper::{CustomerMapper, Mapper};
 use axum::http::StatusCode;
@@ -22,7 +22,7 @@ use business::sea_orm::{
     ColumnTrait, Condition, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect,
 };
 use business::use_cases::customer_use_case::CustomerUseCase;
-use entity::customer_entity;
+use entity::{customer_entity, user_entity};
 
 const CUSTOMER_SORT_FIELDS: &[&str] = &[
     "id",
@@ -33,6 +33,59 @@ const CUSTOMER_SORT_FIELDS: &[&str] = &[
     "created_at",
 ];
 
+async fn validate_customer_user_link(
+    state: &AppState,
+    locale: Locale,
+    user_id: Option<i64>,
+    customer_tenant_id: Option<i64>,
+    current_customer_id: Option<i64>,
+) -> Result<(), ExceptionResponse> {
+    let Some(user_id) = user_id else {
+        return Ok(());
+    };
+
+    let user = user_entity::Entity::find_by_id(user_id)
+        .one(state.conn.as_ref())
+        .await
+        .map_err(|_| {
+            ExceptionResponse::InternalServerError(locale, ErrorKey::InvalidParameterValue)
+        })?
+        .ok_or(ExceptionResponse::NotFound(
+            locale,
+            ErrorKey::InvalidParameterValue,
+        ))?;
+
+    if user.tenant_id != customer_tenant_id {
+        return Err(ExceptionResponse::Forbidden(
+            locale,
+            ErrorKey::InvalidParameterValue,
+        ));
+    }
+
+    let mut linked_customer =
+        customer_entity::Entity::find().filter(customer_entity::Column::UserId.eq(user_id));
+    if let Some(current_customer_id) = current_customer_id {
+        linked_customer =
+            linked_customer.filter(customer_entity::Column::Id.ne(current_customer_id));
+    }
+
+    if linked_customer
+        .one(state.conn.as_ref())
+        .await
+        .map_err(|_| {
+            ExceptionResponse::InternalServerError(locale, ErrorKey::InvalidParameterValue)
+        })?
+        .is_some()
+    {
+        return Err(ExceptionResponse::Conflict(
+            locale,
+            ErrorKey::InvalidParameterValue,
+        ));
+    }
+
+    Ok(())
+}
+
 #[utoipa::path(
     get,
     path = "/customers",
@@ -41,6 +94,8 @@ const CUSTOMER_SORT_FIELDS: &[&str] = &[
         (status = 200, description = "List of customers", body = [CustomerJson]),
         (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
         (status = 403, description = "Forbidden", body = ForbiddenErrorJson),
+        (status = 404, description = "Linked User not found", body = ErrorResponseJson),
+        (status = 409, description = "User already linked to another Customer", body = ErrorResponseJson),
         (status = 500, description = "Internal server error", body = InternalServerErrorJson),
     ),
     security(("bearer_auth" = []))
@@ -63,6 +118,7 @@ pub async fn list_all(
         (status = 200, description = "Paged customers", body = PagedResponse<CustomerJson>),
         (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
         (status = 403, description = "Forbidden", body = ForbiddenErrorJson),
+        (status = 409, description = "User already linked to another Customer", body = ErrorResponseJson),
         (status = 500, description = "Internal server error", body = InternalServerErrorJson),
     ),
     security(("bearer_auth" = []))
@@ -166,9 +222,48 @@ pub async fn get_by_id(State(state): State<AppState>,Extension(locale): Extensio
     ),
     security(("bearer_auth" = []))
 )]
-pub async fn add(State(state): State<AppState>,Extension(locale): Extension<Locale>,Json(payload): Json<CustomerJson>) -> HttpResponse<(StatusCode, Json<CustomerJson>)> {
+pub async fn add(
+    State(state): State<AppState>,
+    Extension(locale): Extension<Locale>,
+    Extension(current_user): Extension<User>,
+    Json(mut payload): Json<CustomerJson>,
+) -> HttpResponse<(StatusCode, Json<CustomerJson>)> {
+    if current_user.role == Role::Customer {
+        return Err(ExceptionResponse::Forbidden(
+            locale,
+            ErrorKey::InvalidParameterValue,
+        ));
+    }
+
+    if matches!(current_user.role, Role::TenantOwner | Role::TenantUser) {
+        let Some(tenant_id) = current_user.tenant_id else {
+            return Err(ExceptionResponse::Forbidden(
+                locale,
+                ErrorKey::InvalidParameterValue,
+            ));
+        };
+
+        if payload
+            .tenant_id
+            .is_some_and(|requested| requested != tenant_id)
+            || payload.user_id.is_some()
+        {
+            return Err(ExceptionResponse::Forbidden(
+                locale,
+                ErrorKey::InvalidParameterValue,
+            ));
+        }
+
+        payload.tenant_id = Some(tenant_id);
+    }
+
+    validate_customer_user_link(&state, locale, payload.user_id, payload.tenant_id, None).await?;
+
     if payload.name.trim().is_empty() || payload.email.trim().is_empty() {
-        return Err(ExceptionResponse::BadRequest(locale,ErrorKey::InvalidParameterValue));
+        return Err(ExceptionResponse::BadRequest(
+            locale,
+            ErrorKey::InvalidParameterValue,
+        ));
     }
 
     let customer = CustomerMapper::domain(payload);
@@ -177,7 +272,10 @@ pub async fn add(State(state): State<AppState>,Extension(locale): Extension<Loca
 
     match saved {
         Some(domain) => Ok((StatusCode::CREATED, Json(CustomerMapper::json(domain)))),
-        None => Err(ExceptionResponse::BadRequest(locale,ErrorKey::InvalidParameterValue))
+        None => Err(ExceptionResponse::BadRequest(
+            locale,
+            ErrorKey::InvalidParameterValue,
+        )),
     }
 }
 
@@ -197,14 +295,101 @@ pub async fn add(State(state): State<AppState>,Extension(locale): Extension<Loca
     ),
     security(("bearer_auth" = []))
 )]
-pub async fn update(State(state): State<AppState>,Extension(locale): Extension<Locale>,Path(id): Path<i64>,Json(payload): Json<CustomerJson>) -> HttpResponse<Json<CustomerJson>> {
+pub async fn update(
+    State(state): State<AppState>,
+    Extension(locale): Extension<Locale>,
+    Extension(current_user): Extension<User>,
+    Path(id): Path<i64>,
+    Json(mut payload): Json<CustomerJson>,
+) -> HttpResponse<Json<CustomerJson>> {
+    if current_user.role == Role::Customer {
+        return Err(ExceptionResponse::Forbidden(
+            locale,
+            ErrorKey::InvalidParameterValue,
+        ));
+    }
+
+    let existing = customer_entity::Entity::find_by_id(id)
+        .one(state.conn.as_ref())
+        .await
+        .map_err(|_| {
+            ExceptionResponse::InternalServerError(locale, ErrorKey::InvalidParameterValue)
+        })?
+        .ok_or(ExceptionResponse::NotFound(
+            locale,
+            ErrorKey::InvalidParameterValue,
+        ))?;
+
+    let tenant_update_scope = match current_user.role {
+        Role::SysAdmin => {
+            validate_customer_user_link(
+                &state,
+                locale,
+                payload.user_id,
+                payload.tenant_id,
+                Some(id),
+            )
+            .await?;
+            None
+        }
+        Role::TenantOwner | Role::TenantUser => {
+            let Some(tenant_id) = current_user.tenant_id else {
+                return Err(ExceptionResponse::Forbidden(
+                    locale,
+                    ErrorKey::InvalidParameterValue,
+                ));
+            };
+
+            if existing.tenant_id != Some(tenant_id)
+                || payload
+                    .tenant_id
+                    .is_some_and(|requested| requested != tenant_id)
+                || payload
+                    .user_id
+                    .is_some_and(|requested| Some(requested) != existing.user_id)
+            {
+                return Err(ExceptionResponse::Forbidden(
+                    locale,
+                    ErrorKey::InvalidParameterValue,
+                ));
+            }
+
+            payload.tenant_id = existing.tenant_id;
+            payload.user_id = existing.user_id;
+            Some(tenant_id)
+        }
+        Role::Customer => unreachable!("Customer role was rejected above"),
+    };
+
+    if payload.name.trim().is_empty() || payload.email.trim().is_empty() {
+        return Err(ExceptionResponse::BadRequest(
+            locale,
+            ErrorKey::InvalidParameterValue,
+        ));
+    }
+
     let use_case = CustomerUseCase::new(CustomerGateway::new(state.conn.as_ref().clone()));
     let customer = CustomerMapper::domain(payload);
+
+    if let Some(tenant_id) = tenant_update_scope {
+        let saved = use_case
+            .update_in_tenant(id, tenant_id, customer)
+            .await
+            .map_err(|_| {
+                ExceptionResponse::InternalServerError(locale, ErrorKey::InvalidParameterValue)
+            })?;
+        return saved.map(|saved| Json(CustomerMapper::json(saved))).ok_or(
+            ExceptionResponse::Forbidden(locale, ErrorKey::InvalidParameterValue),
+        );
+    }
 
     let saved = use_case.update(id, customer).await;
 
     match saved {
         Some(saved) => Ok(Json(CustomerMapper::json(saved))),
-        None => Err(ExceptionResponse::BadRequest(locale,ErrorKey::InvalidParameterValue))
+        None => Err(ExceptionResponse::NotFound(
+            locale,
+            ErrorKey::InvalidParameterValue,
+        )),
     }
 }

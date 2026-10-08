@@ -13,11 +13,15 @@ use business::{
     gateway::shipping_provider_gateway::{
         ShippingProviderError, ShippingProviderGateway, ShippingRequest,
     },
-    sea_orm::{DatabaseBackend, DbConn, DbErr, MockDatabase, MockExecResult, Value},
+    sea_orm::{
+        ConnectOptions, ConnectionTrait, Database, DatabaseBackend, DbBackend, DbConn, DbErr,
+        EntityTrait, MockDatabase, MockExecResult, Statement, Value,
+    },
 };
 use chrono::Utc;
 use entity::user_entity;
 use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
+use migration::{Migrator, MigratorTrait};
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use tower::ServiceExt;
@@ -275,12 +279,22 @@ fn token(expires_at: i64) -> String {
 }
 
 fn token_for(role: Role, tenant_id: Option<i64>, expires_at: i64) -> String {
+    token_for_identity("c001@example.test", 42, role, tenant_id, expires_at)
+}
+
+fn token_for_identity(
+    email: &str,
+    user_id: i64,
+    role: Role,
+    tenant_id: Option<i64>,
+    expires_at: i64,
+) -> String {
     let claims = business::domain::access_token::Claims {
-        sub: "c001@example.test".into(),
+        sub: email.into(),
         exp: expires_at,
-        uuid: "c001-user".into(),
+        uuid: email.into(),
         name: "C001 role matrix".into(),
-        user_id: 42,
+        user_id,
         role,
         tenant_id,
     };
@@ -2634,31 +2648,40 @@ async fn customer_list_route_scopes_query_for_authenticated_roles() {
 }
 
 #[tokio::test]
-async fn customer_create_and_update_routes_characterize_role_and_tenant_policy() {
+async fn customer_create_and_update_routes_allow_authorized_roles() {
     unsafe {
         std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET);
     }
 
     let roles = [
-        (Role::SysAdmin, None, Some(8)),
-        (Role::TenantOwner, Some(7), Some(7)),
-        (Role::TenantUser, Some(7), Some(7)),
-        (Role::Customer, None, None),
+        (Role::SysAdmin, None, 8),
+        (Role::TenantOwner, Some(7), 7),
+        (Role::TenantUser, Some(7), 7),
     ];
     let now = Utc::now().naive_utc();
-    let payload = r#"{"tenantId":8,"userId":999,"name":"Supplied customer","email":"supplied@example.test","cpf":null,"phone":null,"marketingConsent":false,"active":true}"#;
 
-    for (role, tenant_id, expected_tenant) in roles {
+    for (role, tenant_id, requested_tenant) in roles {
+        let request_tenant = if role == Role::SysAdmin {
+            requested_tenant.to_string()
+        } else {
+            "null".to_string()
+        };
         for (method, path) in [("POST", "/customers"), ("PUT", "/customers/99")] {
             let mut saved = customer_model(99, 999);
-            saved.tenant_id = expected_tenant;
+            saved.tenant_id = Some(requested_tenant);
+            saved.user_id = None;
             saved.name = "Supplied customer".into();
             saved.email = "supplied@example.test".into();
             saved.updated_at = now;
-            let db = MockDatabase::new(DatabaseBackend::Postgres)
-                .append_query_results([vec![user_model_for(role.clone(), tenant_id)]])
-                .append_query_results([vec![saved]])
-                .into_connection();
+            let mut db = MockDatabase::new(DatabaseBackend::Postgres)
+                .append_query_results([vec![user_model_for(role.clone(), tenant_id)]]);
+            if method == "PUT" {
+                let mut existing = customer_model(99, 999);
+                existing.tenant_id = Some(requested_tenant);
+                existing.user_id = None;
+                db = db.append_query_results([vec![existing]]);
+            }
+            let db = db.append_query_results([vec![saved]]).into_connection();
             let db_for_log = db.clone();
             let app_state = state(db);
             let app = crate::routes::customer_routes::customer_routes(app_state.clone())
@@ -2671,7 +2694,7 @@ async fn customer_create_and_update_routes_characterize_role_and_tenant_policy()
                         "Bearer {}",
                         token_for(role.clone(), tenant_id, Utc::now().timestamp() + 3600)
                     ),
-                    payload,
+                    &format!(r#"{{"tenantId":{request_tenant},"userId":null,"name":"Supplied customer","email":"supplied@example.test","cpf":null,"phone":null,"marketingConsent":false,"active":true}}"#),
                 ))
                 .await
                 .unwrap();
@@ -2690,11 +2713,11 @@ async fn customer_create_and_update_routes_characterize_role_and_tenant_policy()
             let customer: serde_json::Value = serde_json::from_slice(&response_body).unwrap();
             assert_eq!(
                 customer["tenantId"],
-                expected_tenant.map_or(serde_json::Value::Null, serde_json::Value::from)
+                serde_json::Value::from(requested_tenant)
             );
-            assert_eq!(customer["userId"], 999);
+            assert!(customer["userId"].is_null());
 
-            if method == "PUT" {
+            if method == "PUT" && role != Role::SysAdmin {
                 let update = db_for_log
                     .into_transaction_log()
                     .into_iter()
@@ -2710,8 +2733,279 @@ async fn customer_create_and_update_routes_characterize_role_and_tenant_policy()
                     .map(|(where_clause, _)| where_clause)
                     .unwrap_or_default();
                 assert!(where_clause.contains("\"id\""), "{}", update.sql);
-                assert!(!where_clause.contains("tenant_id"), "{}", update.sql);
+                assert!(where_clause.contains("tenant_id"), "{}", update.sql);
             }
+        }
+    }
+}
+
+#[tokio::test]
+async fn customer_admin_writes_deny_customer_role() {
+    unsafe {
+        std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET);
+    }
+
+    for (method, path) in [("POST", "/customers"), ("PUT", "/customers/99")] {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![user_model_for(Role::Customer, None)]])
+            .into_connection();
+        let app_state = state(db);
+        let app = crate::routes::customer_routes::customer_routes(app_state.clone())
+            .with_state(app_state);
+        let response = app
+            .oneshot(json_request(
+                method,
+                path,
+                &format!(
+                    "Bearer {}",
+                    token_for(Role::Customer, None, Utc::now().timestamp() + 3600)
+                ),
+                r#"{"tenantId":7,"userId":999,"name":"Denied customer","email":"denied@example.test","cpf":null,"phone":null,"marketingConsent":false,"active":true}"#,
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            response.status(),
+            StatusCode::FORBIDDEN,
+            "{method} {path} as Customer"
+        );
+    }
+}
+
+#[tokio::test]
+async fn customer_create_rejects_tenant_staff_scope_and_user_overrides() {
+    unsafe {
+        std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET);
+    }
+
+    let payloads = [
+        r#"{"tenantId":8,"userId":null,"name":"Cross tenant","email":"cross@example.test","cpf":null,"phone":null,"marketingConsent":false,"active":true}"#,
+        r#"{"tenantId":7,"userId":999,"name":"Assigned user","email":"assigned@example.test","cpf":null,"phone":null,"marketingConsent":false,"active":true}"#,
+    ];
+
+    for payload in payloads {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![user_model_for(Role::TenantOwner, Some(7))]])
+            .into_connection();
+        let app_state = state(db);
+        let app = crate::routes::customer_routes::customer_routes(app_state.clone())
+            .with_state(app_state);
+        let response = app
+            .oneshot(json_request(
+                "POST",
+                "/customers",
+                &format!(
+                    "Bearer {}",
+                    token_for(Role::TenantOwner, Some(7), Utc::now().timestamp() + 3600)
+                ),
+                payload,
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+}
+
+#[tokio::test]
+async fn sysadmin_customer_create_returns_not_found_for_missing_user() {
+    unsafe {
+        std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET);
+    }
+
+    let db = MockDatabase::new(DatabaseBackend::Postgres)
+        .append_query_results([vec![user_model_for(Role::SysAdmin, None)]])
+        .append_query_results([Vec::<user_entity::Model>::new()])
+        .into_connection();
+    let app_state = state(db);
+    let app =
+        crate::routes::customer_routes::customer_routes(app_state.clone()).with_state(app_state);
+    let response = app
+        .oneshot(json_request(
+            "POST",
+            "/customers",
+            &format!(
+                "Bearer {}",
+                token_for(Role::SysAdmin, None, Utc::now().timestamp() + 3600)
+            ),
+            r#"{"tenantId":8,"userId":999,"name":"Missing user","email":"missing@example.test","cpf":null,"phone":null,"marketingConsent":false,"active":true}"#,
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn sysadmin_customer_create_allows_existing_same_tenant_user() {
+    unsafe {
+        std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET);
+    }
+
+    let mut saved = customer_model(99, 42);
+    saved.tenant_id = Some(8);
+    let db = MockDatabase::new(DatabaseBackend::Postgres)
+        .append_query_results([vec![user_model_for(Role::SysAdmin, None)]])
+        .append_query_results([vec![user_model_for(Role::TenantUser, Some(8))]])
+        .append_query_results([Vec::<entity::customer_entity::Model>::new()])
+        .append_query_results([vec![saved]])
+        .into_connection();
+    let app_state = state(db);
+    let app =
+        crate::routes::customer_routes::customer_routes(app_state.clone()).with_state(app_state);
+    let response = app
+        .oneshot(json_request(
+            "POST",
+            "/customers",
+            &format!(
+                "Bearer {}",
+                token_for(Role::SysAdmin, None, Utc::now().timestamp() + 3600)
+            ),
+            r#"{"tenantId":8,"userId":42,"name":"Linked customer","email":"linked@example.test","cpf":null,"phone":null,"marketingConsent":false,"active":true}"#,
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let customer: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(customer["userId"], 42);
+    assert_eq!(customer["tenantId"], 8);
+}
+
+#[tokio::test]
+async fn sysadmin_customer_create_rejects_tenant_mismatch_and_duplicate_user() {
+    unsafe {
+        std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET);
+    }
+
+    for (user_tenant, customer_tenant, already_linked, expected_status) in [
+        (Some(7), Some(8), false, StatusCode::FORBIDDEN),
+        (Some(8), Some(8), true, StatusCode::CONFLICT),
+    ] {
+        let mut db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![user_model_for(Role::SysAdmin, None)]])
+            .append_query_results([vec![user_model_for(Role::TenantUser, user_tenant)]]);
+        if already_linked {
+            db = db.append_query_results([vec![customer_model(77, 42)]]);
+        }
+        let app_state = state(db.into_connection());
+        let app = crate::routes::customer_routes::customer_routes(app_state.clone())
+            .with_state(app_state);
+        let response = app
+            .oneshot(json_request(
+                "POST",
+                "/customers",
+                &format!(
+                    "Bearer {}",
+                    token_for(Role::SysAdmin, None, Utc::now().timestamp() + 3600)
+                ),
+                &format!(r#"{{"tenantId":{},"userId":42,"name":"Linked customer","email":"linked-{}.example.test","cpf":null,"phone":null,"marketingConsent":false,"active":true}}"#, customer_tenant.unwrap(), customer_tenant.unwrap()),
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), expected_status);
+    }
+}
+
+#[tokio::test]
+async fn tenant_staff_cannot_update_foreign_customer_or_change_user_link() {
+    unsafe {
+        std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET);
+    }
+
+    for (customer_tenant, current_user_id, requested_user_id) in
+        [(8, None, None), (7, Some(42), Some(999))]
+    {
+        let mut existing = customer_model(99, current_user_id.unwrap_or(42));
+        existing.tenant_id = Some(customer_tenant);
+        existing.user_id = current_user_id;
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![user_model_for(Role::TenantOwner, Some(7))]])
+            .append_query_results([vec![existing]]);
+        let app_state = state(db.into_connection());
+        let app = crate::routes::customer_routes::customer_routes(app_state.clone())
+            .with_state(app_state);
+        let response = app
+            .oneshot(json_request(
+                "PUT",
+                "/customers/99",
+                &format!(
+                    "Bearer {}",
+                    token_for(Role::TenantOwner, Some(7), Utc::now().timestamp() + 3600)
+                ),
+                &format!(r#"{{"tenantId":{customer_tenant},"userId":{},"name":"Updated customer","email":"updated@example.test","cpf":null,"phone":null,"marketingConsent":false,"active":true}}"#, requested_user_id.map_or("null".to_string(), |id| id.to_string())),
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+}
+
+#[tokio::test]
+async fn sysadmin_customer_update_validates_target_and_user_link() {
+    unsafe {
+        std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET);
+    }
+
+    for (customer_exists, user_exists, already_linked, expected_status) in [
+        (false, false, false, StatusCode::NOT_FOUND),
+        (true, false, false, StatusCode::NOT_FOUND),
+        (true, true, true, StatusCode::CONFLICT),
+        (true, true, false, StatusCode::OK),
+    ] {
+        let mut db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![user_model_for(Role::SysAdmin, None)]]);
+        if customer_exists {
+            let mut existing = customer_model(99, 999);
+            existing.tenant_id = Some(8);
+            existing.user_id = None;
+            db = db.append_query_results([vec![existing]]);
+        } else {
+            db = db.append_query_results([Vec::<entity::customer_entity::Model>::new()]);
+        }
+        if user_exists {
+            db = db.append_query_results([vec![user_model_for(Role::TenantUser, Some(8))]]);
+            if already_linked {
+                db = db.append_query_results([vec![customer_model(77, 42)]]);
+            } else {
+                db = db.append_query_results([Vec::<entity::customer_entity::Model>::new()]);
+                let mut saved = customer_model(99, 42);
+                saved.tenant_id = Some(8);
+                db = db.append_query_results([vec![saved]]);
+            }
+        } else if customer_exists {
+            db = db.append_query_results([Vec::<user_entity::Model>::new()]);
+        }
+
+        let app_state = state(db.into_connection());
+        let app = crate::routes::customer_routes::customer_routes(app_state.clone())
+            .with_state(app_state);
+        let response = app
+            .oneshot(json_request(
+                "PUT",
+                "/customers/99",
+                &format!(
+                    "Bearer {}",
+                    token_for(Role::SysAdmin, None, Utc::now().timestamp() + 3600)
+                ),
+                r#"{"tenantId":8,"userId":42,"name":"Updated customer","email":"updated@example.test","cpf":null,"phone":null,"marketingConsent":false,"active":true}"#,
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), expected_status);
+        if expected_status == StatusCode::OK {
+            let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            let customer: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            assert_eq!(customer["userId"], 42);
         }
     }
 }
@@ -3934,8 +4228,8 @@ async fn customer_self_routes_are_restricted_to_customer_role() {
         (
             Role::SysAdmin,
             None,
-            StatusCode::FORBIDDEN,
-            StatusCode::FORBIDDEN,
+            StatusCode::NOT_FOUND,
+            StatusCode::NOT_FOUND,
         ),
         (
             Role::TenantOwner,
@@ -3987,6 +4281,859 @@ async fn customer_self_routes_are_restricted_to_customer_role() {
             );
         }
     }
+}
+
+#[tokio::test]
+async fn customer_deactivation_disables_customer_and_user() {
+    unsafe {
+        std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET);
+    }
+
+    let db = MockDatabase::new(DatabaseBackend::Postgres)
+        .append_query_results([vec![user_model_for(Role::Customer, None)]])
+        .append_query_results([vec![customer_model(19, 42)]])
+        .append_exec_results([
+            MockExecResult {
+                last_insert_id: 0,
+                rows_affected: 1,
+            },
+            MockExecResult {
+                last_insert_id: 0,
+                rows_affected: 1,
+            },
+        ])
+        .into_connection();
+    let db_for_log = db.clone();
+    let app_state = state(db);
+    let app = crate::routes::customer_routes::customer_routes(app_state.clone())
+        .with_state(app_state);
+    let authorization = format!(
+        "Bearer {}",
+        token_for(Role::Customer, None, Utc::now().timestamp() + 3600)
+    );
+    let response = app
+        .oneshot(request("DELETE", "/customers/me", Some(&authorization)))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+    let transaction_log = db_for_log.into_transaction_log();
+    let updates_share_transaction = transaction_log.iter().any(|transaction| {
+        let statements = transaction.statements();
+        let customer_update = statements
+            .iter()
+            .find(|statement| statement.sql.starts_with("UPDATE \"customer\""));
+        let user_update = statements
+            .iter()
+            .find(|statement| statement.sql.starts_with("UPDATE \"user\""));
+        match (customer_update, user_update) {
+            (Some(customer_update), Some(user_update)) => {
+                let customer_where = customer_update
+                    .sql
+                    .split_once(" WHERE ")
+                    .map(|(_, clause)| clause)
+                    .unwrap_or_default();
+                let user_where = user_update
+                    .sql
+                    .split_once(" WHERE ")
+                    .map(|(_, clause)| clause)
+                    .unwrap_or_default();
+                customer_where.contains("id")
+                    && customer_where.contains("user_id")
+                    && user_where.contains("id")
+            }
+            _ => false,
+        }
+    });
+    assert!(updates_share_transaction);
+}
+
+#[tokio::test]
+async fn customer_deactivation_is_forbidden_to_non_customers() {
+    unsafe {
+        std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET);
+    }
+
+    for (role, tenant_id, expected_status) in [
+        (Role::SysAdmin, None, StatusCode::NOT_FOUND),
+        (Role::TenantOwner, Some(7), StatusCode::FORBIDDEN),
+        (Role::TenantUser, Some(7), StatusCode::FORBIDDEN),
+    ] {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![user_model_for(role.clone(), tenant_id)]])
+            .into_connection();
+        let app_state = state(db);
+        let app = crate::routes::customer_routes::customer_routes(app_state.clone())
+            .with_state(app_state);
+        let authorization = format!(
+            "Bearer {}",
+            token_for(role.clone(), tenant_id, Utc::now().timestamp() + 3600)
+        );
+        let response = app
+            .oneshot(request("DELETE", "/customers/me", Some(&authorization)))
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), expected_status, "{role:?}");
+    }
+}
+
+#[tokio::test]
+async fn customer_deactivation_rejects_target_overrides() {
+    unsafe {
+        std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET);
+    }
+
+    let authorization = format!(
+        "Bearer {}",
+        token_for(Role::Customer, None, Utc::now().timestamp() + 3600)
+    );
+    let requests = [
+        Request::builder()
+            .method("DELETE")
+            .uri("/customers/me?customerId=20")
+            .header("authorization", &authorization)
+            .body(Body::empty())
+            .unwrap(),
+        Request::builder()
+            .method("DELETE")
+            .uri("/customers/me")
+            .header("authorization", &authorization)
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"customerId":20,"userId":43}"#))
+            .unwrap(),
+    ];
+
+    for request in requests {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![user_model_for(Role::Customer, None)]])
+            .into_connection();
+        let app_state = state(db);
+        let app = crate::routes::customer_routes::customer_routes(app_state.clone())
+            .with_state(app_state);
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+}
+
+#[tokio::test]
+async fn deactivated_customer_token_is_rejected_by_authentication() {
+    unsafe {
+        std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET);
+    }
+
+    let mut disabled_user = user_model_for(Role::Customer, None);
+    disabled_user.enabled = false;
+    let db = MockDatabase::new(DatabaseBackend::Postgres)
+        .append_query_results([vec![disabled_user]])
+        .into_connection();
+    let app_state = state(db);
+    let app = crate::routes::customer_routes::customer_routes(app_state.clone())
+        .with_state(app_state);
+    let authorization = format!(
+        "Bearer {}",
+        token_for(Role::Customer, None, Utc::now().timestamp() + 3600)
+    );
+    let response = app
+        .oneshot(request("DELETE", "/customers/me", Some(&authorization)))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn customer_hard_erasure_deletes_owned_data_and_queues_avatar() {
+    unsafe {
+        std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET);
+    }
+
+    let now = Utc::now().naive_utc();
+    let person = entity::person_entity::Model {
+        id: 77,
+        uuid: uuid::Uuid::new_v4(),
+        tenant_id: None,
+        user_id: 42,
+        first_name: "Customer".into(),
+        surname: None,
+        date_of_birth: None,
+        gender: None,
+        avatar: Some("tenants/global/avatars/42-avatar-key.png".into()),
+        phone: None,
+        email: None,
+        created_at: now,
+        created_by: None,
+        updated_at: now,
+        updated_by: None,
+    };
+    let db = MockDatabase::new(DatabaseBackend::Postgres)
+        .append_query_results([vec![user_model_for(Role::Customer, None)]])
+        .append_query_results([vec![customer_model(19, 42)]])
+        .append_query_results([vec![person]])
+        .append_exec_results((0..9).map(|_| MockExecResult {
+            last_insert_id: 0,
+            rows_affected: 1,
+        }))
+        .into_connection();
+    let db_for_log = db.clone();
+    let app_state = state(db);
+    let app = crate::routes::customer_routes::customer_routes(app_state.clone())
+        .with_state(app_state);
+    let authorization = format!(
+        "Bearer {}",
+        token_for(Role::Customer, None, Utc::now().timestamp() + 3600)
+    );
+    let response = app
+        .oneshot(request(
+            "DELETE",
+            "/customers/me/erasure",
+            Some(&authorization),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    let statements: Vec<_> = db_for_log
+        .into_transaction_log()
+        .iter()
+        .flat_map(|transaction| transaction.statements().to_vec())
+        .collect();
+    let queue_insert = statements
+        .iter()
+        .position(|statement| statement.sql.contains("INSERT INTO avatar_sanitation_queue"))
+        .expect("avatar key is queued before Person deletion");
+    let person_delete = statements
+        .iter()
+        .position(|statement| statement.sql.starts_with("DELETE FROM \"person\""))
+        .expect("Person rows are deleted");
+    let customer_delete = statements
+        .iter()
+        .position(|statement| statement.sql.starts_with("DELETE FROM \"customer\""))
+        .expect("Customer row is deleted");
+    let user_delete = statements
+        .iter()
+        .position(|statement| statement.sql.starts_with("DELETE FROM \"user\""))
+        .expect("User row is deleted last");
+
+    assert!(queue_insert < person_delete);
+    assert!(person_delete < customer_delete);
+    assert!(customer_delete < user_delete);
+    assert!(statements.iter().any(|statement| {
+        statement.sql.contains("DELETE FROM checkout_quote")
+    }));
+    assert!(statements.iter().any(|statement| {
+        statement
+            .sql
+            .contains("DELETE FROM checkout_coupon_reservation")
+    }));
+    assert!(statements.iter().any(|statement| {
+        statement
+            .sql
+            .starts_with("DELETE FROM \"customer_address\"")
+    }));
+    assert!(statements.iter().any(|statement| {
+        statement
+            .sql
+            .starts_with("DELETE FROM \"person_address\"")
+    }));
+    assert!(statements.iter().any(|statement| {
+        statement
+            .sql
+            .contains("DELETE FROM \"coupon_redemption\"")
+    }));
+    assert!(!statements.iter().any(|statement| {
+        statement.sql.contains("DELETE FROM purchase") || statement.sql.contains("DELETE FROM orders")
+    }));
+}
+
+#[tokio::test]
+async fn customer_erasure_rejects_target_overrides() {
+    unsafe {
+        std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET);
+    }
+
+    let authorization = format!(
+        "Bearer {}",
+        token_for(Role::Customer, None, Utc::now().timestamp() + 3600)
+    );
+    let requests = [
+        Request::builder()
+            .method("DELETE")
+            .uri("/customers/me/erasure?customerId=20")
+            .header("authorization", &authorization)
+            .body(Body::empty())
+            .unwrap(),
+        Request::builder()
+            .method("DELETE")
+            .uri("/customers/me/erasure")
+            .header("authorization", &authorization)
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"customerId":20,"userId":43}"#))
+            .unwrap(),
+    ];
+
+    for request in requests {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![user_model_for(Role::Customer, None)]])
+            .append_query_results([vec![customer_model(19, 42)]])
+            .append_query_results([Vec::<entity::person_entity::Model>::new()])
+            .append_exec_results((0..7).map(|_| MockExecResult {
+                last_insert_id: 0,
+                rows_affected: 1,
+            }))
+            .into_connection();
+        let app_state = state(db);
+        let app = crate::routes::customer_routes::customer_routes(app_state.clone())
+            .with_state(app_state);
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    let db = MockDatabase::new(DatabaseBackend::Postgres)
+        .append_query_results([vec![user_model_for(Role::Customer, None)]])
+        .into_connection();
+    let app_state = state(db);
+    let app = crate::routes::customer_routes::customer_routes(app_state.clone())
+        .with_state(app_state);
+    let response = app
+        .oneshot(request(
+            "DELETE",
+            "/customers/20/erasure",
+            Some(&authorization),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn customer_hard_erasure_self_route_denies_other_roles() {
+    unsafe {
+        std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET);
+    }
+
+    for (role, tenant_id, expected_status) in [
+        (Role::SysAdmin, None, StatusCode::NOT_FOUND),
+        (Role::TenantOwner, Some(7), StatusCode::FORBIDDEN),
+        (Role::TenantUser, Some(7), StatusCode::FORBIDDEN),
+    ] {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![user_model_for(role.clone(), tenant_id)]])
+            .into_connection();
+        let app_state = state(db);
+        let app = crate::routes::customer_routes::customer_routes(app_state.clone())
+            .with_state(app_state);
+        let authorization = format!(
+            "Bearer {}",
+            token_for(role.clone(), tenant_id, Utc::now().timestamp() + 3600)
+        );
+        let response = app
+            .oneshot(request(
+                "DELETE",
+                "/customers/me/erasure",
+                Some(&authorization),
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), expected_status, "{role:?}");
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires isolated PostgreSQL via KREMLIN_TEST_DATABASE_URL"]
+async fn customer_hard_erasure_preserves_orders_and_clears_owned_rows() {
+    unsafe {
+        std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET);
+    }
+
+    let url = std::env::var("KREMLIN_TEST_DATABASE_URL").expect("test database URL required");
+    assert!(url.split('?').next().unwrap().ends_with("_test"));
+    let root = Database::connect(url.clone()).await.unwrap();
+    let schema = format!("nov26_erasure_test_{}", uuid::Uuid::new_v4().simple());
+    root.execute_unprepared(&format!("CREATE SCHEMA {schema}"))
+        .await
+        .unwrap();
+    let mut options = ConnectOptions::new(url);
+    options
+        .set_schema_search_path(&schema)
+        .sqlx_logging(false)
+        .max_connections(8);
+    let db = Database::connect(options).await.unwrap();
+    Migrator::up(&db, None).await.unwrap();
+    db.execute_unprepared(
+        r#"
+INSERT INTO tenant (id, uuid, business_name, tax_id, created_at, updated_at)
+VALUES (8, gen_random_uuid(), 'Seller', '12345678000100', now(), now());
+INSERT INTO "user" (id, uuid, name, email, password, first_login, enabled, tenant_id, role, created_at, updated_at)
+VALUES (42, gen_random_uuid(), 'Buyer', 'c001@example.test', 'unused', false, true, 8, 'Customer', now(), now());
+INSERT INTO "user" (id, uuid, name, email, password, first_login, enabled, tenant_id, role, created_at, updated_at)
+VALUES (43, gen_random_uuid(), 'Other Buyer', 'other@example.test', 'unused', false, true, 8, 'Customer', now(), now());
+INSERT INTO customer (id, uuid, tenant_id, user_id, name, email, cpf, phone, active, created_at, updated_at)
+VALUES (19, gen_random_uuid(), 8, 42, 'Buyer', 'buyer@example.test', '12345678901', '11999999999', true, now(), now());
+INSERT INTO customer (id, uuid, tenant_id, user_id, name, email, cpf, phone, active, created_at, updated_at)
+VALUES (20, gen_random_uuid(), 8, 43, 'Other Buyer', 'other@example.test', '98765432100', '11888888888', true, now(), now());
+INSERT INTO person (id, uuid, tenant_id, user_id, first_name, avatar, created_at, updated_at)
+VALUES (77, gen_random_uuid(), 8, 42, 'Buyer', 'tenants/8/avatars/42-avatar-key.png', now(), now());
+INSERT INTO person (id, uuid, tenant_id, user_id, first_name, avatar, created_at, updated_at)
+VALUES (78, gen_random_uuid(), 8, 43, 'Other Buyer', 'tenants/8/avatars/43-other-avatar.png', now(), now());
+INSERT INTO person_address (id, uuid, tenant_id, person_id, address_line1, created_at, updated_at)
+VALUES (81, gen_random_uuid(), 8, 77, 'Street 1', now(), now());
+INSERT INTO person_address (id, uuid, tenant_id, person_id, address_line1, created_at, updated_at)
+VALUES (84, gen_random_uuid(), 8, 78, 'Street 2', now(), now());
+INSERT INTO customer_address (id, uuid, tenant_id, customer_id, recipient, created_at, updated_at)
+VALUES (82, gen_random_uuid(), 8, 19, 'Buyer', now(), now());
+INSERT INTO customer_address (id, uuid, tenant_id, customer_id, recipient, created_at, updated_at)
+VALUES (85, gen_random_uuid(), 8, 20, 'Other Buyer', now(), now());
+INSERT INTO cart (id, uuid, tenant_id, customer_id, status, created_at, updated_at)
+VALUES (83, gen_random_uuid(), 8, 19, 'active', now(), now());
+INSERT INTO cart (id, uuid, tenant_id, customer_id, status, created_at, updated_at)
+VALUES (86, gen_random_uuid(), 8, 20, 'active', now(), now());
+INSERT INTO coupon (id, uuid, tenant_id, code, coupon_type, value, max_uses, max_uses_per_customer, created_at, updated_at)
+VALUES (5, gen_random_uuid(), 8, 'SAVE10', 'PERCENTAGE', 10, 10, 1, now(), now());
+INSERT INTO product (id, uuid, tenant_id, name, slug, active, ncm, origem_mercadoria, created_at, updated_at)
+VALUES (1100, gen_random_uuid(), 8, 'Test Product', 'test-product', true, '12345678', 0, now(), now());
+INSERT INTO sku (id, uuid, tenant_id, product_id, code, variant_key, price_cents, active, created_at, updated_at)
+VALUES (1100, gen_random_uuid(), 8, 1100, 'SKU-1100', 'default', 1000, true, now(), now());
+INSERT INTO shipping_rate (id, uuid, tenant_id, uf, price_cents, created_at, updated_at)
+VALUES (1100, gen_random_uuid(), 8, 'SP', 0, now(), now());
+INSERT INTO purchase (id, uuid, customer_id, customer_name, customer_tax_id, customer_email, customer_phone, currency, status, subtotal_cents, discount_cents, shipping_cents, tax_total_cents, total_cents, idempotency_key, request_hash, created_at, updated_at)
+VALUES (90, gen_random_uuid(), 19, 'Buyer', '12345678901', 'buyer@example.test', '11999999999', 'BRL', 'pending', 1000, 100, 0, 0, 900, 'idempotency-90', 'request-hash-90', now(), now());
+INSERT INTO orders (id, uuid, purchase_id, tenant_id, number, customer_id, customer_name, customer_tax_id, customer_email, customer_phone, status, payment_status, subtotal_cents, discount_cents, shipping_cents, tax_total_cents, total_cents, coupon_id, coupon_code, placed_at, created_at, updated_at)
+VALUES (91, gen_random_uuid(), 90, 8, 'ORD-91', 19, 'Buyer', '12345678901', 'buyer@example.test', '11999999999', 'pending', 'pending', 1000, 100, 0, 0, 900, 5, 'SAVE10', now(), now(), now());
+INSERT INTO coupon_redemption (id, uuid, tenant_id, coupon_id, order_id, customer_id, created_at)
+VALUES (92, gen_random_uuid(), 8, 5, 91, 19, now());
+INSERT INTO purchase (id, uuid, customer_id, customer_name, customer_tax_id, customer_email, customer_phone, currency, status, subtotal_cents, discount_cents, shipping_cents, tax_total_cents, total_cents, idempotency_key, request_hash, created_at, updated_at)
+VALUES (100, gen_random_uuid(), 20, 'Other Buyer', '98765432100', 'other@example.test', '11888888888', 'BRL', 'pending', 1000, 100, 0, 0, 900, 'idempotency-100', 'request-hash-100', now(), now());
+INSERT INTO orders (id, uuid, purchase_id, tenant_id, number, customer_id, customer_name, customer_tax_id, customer_email, customer_phone, status, payment_status, subtotal_cents, discount_cents, shipping_cents, tax_total_cents, total_cents, coupon_id, coupon_code, placed_at, created_at, updated_at)
+VALUES (101, gen_random_uuid(), 100, 8, 'ORD-101', 20, 'Other Buyer', '98765432100', 'other@example.test', '11888888888', 'pending', 'pending', 1000, 100, 0, 0, 900, 5, 'SAVE10', now(), now(), now());
+INSERT INTO coupon_redemption (id, uuid, tenant_id, coupon_id, order_id, customer_id, created_at)
+VALUES (102, gen_random_uuid(), 8, 5, 101, 20, now());
+INSERT INTO checkout_quote (id, customer_id, request, result, expires_at, created_at)
+VALUES (93, 19, '{}'::jsonb, '{}'::jsonb, now() + interval '5 minutes', now());
+INSERT INTO checkout_quote (id, customer_id, request, result, expires_at, created_at)
+VALUES (103, 20, '{}'::jsonb, '{}'::jsonb, now() + interval '5 minutes', now());
+INSERT INTO checkout_coupon_reservation (id, coupon_id, customer_id, purchase_id, order_id, status, expires_at)
+VALUES (94, 5, 19, 90, 91, 'reserved', now() + interval '5 minutes');
+INSERT INTO checkout_coupon_reservation (id, coupon_id, customer_id, purchase_id, order_id, status, expires_at)
+VALUES (104, 5, 20, 100, 101, 'reserved', now() + interval '5 minutes');
+"#,
+    )
+    .await
+    .unwrap();
+
+    let db_for_assertions = db.clone();
+    let app_state = state(db);
+    let app = crate::routes::customer_routes::customer_routes(app_state.clone())
+        .with_state(app_state);
+    let authorization = format!(
+        "Bearer {}",
+        token_for(Role::Customer, Some(8), Utc::now().timestamp() + 3600)
+    );
+    let override_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri("/customers/me/erasure?customerId=20&userId=43")
+                .header("authorization", &authorization)
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"customerId":20,"userId":43}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(override_response.status(), StatusCode::BAD_REQUEST);
+    let id_path = app
+        .clone()
+        .oneshot(request(
+            "DELETE",
+            "/customers/20/erasure",
+            Some(&authorization),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(id_path.status(), StatusCode::NOT_FOUND);
+    let response = app
+        .clone()
+        .oneshot(request(
+            "DELETE",
+            "/customers/me/erasure",
+            Some(&authorization),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    let replay = app.clone()
+        .oneshot(request(
+            "DELETE",
+            "/customers/me/erasure",
+            Some(&authorization),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(replay.status(), StatusCode::UNAUTHORIZED);
+
+    assert!(entity::customer_entity::Entity::find_by_id(19)
+        .one(&db_for_assertions)
+        .await
+        .unwrap()
+        .is_none());
+    assert!(entity::user_entity::Entity::find_by_id(42)
+        .one(&db_for_assertions)
+        .await
+        .unwrap()
+        .is_none());
+    assert!(entity::person_entity::Entity::find_by_id(77)
+        .one(&db_for_assertions)
+        .await
+        .unwrap()
+        .is_none());
+    assert!(entity::person_address_entity::Entity::find_by_id(81)
+        .one(&db_for_assertions)
+        .await
+        .unwrap()
+        .is_none());
+    assert!(entity::customer_address_entity::Entity::find_by_id(82)
+        .one(&db_for_assertions)
+        .await
+        .unwrap()
+        .is_none());
+
+    let cart = entity::cart_entity::Entity::find_by_id(83)
+        .one(&db_for_assertions)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(cart.customer_id, None);
+    let purchase = entity::purchase_entity::Entity::find_by_id(90)
+        .one(&db_for_assertions)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(purchase.customer_id, 19);
+    assert_eq!(purchase.customer_name, "Buyer");
+    assert_eq!(purchase.customer_tax_id, "12345678901");
+    assert_eq!(purchase.customer_email.as_deref(), Some("buyer@example.test"));
+    assert_eq!(purchase.customer_phone.as_deref(), Some("11999999999"));
+    let order = entity::orders_entity::Entity::find_by_id(91)
+        .one(&db_for_assertions)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(order.customer_id, 19);
+    assert_eq!(order.customer_name, "Buyer");
+    assert_eq!(order.customer_tax_id, "12345678901");
+    assert_eq!(order.customer_email.as_deref(), Some("buyer@example.test"));
+    assert_eq!(order.customer_phone.as_deref(), Some("11999999999"));
+
+    let other_customer = entity::customer_entity::Entity::find_by_id(20)
+        .one(&db_for_assertions)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(other_customer.active);
+    let other_user = entity::user_entity::Entity::find_by_id(43)
+        .one(&db_for_assertions)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(other_user.enabled);
+    assert!(entity::person_entity::Entity::find_by_id(78)
+        .one(&db_for_assertions)
+        .await
+        .unwrap()
+        .is_some());
+    assert!(entity::person_address_entity::Entity::find_by_id(84)
+        .one(&db_for_assertions)
+        .await
+        .unwrap()
+        .is_some());
+    assert!(entity::customer_address_entity::Entity::find_by_id(85)
+        .one(&db_for_assertions)
+        .await
+        .unwrap()
+        .is_some());
+    assert!(entity::purchase_entity::Entity::find_by_id(100)
+        .one(&db_for_assertions)
+        .await
+        .unwrap()
+        .is_some());
+    assert!(entity::orders_entity::Entity::find_by_id(101)
+        .one(&db_for_assertions)
+        .await
+        .unwrap()
+        .is_some());
+    for table in ["checkout_quote", "checkout_coupon_reservation", "coupon_redemption"] {
+        let query = format!("SELECT count(*) FROM {table} WHERE customer_id = 20");
+        let row = db_for_assertions
+            .query_one_raw(Statement::from_string(DbBackend::Postgres, query))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.try_get_by_index::<i64>(0).unwrap(), 1, "{table} for Customer B");
+    }
+    let other_cart = entity::cart_entity::Entity::find_by_id(86)
+        .one(&db_for_assertions)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(other_cart.customer_id, Some(20));
+
+    let other_token = token_for_identity(
+        "other@example.test",
+        43,
+        Role::Customer,
+        Some(8),
+        Utc::now().timestamp() + 3600,
+    );
+    let other_profile = app
+        .clone()
+        .oneshot(request(
+            "GET",
+            "/customers/me",
+            Some(&format!("Bearer {other_token}")),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(other_profile.status(), StatusCode::OK);
+    let other_deactivation = app
+        .clone()
+        .oneshot(request(
+            "DELETE",
+            "/customers/me",
+            Some(&format!("Bearer {other_token}")),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(other_deactivation.status(), StatusCode::NO_CONTENT);
+    let other_customer = entity::customer_entity::Entity::find_by_id(20)
+        .one(&db_for_assertions)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!other_customer.active);
+    let other_user = entity::user_entity::Entity::find_by_id(43)
+        .one(&db_for_assertions)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!other_user.enabled);
+    assert!(entity::person_entity::Entity::find_by_id(78)
+        .one(&db_for_assertions)
+        .await
+        .unwrap()
+        .is_some());
+    assert!(entity::person_address_entity::Entity::find_by_id(84)
+        .one(&db_for_assertions)
+        .await
+        .unwrap()
+        .is_some());
+    assert!(entity::customer_address_entity::Entity::find_by_id(85)
+        .one(&db_for_assertions)
+        .await
+        .unwrap()
+        .is_some());
+    assert!(entity::checkout_quote_entity::Entity::find_by_id(103)
+        .one(&db_for_assertions)
+        .await
+        .unwrap()
+        .is_some());
+    assert!(entity::purchase_entity::Entity::find_by_id(100)
+        .one(&db_for_assertions)
+        .await
+        .unwrap()
+        .is_some());
+    assert!(entity::orders_entity::Entity::find_by_id(101)
+        .one(&db_for_assertions)
+        .await
+        .unwrap()
+        .is_some());
+    let cart_after_deactivation = entity::cart_entity::Entity::find_by_id(86)
+        .one(&db_for_assertions)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(cart_after_deactivation.customer_id, Some(20));
+    for table in ["checkout_coupon_reservation", "coupon_redemption"] {
+        let query = format!("SELECT count(*) FROM {table} WHERE customer_id = 20");
+        let row = db_for_assertions
+            .query_one_raw(Statement::from_string(DbBackend::Postgres, query))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.try_get_by_index::<i64>(0).unwrap(), 1, "{table} after deactivation");
+    }
+    let other_replay = app
+        .oneshot(request(
+            "DELETE",
+            "/customers/me",
+            Some(&format!("Bearer {other_token}")),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(other_replay.status(), StatusCode::UNAUTHORIZED);
+
+    db_for_assertions
+        .execute_unprepared(
+            r#"
+INSERT INTO "user" (id, uuid, name, email, password, first_login, enabled, tenant_id, role, created_at, updated_at)
+VALUES (44, gen_random_uuid(), 'New Buyer', 'new@example.test', 'unused', false, true, 8, 'Customer', now(), now());
+INSERT INTO customer (id, uuid, tenant_id, user_id, name, email, cpf, phone, active, created_at, updated_at)
+VALUES (21, gen_random_uuid(), 8, 44, 'New Buyer', 'new@example.test', '11122233396', '11777777777', true, now(), now());
+"#,
+        )
+        .await
+        .unwrap();
+    let coupon_quote = business::use_cases::checkout_quote_use_case::QuoteRequest {
+        items: vec![business::domain::marketplace::PurchaseItemInput {
+            sku_id: 1100,
+            quantity: 1,
+        }],
+        address_id: None,
+        shipping_address: Some(business::domain::marketplace::AddressInput {
+            recipient: "Buyer".into(),
+            address_line1: "Street 1".into(),
+            address_line2: None,
+            locality: "Sao Paulo".into(),
+            administrative_area: "SP".into(),
+            postal_code: "01001000".into(),
+            country_code: "BR".into(),
+        }),
+        coupons: vec![business::use_cases::checkout_quote_use_case::SellerCoupon {
+            tenant_id: 8,
+            code: "SAVE10".into(),
+        }],
+    };
+    let original_customer_coupon =
+        business::use_cases::checkout_quote_use_case::CheckoutQuoteUseCase::calculate(
+            &db_for_assertions,
+            20,
+            &coupon_quote,
+        )
+        .await;
+    assert!(matches!(
+        original_customer_coupon,
+        Err(business::domain::marketplace::PurchaseError::Validation(
+            "coupon exhausted"
+        ))
+    ));
+    let new_customer_coupon =
+        business::use_cases::checkout_quote_use_case::CheckoutQuoteUseCase::calculate(
+            &db_for_assertions,
+            21,
+            &coupon_quote,
+        )
+        .await
+        .unwrap();
+    assert_eq!(new_customer_coupon.sellers[0].coupon_id, Some(5));
+
+    let queue_row = db_for_assertions
+        .query_one_raw(Statement::from_string(
+            DbBackend::Postgres,
+            "SELECT object_key FROM avatar_sanitation_queue".to_string(),
+        ))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        queue_row.try_get_by_index::<String>(0).unwrap(),
+        "tenants/8/avatars/42-avatar-key.png"
+    );
+    for table in [
+        "checkout_quote",
+        "checkout_coupon_reservation",
+        "coupon_redemption",
+    ] {
+        let query = format!("SELECT count(*) FROM {table} WHERE customer_id = 19");
+        let row = db_for_assertions
+            .query_one_raw(Statement::from_string(DbBackend::Postgres, query))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.try_get_by_index::<i64>(0).unwrap(), 0, "{table} for erased A");
+    }
+
+    let dangling_user = db_for_assertions
+        .execute_unprepared(
+            "INSERT INTO customer (uuid, tenant_id, user_id, name, email, created_at, updated_at) VALUES (gen_random_uuid(), 8, 9999, 'Dangling', 'dangling@example.test', now(), now())",
+        )
+        .await;
+    assert!(dangling_user.is_err());
+    db_for_assertions
+        .execute_unprepared(
+            r#"
+INSERT INTO customer (uuid, tenant_id, user_id, name, email, created_at, updated_at)
+VALUES (gen_random_uuid(), 8, NULL, 'Unlinked A', 'unlinked-a@example.test', now(), now()),
+       (gen_random_uuid(), 8, NULL, 'Unlinked B', 'unlinked-b@example.test', now(), now());
+"#,
+        )
+        .await
+        .unwrap();
+    let null_links = db_for_assertions
+        .query_one_raw(Statement::from_string(
+            DbBackend::Postgres,
+            "SELECT count(*) FROM customer WHERE email LIKE 'unlinked-%@example.test'".to_string(),
+        ))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(null_links.try_get_by_index::<i64>(0).unwrap(), 2);
+    db_for_assertions
+        .execute_unprepared("DELETE FROM customer WHERE email LIKE 'unlinked-%@example.test'")
+        .await
+        .unwrap();
+
+    db_for_assertions
+        .execute_unprepared(
+            r#"
+INSERT INTO "user" (id, uuid, name, email, password, first_login, enabled, tenant_id, role, created_at, updated_at)
+VALUES (60, gen_random_uuid(), 'SysAdmin', 'sysadmin@example.test', 'unused', false, true, NULL, 'SysAdmin', now(), now()),
+       (61, gen_random_uuid(), 'Link Target', 'link-target@example.test', 'unused', false, true, 8, 'TenantUser', now(), now());
+"#,
+        )
+        .await
+        .unwrap();
+    let admin_token = token_for_identity(
+        "sysadmin@example.test",
+        60,
+        Role::SysAdmin,
+        None,
+        Utc::now().timestamp() + 3600,
+    );
+    let request_one = json_request(
+        "POST",
+        "/customers",
+        &format!("Bearer {admin_token}"),
+        r#"{"tenantId":8,"userId":61,"name":"Concurrent A","email":"concurrent-a@example.test","cpf":null,"phone":null,"marketingConsent":false,"active":true}"#,
+    );
+    let request_two = json_request(
+        "POST",
+        "/customers",
+        &format!("Bearer {admin_token}"),
+        r#"{"tenantId":8,"userId":61,"name":"Concurrent B","email":"concurrent-b@example.test","cpf":null,"phone":null,"marketingConsent":false,"active":true}"#,
+    );
+    let concurrent_state = state(db_for_assertions.clone());
+    let concurrent_app =
+        crate::routes::customer_routes::customer_routes(concurrent_state.clone())
+            .with_state(concurrent_state);
+    let (response_one, response_two) = tokio::join!(
+        concurrent_app.clone().oneshot(request_one),
+        concurrent_app.oneshot(request_two),
+    );
+    let mut statuses = [
+        response_one.unwrap().status(),
+        response_two.unwrap().status(),
+    ];
+    statuses.sort();
+    assert_eq!(statuses, [StatusCode::CREATED, StatusCode::CONFLICT]);
+
+    db_for_assertions.close().await.unwrap();
+    root.execute_unprepared(&format!("DROP SCHEMA {schema} CASCADE"))
+        .await
+        .unwrap();
+    root.close().await.unwrap();
 }
 
 #[tokio::test]

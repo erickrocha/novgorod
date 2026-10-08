@@ -46,6 +46,8 @@ mod m20260930_000001_payment_settings;
 mod m20261002_000001_tenant_listed;
 mod m20261002_000002_cart_tenant_optional;
 mod m20261005_000001_checkout_stock_reservation;
+mod m20261007_000001_customer_erasure_constraints;
+mod m20261007_000002_avatar_sanitation_queue;
 
 pub struct Migrator;
 
@@ -97,6 +99,8 @@ impl MigratorTrait for Migrator {
             Box::new(m20261002_000001_tenant_listed::Migration),
             Box::new(m20261002_000002_cart_tenant_optional::Migration),
             Box::new(m20261005_000001_checkout_stock_reservation::Migration),
+            Box::new(m20261007_000001_customer_erasure_constraints::Migration),
+            Box::new(m20261007_000002_avatar_sanitation_queue::Migration),
         ]
     }
 }
