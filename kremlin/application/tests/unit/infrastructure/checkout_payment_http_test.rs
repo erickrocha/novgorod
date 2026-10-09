@@ -706,3 +706,90 @@ async fn checkout_payment_http_enforces_ownership_and_mock_lifecycle() {
 
     cleanup(root, db, schema).await.unwrap();
 }
+
+async fn request_in(
+    app: Router,
+    method: Method,
+    uri: &str,
+    body: Option<Value>,
+    context: TenantContext,
+) -> anyhow::Result<StatusCode> {
+    let mut builder = Request::builder().method(method).uri(uri);
+    if body.is_some() {
+        builder = builder.header("content-type", "application/json");
+    }
+    let mut request = builder.body(Body::from(
+        body.map(|value| value.to_string()).unwrap_or_default(),
+    ))?;
+    request.extensions_mut().insert(user());
+    request.extensions_mut().insert(Locale::En);
+    request.extensions_mut().insert(context);
+    Ok(app.oneshot(request).await?.status())
+}
+
+#[tokio::test]
+#[ignore = "requires isolated PostgreSQL and PAYMENT_PROVIDER_MODE=mock"]
+async fn tenant_bound_purchase_is_not_payable_or_readable_from_another_tenant() {
+    let (root, db, schema) = database().await.unwrap();
+    Migrator::up(&db, None).await.unwrap();
+    fixtures(&db).await.unwrap();
+    let app = router(state(db.clone()));
+    let id = create_purchase_from_quote(app.clone(), "tenant-bound", &[1])
+        .await
+        .unwrap();
+    db.execute_unprepared(&format!("UPDATE purchase SET tenant_id=1 WHERE id={id}"))
+        .await
+        .unwrap();
+    let pay = Some(json!({"token":"mock:approved","paymentMethodId":"visa","installments":1}));
+
+    // SR-MKT-009: another tenant's context sees nothing and charges nothing.
+    let foreign = TenantContext::Fixed(2);
+    for (method, path, body) in [
+        (Method::POST, "payments/submit", pay.clone()),
+        (Method::GET, "payments/status", None),
+        (Method::GET, "payments", None),
+        (Method::GET, "", None),
+    ] {
+        let uri = format!("/purchases/{id}/{path}").trim_end_matches('/').to_string();
+        let status = request_in(app.clone(), method, &uri, body, foreign)
+            .await
+            .unwrap();
+        assert_eq!(status, StatusCode::NOT_FOUND, "{uri}");
+    }
+    let charged = db
+        .query_one_raw(Statement::from_string(
+            DbBackend::Postgres,
+            "SELECT count(*)::bigint AS n FROM payment WHERE status='captured'".to_string(),
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get::<i64>("", "n")
+        .unwrap();
+    assert_eq!(charged, 0);
+
+    // The owning tenant context and the marketplace context still reach it.
+    for context in [TenantContext::Fixed(1), TenantContext::Marketplace] {
+        let status = request_in(
+            app.clone(),
+            Method::GET,
+            &format!("/purchases/{id}/payments"),
+            None,
+            context,
+        )
+        .await
+        .unwrap();
+        assert_eq!(status, StatusCode::OK);
+    }
+    let status = request_in(
+        app,
+        Method::POST,
+        &format!("/purchases/{id}/payments/submit"),
+        pay,
+        TenantContext::Fixed(1),
+    )
+    .await
+    .unwrap();
+    assert_eq!(status, StatusCode::OK);
+    cleanup(root, db, schema).await.unwrap();
+}
