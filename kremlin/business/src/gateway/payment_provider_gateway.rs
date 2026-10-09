@@ -50,6 +50,10 @@ pub trait PaymentProviderGateway: Send + Sync {
     async fn search(&self, _external_reference: &str) -> Result<Option<ProviderResult>, ProviderError> {
         Ok(None)
     }
+    /// Voids an unresolved payment; never refunds. The result carries the provider's post-cancel status.
+    async fn cancel(&self, _reference: &str) -> Result<ProviderResult, ProviderError> {
+        Err(ProviderError("cancel not supported".into()))
+    }
 }
 
 #[cfg(test)]

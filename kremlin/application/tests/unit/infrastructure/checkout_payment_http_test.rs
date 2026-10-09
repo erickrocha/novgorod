@@ -890,3 +890,68 @@ async fn marketplace_quote_selection_and_purchase_per_seller() {
     assert_eq!(cart_counts(&db, cart_id).await.unwrap(), (1, 2));
     cleanup(root, db, schema).await.unwrap();
 }
+
+#[tokio::test]
+#[ignore = "requires isolated PostgreSQL and PAYMENT_PROVIDER_MODE=mock"]
+async fn reconciliation_backs_off_and_cancels_payments_past_the_window() {
+    // NOV-5 TC-11/23/24: SR-PAY-021, SR-PAY-023
+    let (root, db, schema) = database().await.unwrap();
+    Migrator::up(&db, None).await.unwrap();
+    fixtures(&db).await.unwrap();
+    let state = state(db.clone());
+    let app = router(state.clone());
+
+    cart_fixture(&db, Some(1), 1, &[1]).await.unwrap();
+    let purchase_id = create_purchase_from_quote(app.clone(), "recon-aged", &[1])
+        .await
+        .unwrap();
+    let (status, submitted) = request(
+        app.clone(),
+        Method::POST,
+        &format!("/purchases/{purchase_id}/payments/submit"),
+        Some(json!({"token":"mock:pending","paymentMethodId":"visa","installments":1})),
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(status, StatusCode::OK, "{submitted}");
+    assert_eq!(submitted["status"], "pending");
+
+    // Fresh payment: backoff keeps it out of the claim.
+    let claimed = crate::endpoints::checkout_payment_endpoint::reconcile_unresolved(&state)
+        .await
+        .unwrap();
+    assert_eq!(claimed, 0);
+
+    // Past the 3h window: cancelled at the provider, purchase fails, no refund.
+    db.execute_unprepared(
+        "UPDATE payment SET created_at = now() - interval '4 hours', updated_at = now() - interval '4 hours'",
+    )
+    .await
+    .unwrap();
+    let handled = crate::endpoints::checkout_payment_endpoint::reconcile_unresolved(&state)
+        .await
+        .unwrap();
+    assert_eq!(handled, 1);
+    let (status, purchase) = request(
+        app.clone(),
+        Method::GET,
+        &format!("/purchases/{purchase_id}"),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(status, StatusCode::OK, "{purchase}");
+    assert_eq!(purchase["payments"][0]["status"], "failed", "{purchase}");
+    assert_eq!(purchase["status"], "payment_failed", "{purchase}");
+
+    // Resolved payments are not claimed again.
+    assert_eq!(
+        crate::endpoints::checkout_payment_endpoint::reconcile_unresolved(&state)
+            .await
+            .unwrap(),
+        0
+    );
+    cleanup(root, db, schema).await.unwrap();
+}

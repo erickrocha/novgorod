@@ -119,6 +119,16 @@ impl PaymentProviderGateway for MercadoPago {
     async fn search(&self, external_reference: &str) -> Result<Option<ProviderResult>, ProviderError> {
         self.search(external_reference).await
     }
+
+    async fn cancel(&self, reference: &str) -> Result<ProviderResult, ProviderError> {
+        if !reference.bytes().all(|c| c.is_ascii_digit()) { return Err(ProviderError("invalid provider reference".into())); }
+        let url = format!("{}/v1/payments/{reference}", self.base_url);
+        let response = self.client.put(url).bearer_auth(&self.access_token)
+            .json(&json!({"status": "cancelled"})).send().await.map_err(|e| ProviderError(e.to_string()))?;
+        if !response.status().is_success() { return Err(ProviderError(format!("provider cancel returned {}", response.status()))); }
+        let body = response.json().await.map_err(|e| ProviderError(e.to_string()))?;
+        self.normalized(body)
+    }
 }
 
 #[cfg(test)]

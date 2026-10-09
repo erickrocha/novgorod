@@ -168,3 +168,41 @@ fn pagseguro_notification_yields_only_the_reference() {
     assert_eq!(pagseguro_notification_reference(b"{}"), None);
     assert_eq!(pagseguro_notification_reference(b"garbage"), None);
 }
+
+#[test]
+fn reconciliation_window_defaults_to_three_hours_and_rejects_invalid_values() {
+    assert_eq!(parse_window_hours(None), 3);
+    assert_eq!(parse_window_hours(Some("")), 3);
+    assert_eq!(parse_window_hours(Some("6")), 6);
+    assert_eq!(parse_window_hours(Some("0")), 3);
+    assert_eq!(parse_window_hours(Some("abc")), 3);
+    assert_eq!(parse_window_hours(Some("9999")), 3);
+}
+
+#[test]
+fn pagseguro_error_log_keeps_only_codes() {
+    let body = r#"{"error_messages":[{"code":"40002","description":"card 4111111111111111","parameter_name":"holder"}]}"#;
+    let codes = crate::infrastructure::pagseguro::PagSeguro::error_codes(body);
+    assert_eq!(codes, "40002");
+    assert!(!codes.contains("4111"));
+    assert_eq!(
+        crate::infrastructure::pagseguro::PagSeguro::error_codes("<html>card 4111</html>"),
+        ""
+    );
+}
+
+#[tokio::test]
+async fn mock_cancel_voids_pending_and_refuses_captured() {
+    use crate::infrastructure::mock_payment::{MockPaymentProvider, MockProviderKind};
+    let mock = MockPaymentProvider::new(MockProviderKind::MercadoPago);
+    let voided = mock
+        .cancel("mock:mercado_pago:pending:5000:BRL:torg-1-k")
+        .await
+        .unwrap();
+    assert_eq!(voided.status, ProviderStatus::Failed);
+    assert!(
+        mock.cancel("mock:mercado_pago:captured:5000:BRL:torg-1-k")
+            .await
+            .is_err()
+    );
+}

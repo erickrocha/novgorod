@@ -194,6 +194,17 @@ impl PaymentProviderGateway for MockPaymentProvider {
     ) -> Result<Option<ProviderResult>, ProviderError> {
         Ok(None)
     }
+
+    async fn cancel(&self, reference: &str) -> Result<ProviderResult, ProviderError> {
+        let current = self.result_from_reference(reference)?;
+        if current.status == ProviderStatus::Captured {
+            return Err(ProviderError("payment already captured; cancel refused".into()));
+        }
+        Ok(ProviderResult {
+            status: ProviderStatus::Failed,
+            ..current
+        })
+    }
 }
 
 #[cfg(test)]

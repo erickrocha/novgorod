@@ -83,6 +83,22 @@ impl PagSeguro {
         })
     }
 
+    /// Only provider error codes may be logged; the body can echo card or customer data.
+    pub fn error_codes(body: &str) -> String {
+        serde_json::from_str::<serde_json::Value>(body)
+            .ok()
+            .and_then(|v| {
+                v.get("error_messages").and_then(|m| m.as_array()).map(|rows| {
+                    rows.iter()
+                        .filter_map(|r| r.get("code").and_then(|c| c.as_str()))
+                        .filter(|c| c.len() <= 16 && c.bytes().all(|b| b.is_ascii_alphanumeric()))
+                        .collect::<Vec<_>>()
+                        .join(",")
+                })
+            })
+            .unwrap_or_default()
+    }
+
     pub fn parse_payment_json(json: serde_json::Value) -> Result<ProviderResult, ProviderError> {
         let response: ChargeResponse =
             serde_json::from_value(json).map_err(|e| ProviderError(e.to_string()))?;
@@ -188,9 +204,11 @@ impl PaymentProviderGateway for PagSeguro {
             .map_err(|e| ProviderError(e.to_string()))?;
 
         if !response.status().is_success() {
+            let status = response.status();
             let error_text = response.text().await.unwrap_or_default();
             return Err(ProviderError(format!(
-                "pagseguro charge error: {error_text}"
+                "pagseguro charge returned {status} codes [{}]",
+                Self::error_codes(&error_text)
             )));
         }
 
@@ -218,6 +236,34 @@ impl PaymentProviderGateway for PagSeguro {
             )));
         }
 
+        let body = response
+            .json()
+            .await
+            .map_err(|e| ProviderError(e.to_string()))?;
+        Self::parse_payment_json(body)
+    }
+
+    async fn cancel(&self, reference: &str) -> Result<ProviderResult, ProviderError> {
+        // Cancelling a paid charge is a refund, which is out of scope: refuse it.
+        let current = self.status(reference).await?;
+        if current.status == ProviderStatus::Captured {
+            return Err(ProviderError("payment already captured; cancel refused".into()));
+        }
+        let url = format!("{}/charges/{reference}/cancel", self.base_url);
+        let response = self
+            .client
+            .post(&url)
+            .bearer_auth(&self.token)
+            .json(&json!({"amount": {"value": current.amount_cents}}))
+            .send()
+            .await
+            .map_err(|e| ProviderError(e.to_string()))?;
+        if !response.status().is_success() {
+            return Err(ProviderError(format!(
+                "pagseguro cancel returned {}",
+                response.status()
+            )));
+        }
         let body = response
             .json()
             .await

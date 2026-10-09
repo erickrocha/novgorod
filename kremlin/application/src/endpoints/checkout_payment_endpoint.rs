@@ -152,6 +152,14 @@ impl ResolvedProvider {
             Self::Mock(mock) => mock.search(external_reference).await,
         }
     }
+
+    async fn cancel(&self, reference: &str) -> Result<ProviderResult, ProviderError> {
+        match self {
+            Self::MercadoPago(mp) => mp.cancel(reference).await,
+            Self::PagSeguro(ps) => ps.cancel(reference).await,
+            Self::Mock(mock) => mock.cancel(reference).await,
+        }
+    }
 }
 
 fn mock_provider_for_config(
@@ -541,7 +549,7 @@ async fn apply_result(
                     .map_err(|_| unavailable())?;
                 if consumed.rows_affected() != 1 {
                     log::error!(
-                        "late payment capture oversold, purchase_id={}, sku_id={}, quantity={}, manual refund",
+                        "late_capture_unfulfillable: stock unavailable, no refund attempted, manual follow-up, purchase_id={}, sku_id={}, quantity={}",
                         purchase.id,
                         sku_id,
                         quantity
@@ -1073,16 +1081,104 @@ pub async fn pagseguro_webhook(
     Ok(StatusCode::OK)
 }
 
-pub async fn reconcile_unresolved(state: &AppState) -> Result<usize, String> {
-    let payments = payment_entity::Entity::find()
-        .filter(payment_entity::Column::Status.eq("pending"))
-        .filter(payment_entity::Column::AttemptKey.is_not_null())
-        .all(state.conn.as_ref())
+const DEFAULT_RECONCILIATION_WINDOW_HOURS: i64 = 3;
+
+fn parse_window_hours(raw: Option<&str>) -> i64 {
+    match raw.map(str::trim).filter(|v| !v.is_empty()) {
+        None => DEFAULT_RECONCILIATION_WINDOW_HOURS,
+        Some(v) => match v.parse::<i64>() {
+            Ok(h) if (1..=168).contains(&h) => h,
+            _ => {
+                log::warn!("invalid PAYMENT_RECONCILIATION_WINDOW_HOURS; defaulting to 3");
+                DEFAULT_RECONCILIATION_WINDOW_HOURS
+            }
+        },
+    }
+}
+
+/// Claims due pending payments atomically; the claim bumps `updated_at`, which drives the age backoff.
+async fn claim_due_payments(state: &AppState, window_secs: i64) -> Result<Vec<(i64, bool)>, String> {
+    let rows = state
+        .conn
+        .query_all_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "UPDATE payment SET updated_at=CURRENT_TIMESTAMP WHERE id IN (\
+               SELECT id FROM payment WHERE status='pending' AND attempt_key IS NOT NULL \
+               AND updated_at <= CURRENT_TIMESTAMP - (CASE \
+                 WHEN CURRENT_TIMESTAMP - created_at < interval '5 minutes' THEN 30 \
+                 WHEN CURRENT_TIMESTAMP - created_at < interval '30 minutes' THEN 120 \
+                 ELSE 600 END) * interval '1 second' \
+               ORDER BY id LIMIT 100 FOR UPDATE SKIP LOCKED) \
+             RETURNING id, (created_at <= CURRENT_TIMESTAMP - $1::bigint * interval '1 second') AS expired",
+            [window_secs.into()],
+        ))
         .await
         .map_err(|e| e.to_string())?;
+    rows.iter()
+        .map(|r| {
+            Ok((
+                r.try_get("", "id").map_err(|e: DbErr| e.to_string())?,
+                r.try_get("", "expired").map_err(|e: DbErr| e.to_string())?,
+            ))
+        })
+        .collect()
+}
 
+/// Resolves a payment unresolved past the window by cancelling it at the provider; never refunds (SR-PAY-023).
+async fn cancel_unresolved(
+    state: &AppState,
+    purchase: &purchase_entity::Model,
+    payment: &payment_entity::Model,
+    provider: &ResolvedProvider,
+) -> bool {
+    let fresh = match (&payment.gateway_reference, &payment.attempt_key) {
+        (Some(reference), _) => provider.status(reference).await.map(Some),
+        (None, Some(key)) => provider.search(&format!("torg-{}-{key}", purchase.id)).await,
+        _ => Ok(None),
+    };
+    let fresh = match fresh {
+        Ok(Some(fresh)) => fresh,
+        Ok(None) => {
+            log::warn!("payment {} unresolved past window: provider has no payment, manual follow-up", payment.id);
+            return false;
+        }
+        Err(e) => {
+            log::warn!("payment {} cancel lookup failed: {}", payment.id, e.0);
+            return false;
+        }
+    };
+    let result = match fresh.status {
+        ProviderStatus::Captured => {
+            log::warn!("payment {} captured after the window; no refund attempted, manual follow-up", payment.id);
+            fresh
+        }
+        ProviderStatus::Failed => fresh,
+        ProviderStatus::Pending | ProviderStatus::Authorized => {
+            match provider.cancel(&fresh.reference).await {
+                Ok(cancelled) => ProviderResult { status: ProviderStatus::Failed, ..cancelled },
+                Err(e) => {
+                    log::warn!("payment {} cancel failed: {}", payment.id, e.0);
+                    return false;
+                }
+            }
+        }
+    };
+    apply_result(state, purchase, payment, result, provider.collector_id(), provider.name())
+        .await
+        .map_err(|e| log::warn!("payment {} cancel not applied: {}", payment.id, e.0))
+        .is_ok()
+}
+
+pub async fn reconcile_unresolved(state: &AppState) -> Result<usize, String> {
+    let window_secs = parse_window_hours(
+        std::env::var("PAYMENT_RECONCILIATION_WINDOW_HOURS").ok().as_deref(),
+    ) * 3600;
     let mut count = 0;
-    for payment in payments {
+    for (payment_id, expired) in claim_due_payments(state, window_secs).await? {
+        let payment = match payment_entity::Entity::find_by_id(payment_id).one(state.conn.as_ref()).await {
+            Ok(Some(p)) => p,
+            _ => continue,
+        };
         let purchase = match purchase_entity::Entity::find_by_id(payment.purchase_id)
             .one(state.conn.as_ref())
             .await
@@ -1090,38 +1186,39 @@ pub async fn reconcile_unresolved(state: &AppState) -> Result<usize, String> {
             Ok(Some(p)) => p,
             _ => continue,
         };
-
         let provider = match resolve_provider(state, purchase.id).await {
             Ok(p) => p,
-            Err(_) => continue,
+            Err(e) => {
+                log::warn!("reconciliation: payment {payment_id} provider unavailable ({})", e.0);
+                continue;
+            }
         };
-
-        let outcome = if let Some(ref reference) = payment.gateway_reference {
-            provider.status(reference).await.ok()
-        } else if let Some(ref key) = payment.attempt_key {
-            provider
-                .search(&format!("torg-{}-{key}", purchase.id))
-                .await
-                .ok()
-                .flatten()
-        } else {
-            None
-        };
-
-        if let Some(outcome) = outcome
-            && apply_result(
-                state,
-                &purchase,
-                &payment,
-                outcome,
-                provider.collector_id(),
-                provider.name(),
-            )
-            .await
-            .is_ok()
-            {
+        if expired {
+            if cancel_unresolved(state, &purchase, &payment, &provider).await {
                 count += 1;
             }
+            continue;
+        }
+        let outcome = if let Some(ref reference) = payment.gateway_reference {
+            provider.status(reference).await.map(Some)
+        } else if let Some(ref key) = payment.attempt_key {
+            provider.search(&format!("torg-{}-{key}", purchase.id)).await
+        } else {
+            Ok(None)
+        };
+        match outcome {
+            Ok(Some(outcome)) => {
+                if apply_result(state, &purchase, &payment, outcome, provider.collector_id(), provider.name())
+                    .await
+                    .map_err(|e| log::warn!("reconciliation: payment {payment_id} not applied: {}", e.0))
+                    .is_ok()
+                {
+                    count += 1;
+                }
+            }
+            Ok(None) => {}
+            Err(e) => log::warn!("reconciliation: payment {payment_id} provider error: {}", e.0),
+        }
     }
     Ok(count)
 }
@@ -1132,7 +1229,7 @@ pub fn spawn_payment_reconciliation(state: AppState) {
         loop {
             interval.tick().await;
             if let Err(e) = reconcile_unresolved(&state).await {
-                log::debug!("Reconciliation: {e}");
+                log::warn!("Reconciliation: {e}");
             }
         }
     });
