@@ -103,12 +103,22 @@ impl PurchaseGateway {
         access: PurchaseAccess,
         id: i64,
     ) -> Result<PurchaseDetail, PurchaseError> {
+        Self::detail_scoped(db, access, id, None).await
+    }
+
+    pub(crate) async fn detail_scoped<C: ConnectionTrait>(
+        db: &C,
+        access: PurchaseAccess,
+        id: i64,
+        tenant: Option<i64>,
+    ) -> Result<PurchaseDetail, PurchaseError> {
         let purchase = purchase_entity::Entity::find_by_id(id)
             .one(db)
             .await?
             .map(PurchaseEntityMapper::from_model)
             .ok_or(PurchaseError::NotFound)?;
-        if !access.can_read_purchase(&purchase) {
+        if !access.can_read_purchase(&purchase) || tenant.is_some_and(|t| purchase.tenant_id != Some(t))
+        {
             return Err(PurchaseError::NotFound);
         }
         let mut orders = Vec::new();
@@ -267,6 +277,9 @@ impl PurchaseGateway {
         }
         if let Some(id) = filter.customer_id {
             query = query.filter(C::CustomerId.eq(id));
+        }
+        if let Some(id) = filter.tenant_id {
+            query = query.filter(C::TenantId.eq(id));
         }
         if let Some(status) = &filter.status {
             query = query.filter(C::Status.eq(status));

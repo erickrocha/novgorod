@@ -85,6 +85,7 @@ fn options_are_deterministic() {
         service_name: code.into(),
         price_cents: price,
         transit_days: Some(days),
+        parcels: Vec::new(),
     };
     let mut options = vec![
         option("C", 100, 3),

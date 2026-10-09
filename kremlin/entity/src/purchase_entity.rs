@@ -7,6 +7,7 @@ pub struct Model {
     pub id: i64,
     pub uuid: Uuid,
     pub customer_id: i64,
+    pub tenant_id: Option<i64>,
     pub customer_name: String,
     pub customer_tax_id: String,
     pub customer_email: Option<String>,

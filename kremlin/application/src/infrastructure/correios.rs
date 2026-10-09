@@ -342,6 +342,7 @@ fn merge(
             service_name: service.name.clone(),
             price_cents,
             transit_days: Some(days),
+            parcels: Vec::new(),
         });
     }
     if options.is_empty() {

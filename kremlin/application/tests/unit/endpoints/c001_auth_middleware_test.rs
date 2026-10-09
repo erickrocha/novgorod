@@ -2108,6 +2108,7 @@ async fn order_and_purchase_reads_hide_foreign_resources() {
                     id: 99,
                     uuid: uuid::Uuid::new_v4(),
                     customer_id: 88,
+                    tenant_id: None,
                     customer_name: "Other customer".into(),
                     customer_tax_id: "12345678901".into(),
                     customer_email: Some("other@example.test".into()),

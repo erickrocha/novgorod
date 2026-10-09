@@ -130,6 +130,7 @@ pub async fn create_purchase(
                 quote_id: quoted.quote_id,
                 email: quoted.email,
                 phone: quoted.phone,
+                tenant_id: context.tenant_id(),
             },
         )
         .await
@@ -155,11 +156,12 @@ pub async fn get_purchase(
     State(state): State<AppState>,
     Extension(user): Extension<User>,
     Extension(locale): Extension<Locale>,
+    Extension(context): Extension<TenantContext>,
     Path(id): Path<i64>,
 ) -> HttpResponse<Json<PurchaseDetailJson>> {
     Ok(Json(PurchaseMapper::json(
         use_case(&state)
-            .get(&user, id)
+            .get_scoped(&user, id, context.tenant_id())
             .await
             .map_err(|e| error(locale, e))?,
     )))
@@ -201,11 +203,12 @@ pub async fn payments(
     State(state): State<AppState>,
     Extension(user): Extension<User>,
     Extension(locale): Extension<Locale>,
+    Extension(context): Extension<TenantContext>,
     Path(id): Path<i64>,
 ) -> HttpResponse<Json<Vec<PaymentDetailJson>>> {
     Ok(Json(
         use_case(&state)
-            .get(&user, id)
+            .get_scoped(&user, id, context.tenant_id())
             .await
             .map_err(|e| error(locale, e))?
             .payments
@@ -314,9 +317,15 @@ pub async fn purchases_paged(
     State(state): State<AppState>,
     Extension(user): Extension<User>,
     Extension(locale): Extension<Locale>,
+    Extension(context): Extension<TenantContext>,
     Query(params): Query<OrdersPageQuery>,
 ) -> HttpResponse<Json<PagedResponse<PurchaseJson>>> {
-    let (norm, filter) = filter(params, true);
+    let asked = params.tenant_id;
+    let (norm, mut filter) = filter(params, true);
+    match scope_tenant(context, asked) {
+        Ok(tenant) => filter.tenant_id = tenant,
+        Err(()) => return Ok(empty_page(&norm)),
+    }
     let page = use_case(&state)
         .purchases(&user, &filter)
         .await

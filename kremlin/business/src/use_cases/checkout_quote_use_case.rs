@@ -81,6 +81,134 @@ pub fn quote_items_belong_to(result: &serde_json::Value, tenant_id: i64) -> bool
         .unwrap_or(false)
 }
 
+/// A fixed-mode option before it receives its id; deterministic, so it takes part in the
+/// shipping inputs hash.
+#[derive(Debug, Clone, Serialize)]
+struct FixedOption {
+    service_code: String,
+    service_name: String,
+    price_cents: i64,
+    transit_days: Option<u32>,
+    parcels: Vec<ShippingParcel>,
+}
+
+/// SR-MKT-011 (DES-MKT-09): single-origin and split options of a fixed-mode seller. An option
+/// without a matching rate for every package is not offered.
+async fn build_fixed_options(
+    db: &impl ConnectionTrait,
+    tenant_id: i64,
+    seller_inputs: &[(entity::sku_entity::Model, i32)],
+    config: &ShippingConfig,
+    address: &AddressInput,
+    seller_subtotal: i64,
+) -> Result<Vec<FixedOption>, PurchaseError> {
+    use crate::domain::fixed_shipping as policy;
+    let lines: Vec<policy::Line> = seller_inputs
+        .iter()
+        .map(|(sku, quantity)| policy::Line {
+            sku_id: sku.id,
+            quantity: i64::from(*quantity),
+            weight_g: i64::from(sku.weight_g.unwrap_or(0)),
+        })
+        .collect();
+    let warehouses: Vec<policy::WarehouseRef> = warehouse_entity::Entity::find()
+        .filter(warehouse_entity::Column::TenantId.eq(tenant_id))
+        .filter(warehouse_entity::Column::Active.eq(true))
+        .all(db)
+        .await?
+        .into_iter()
+        .map(|w| policy::WarehouseRef {
+            id: w.id,
+            origin_cep: w.origin_cep,
+            is_default: w.is_default,
+        })
+        .collect();
+    let stock: Vec<policy::StockRef> = sku_stock_entity::Entity::find()
+        .filter(sku_stock_entity::Column::TenantId.eq(tenant_id))
+        .filter(sku_stock_entity::Column::SkuId.is_in(lines.iter().map(|l| l.sku_id)))
+        .all(db)
+        .await?
+        .into_iter()
+        .filter_map(|s| {
+            Some(policy::StockRef {
+                warehouse_id: s.warehouse_id?,
+                sku_id: s.sku_id,
+                available: i64::from(s.quantity) - i64::from(s.reserved),
+            })
+        })
+        .collect();
+    let rates = shipping_rate_entity::Entity::find()
+        .filter(shipping_rate_entity::Column::TenantId.eq(tenant_id))
+        .all(db)
+        .await?;
+    let destination_cep: String = address
+        .postal_code
+        .chars()
+        .filter(char::is_ascii_digit)
+        .collect();
+    let destination_uf = address.administrative_area.trim().to_uppercase();
+
+    let all_items: Vec<(i64, i64)> = lines.iter().map(|l| (l.sku_id, l.quantity)).collect();
+    let mut candidates = vec![(
+        "fixed",
+        false,
+        vec![policy::Allocation {
+            warehouse_id: policy::single_origin(&warehouses, &stock, &lines),
+            items: all_items,
+        }],
+    )];
+    if let Some(split) = policy::split_allocation(&warehouses, &stock, &lines) {
+        candidates.push(("fixed-split", true, split));
+    }
+
+    let mut options = Vec::new();
+    for (code, split, allocations) in candidates {
+        let Some(parcels) = policy::price_packages(
+            &allocations,
+            &warehouses,
+            &rates,
+            &lines,
+            config.packaging.weight_g,
+            config.origin_cep.as_deref(),
+            &destination_cep,
+            &destination_uf,
+            seller_subtotal,
+        ) else {
+            continue;
+        };
+        if parcels.iter().any(|p| p.price_cents < 0) {
+            return Err(PurchaseError::Validation("invalid shipping rate"));
+        }
+        let name = parcels
+            .first()
+            .and_then(|p| p.region_name.as_deref())
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or("Entrega Padrão");
+        let price_cents = parcels
+            .iter()
+            .try_fold(0_i64, |sum, p| sum.checked_add(p.price_cents))
+            .ok_or(PurchaseError::Validation("amount overflow"))?;
+        options.push(FixedOption {
+            service_code: code.into(),
+            service_name: if split {
+                format!("{name} (envio dividido)")
+            } else {
+                name.to_string()
+            },
+            price_cents,
+            transit_days: parcels.iter().filter_map(|p| p.transit_days).max(),
+            parcels,
+        });
+    }
+    if options.is_empty() {
+        return Err(PurchaseError::DeliveryRateMissing(format!(
+            "Seller {tenant_id} does not deliver to {}",
+            address.administrative_area
+        )));
+    }
+    Ok(options)
+}
+
 pub struct CheckoutQuoteUseCase {
     db: DbConn,
     provider: Option<Arc<dyn ShippingProviderGateway>>,
@@ -359,136 +487,32 @@ impl CheckoutQuoteUseCase {
                 }
                 parcel = parcel.packaged(&config.packaging)?;
             }
-            let (fixed, fixed_option, effective_origin_cep) = if config.mode == ShippingMode::Fixed {
-                let sku_ids: Vec<i64> = seller_inputs.iter().map(|(sku, _)| sku.id).collect();
-                let stocks = sku_stock_entity::Entity::find()
-                    .filter(sku_stock_entity::Column::TenantId.eq(tenant_id))
-                    .filter(sku_stock_entity::Column::SkuId.is_in(sku_ids))
-                    .all(db)
-                    .await?;
-
-                let origin_warehouse_id = stocks.iter().find_map(|s| s.warehouse_id);
-
-                let origin_warehouse = if let Some(wid) = origin_warehouse_id {
-                    warehouse_entity::Entity::find_by_id(wid)
-                        .filter(warehouse_entity::Column::TenantId.eq(tenant_id))
-                        .filter(warehouse_entity::Column::Active.eq(true))
-                        .one(db)
-                        .await?
-                } else {
-                    warehouse_entity::Entity::find()
-                        .filter(warehouse_entity::Column::TenantId.eq(tenant_id))
-                        .filter(warehouse_entity::Column::IsDefault.eq(true))
-                        .filter(warehouse_entity::Column::Active.eq(true))
-                        .one(db)
-                        .await?
-                };
-
-                let eff_cep = origin_warehouse
-                    .as_ref()
-                    .map(|w| w.origin_cep.clone())
+            let (fixed, fixed_options, effective_origin_cep) = if config.mode
+                == ShippingMode::Fixed
+            {
+                let options = build_fixed_options(
+                    db,
+                    tenant_id,
+                    seller_inputs,
+                    &config,
+                    &address,
+                    subtotal_cents,
+                )
+                .await?;
+                let cheapest = options.iter().map(|o| o.price_cents).min();
+                let origin = options
+                    .first()
+                    .and_then(|o| o.parcels.first())
+                    .and_then(|p| p.origin_cep.clone())
                     .or_else(|| config.origin_cep.clone());
-
-                let dest_cep_digits: String =
-                    address.postal_code.chars().filter(char::is_ascii_digit).collect();
-                let dest_uf = address.administrative_area.trim().to_uppercase();
-
-                let rates = shipping_rate_entity::Entity::find()
-                    .filter(shipping_rate_entity::Column::TenantId.eq(tenant_id))
-                    .all(db)
-                    .await?;
-
-                let matched = rates
-                    .into_iter()
-                    .filter_map(|r| {
-                        let warehouse_ok = match r.origin_warehouse_id {
-                            Some(wid) => origin_warehouse.as_ref().map(|w| w.id) == Some(wid),
-                            None => true,
-                        };
-                        if !warehouse_ok {
-                            return None;
-                        }
-
-                        let has_cep_range = match (&r.destination_cep_start, &r.destination_cep_end) {
-                            (Some(start), Some(end)) if !start.trim().is_empty() && !end.trim().is_empty() => {
-                                let s = start.trim();
-                                let e = end.trim();
-                                if dest_cep_digits.as_str() >= s && dest_cep_digits.as_str() <= e {
-                                    true
-                                } else {
-                                    return None;
-                                }
-                            }
-                            _ => false,
-                        };
-
-                        if !has_cep_range && !r.uf.trim().eq_ignore_ascii_case(&dest_uf) {
-                            return None;
-                        }
-
-                        let score = (r.origin_warehouse_id.is_some() as u8 * 2) + (has_cep_range as u8);
-                        Some((score, r))
-                    })
-                    .max_by_key(|(score, _)| *score)
-                    .map(|(_, r)| r);
-
-                let rate = matched.ok_or_else(|| {
-                    PurchaseError::DeliveryRateMissing(format!(
-                        "Seller {tenant_id} does not deliver to {}",
-                        address.administrative_area
-                    ))
-                })?;
-
-                if rate.price_cents < 0 {
-                    return Err(PurchaseError::Validation("invalid shipping rate"));
-                }
-
-                let total_weight_g: i64 = seller_inputs
-                    .iter()
-                    .map(|(sku, q)| i64::from(sku.weight_g.unwrap_or(0)) * i64::from(*q))
-                    .sum::<i64>()
-                    + config.packaging.weight_g;
-
-                let calculated_price = if rate
-                    .free_shipping_threshold_cents
-                    .is_some_and(|th| subtotal_cents >= i64::from(th))
-                {
-                    0_i64
-                } else {
-                    let mut price = i64::from(rate.price_cents);
-                    if let (Some(max_w), Some(extra_per_kg)) = (rate.max_weight_g, rate.extra_weight_per_kg_cents) {
-                        let max_w = i64::from(max_w);
-                        if total_weight_g > max_w && extra_per_kg > 0 {
-                            let excess_g = total_weight_g - max_w;
-                            let excess_kg = (excess_g + 999) / 1000;
-                            let extra_cents = excess_kg.saturating_mul(i64::from(extra_per_kg));
-                            price = price.saturating_add(extra_cents);
-                        }
-                    }
-                    price
-                };
-
-                let service_name = rate
-                    .region_name
-                    .as_deref()
-                    .filter(|s| !s.trim().is_empty())
-                    .unwrap_or("Entrega Padrão")
-                    .to_string();
-
-                let transit_days = if rate.transit_days_max > 0 {
-                    Some(rate.transit_days_max as u32)
-                } else {
-                    None
-                };
-
-                (Some(calculated_price), Some((service_name, transit_days)), eff_cep)
+                (cheapest, options, origin)
             } else {
-                (None, None, config.origin_cep.clone())
+                (None, Vec::new(), config.origin_cep.clone())
             };
             let inputs_hash = format!(
                 "{:x}",
                 Sha256::digest(
-                    serde_json::to_vec(&(&measurements, &config, fixed, &fixed_option))
+                    serde_json::to_vec(&(&measurements, &config, fixed, &fixed_options))
                         .map_err(|_| PurchaseError::Validation("invalid shipping inputs"))?
                 )
             );
@@ -507,6 +531,7 @@ impl CheckoutQuoteUseCase {
                     service_name: String::new(),
                     price_cents: 0,
                     transit_days: None,
+                    parcels: Vec::new(),
                 },
             };
             let shipping_metadata;
@@ -535,15 +560,19 @@ impl CheckoutQuoteUseCase {
                 shipping_metadata = seller.shipping.clone();
                 shipping_cents = seller.shipping_cents;
             } else {
-                let mut options = if let (Some(price), Some((name, days))) = (fixed, fixed_option) {
-                    vec![ShippingOption {
-                        id: uuid::Uuid::new_v4().to_string(),
-                        provider: "fixed".into(),
-                        service_code: "fixed".into(),
-                        service_name: name,
-                        price_cents: price,
-                        transit_days: days,
-                    }]
+                let mut options = if config.mode == ShippingMode::Fixed {
+                    fixed_options
+                        .into_iter()
+                        .map(|o| ShippingOption {
+                            id: uuid::Uuid::new_v4().to_string(),
+                            provider: "fixed".into(),
+                            service_code: o.service_code,
+                            service_name: o.service_name,
+                            price_cents: o.price_cents,
+                            transit_days: o.transit_days,
+                            parcels: o.parcels,
+                        })
+                        .collect()
                 } else {
                     provider
                         .ok_or(PurchaseError::ShippingUnavailable)?

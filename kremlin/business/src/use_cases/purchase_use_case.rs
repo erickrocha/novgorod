@@ -26,6 +26,8 @@ pub struct CheckoutPurchaseInput {
     pub quote_id: i64,
     pub email: String,
     pub phone: String,
+    /// Tenant of the resolved request context (never taken from the body); `None` for the marketplace.
+    pub tenant_id: Option<i64>,
 }
 
 impl PurchaseUseCase {
@@ -187,16 +189,6 @@ impl PurchaseUseCase {
                 {
                     return Err(PurchaseError::Validation("insufficient stock"));
                 }
-                let reserved = tx
-                    .execute_raw(Statement::from_sql_and_values(
-                        DbBackend::Postgres,
-                        "UPDATE sku_stock SET reserved=reserved+$3,updated_at=CURRENT_TIMESTAMP WHERE tenant_id=$1 AND sku_id=$2 AND quantity-reserved >= $3",
-                        [item.tenant_id.into(), item.sku_id.into(), item.quantity.into()],
-                    ))
-                    .await?;
-                if reserved.rows_affected() != 1 {
-                    return Err(PurchaseError::Validation("insufficient stock"));
-                }
             }
             for seller in &stored.sellers {
                 tx.query_one_raw(Statement::from_sql_and_values(
@@ -235,6 +227,19 @@ impl PurchaseUseCase {
                 .await?;
             }
             CheckoutQuoteUseCase::revalidate(&tx, customer.id, &request, &stored).await?;
+            // Reserve after revalidation: the quote's warehouse allocation reads available stock.
+            for item in &stored.items {
+                let reserved = tx
+                    .execute_raw(Statement::from_sql_and_values(
+                        DbBackend::Postgres,
+                        "UPDATE sku_stock SET reserved=reserved+$3,updated_at=CURRENT_TIMESTAMP WHERE tenant_id=$1 AND sku_id=$2 AND quantity-reserved >= $3",
+                        [item.tenant_id.into(), item.sku_id.into(), item.quantity.into()],
+                    ))
+                    .await?;
+                if reserved.rows_affected() != 1 {
+                    return Err(PurchaseError::Validation("insufficient stock"));
+                }
+            }
             Some(stored)
         } else {
             None
@@ -299,6 +304,15 @@ impl PurchaseUseCase {
             return Err(PurchaseError::Conflict);
         }
         let paid = checkout.is_some() && total == 0;
+        // SR-MKT-007: a tenant-bound purchase cannot include another seller's items.
+        let context_tenant = checkout.as_ref().and_then(|c| c.tenant_id);
+        if let Some(t) = context_tenant
+            && groups.keys().any(|g| *g != t)
+        {
+            return Err(PurchaseError::Validation(
+                "items belong to a different seller",
+            ));
+        }
         let order_email = checkout
             .as_ref()
             .map(|c| c.email.trim().to_string())
@@ -309,6 +323,7 @@ impl PurchaseUseCase {
             .or(customer.phone.clone());
         let purchase = purchase_entity::ActiveModel {
             customer_id: Set(customer.id),
+            tenant_id: Set(context_tenant),
             customer_name: Set(customer.name.clone()),
             customer_tax_id: Set(tax_id.to_owned()),
             customer_email: Set(order_email.clone()),
@@ -526,7 +541,17 @@ impl PurchaseUseCase {
     }
 
     pub async fn get(&self, user: &User, id: i64) -> Result<PurchaseDetail, PurchaseError> {
-        PurchaseGateway::detail(&self.gateway.db, self.access(user).await?, id).await
+        self.get_scoped(user, id, None).await
+    }
+    /// SR-MKT-008: with a tenant-bound context, purchases of other tenants (or marketplace ones)
+    /// are reported as not found.
+    pub async fn get_scoped(
+        &self,
+        user: &User,
+        id: i64,
+        tenant: Option<i64>,
+    ) -> Result<PurchaseDetail, PurchaseError> {
+        PurchaseGateway::detail_scoped(&self.gateway.db, self.access(user).await?, id, tenant).await
     }
     pub async fn order(&self, user: &User, id: i64) -> Result<OrderDetail, PurchaseError> {
         PurchaseGateway::order_detail(&self.gateway.db, self.access(user).await?, id).await

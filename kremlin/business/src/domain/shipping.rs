@@ -126,6 +126,28 @@ pub struct ShippingOption {
     pub price_cents: i64,
     /// Carrier transit time from posting; excludes seller preparation time.
     pub transit_days: Option<u32>,
+    /// Fixed mode only: the packages behind `price_cents`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parcels: Vec<ShippingParcel>,
+}
+/// One package of a fixed-mode option: reproduces the option's price (SR-MKT-011).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ShippingParcel {
+    pub warehouse_id: Option<i64>,
+    pub origin_cep: Option<String>,
+    pub rate_id: i64,
+    pub region_name: Option<String>,
+    pub price_cents: i64,
+    pub transit_days: Option<u32>,
+    pub weight_g: i64,
+    pub items: Vec<ShippingParcelItem>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ShippingParcelItem {
+    pub sku_id: i64,
+    pub quantity: i64,
 }
 pub fn sort_options(options: &mut [ShippingOption]) {
     options.sort_by(|a, b| {

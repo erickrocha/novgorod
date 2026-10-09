@@ -43,5 +43,6 @@ pub mod payment_allocation;
 pub mod payment_transaction;
 pub mod purchase;
 
+pub mod fixed_shipping;
 pub mod shipping;
 pub mod warehouse;

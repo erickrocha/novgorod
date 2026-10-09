@@ -146,6 +146,7 @@ impl ShippingProviderGateway for Carrier {
                 service_name: "SEDEX".into(),
                 price_cents: 2000,
                 transit_days: Some(2),
+                parcels: Vec::new(),
             },
             ShippingOption {
                 id: "cheap".into(),
@@ -154,6 +155,7 @@ impl ShippingProviderGateway for Carrier {
                 service_name: "PAC".into(),
                 price_cents: 1000,
                 transit_days: Some(5),
+                parcels: Vec::new(),
             },
         ])
     }
@@ -177,6 +179,7 @@ impl ShippingProviderGateway for ChangingCarrier {
             service_name: "PAC".into(),
             price_cents: price,
             transit_days: Some(5),
+            parcels: Vec::new(),
         }])
     }
 }
@@ -194,6 +197,7 @@ fn checkout(quote_id: i64) -> CheckoutPurchaseInput {
         quote_id,
         email: "buyer@test.local".into(),
         phone: "11999999999".into(),
+        tenant_id: None,
     }
 }
 fn selections(

@@ -280,12 +280,13 @@ async fn owned(
     state: &AppState,
     user: &User,
     id: i64,
+    tenant: Option<i64>,
 ) -> Result<(purchase_entity::Model, payment_entity::Model), ApiError> {
     if user.role != Role::Customer {
         return Err(bad(StatusCode::FORBIDDEN, "Acesso negado"));
     }
     let use_case = PurchaseUseCase::new(PurchaseGateway::new(state.conn.as_ref().clone()));
-    use_case.get(user, id).await.map_err(|e| match e {
+    use_case.get_scoped(user, id, tenant).await.map_err(|e| match e {
         PurchaseError::NotFound | PurchaseError::Forbidden => {
             bad(StatusCode::NOT_FOUND, "Compra não encontrada")
         }
@@ -667,7 +668,7 @@ pub async fn submit(
     {
         return Err(bad(StatusCode::BAD_REQUEST, "Dados do cartão inválidos"));
     }
-    let (purchase, payment) = owned(&app, &user, id).await?;
+    let (purchase, payment) = owned(&app, &user, id, context.tenant_id()).await?;
     if purchase.total_cents == 0 {
         return Ok(Json(state(id, &payment)));
     }
@@ -853,9 +854,10 @@ pub async fn submit(
 pub async fn status(
     State(app): State<AppState>,
     Extension(user): Extension<User>,
+    Extension(context): Extension<crate::commons::tenant_context::TenantContext>,
     Path(id): Path<i64>,
 ) -> Result<Json<PaymentState>, ApiError> {
-    let (purchase, payment) = owned(&app, &user, id).await?;
+    let (purchase, payment) = owned(&app, &user, id, context.tenant_id()).await?;
     if payment.status == "captured"
         || payment.status == "failed"
         || payment.status == "pending_provider"

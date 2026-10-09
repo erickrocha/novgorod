@@ -386,6 +386,7 @@ fn checkout(quote_id: i64) -> CheckoutPurchaseInput {
         quote_id,
         email: "buyer@test.local".into(),
         phone: "11999999999".into(),
+        tenant_id: None,
     }
 }
 async fn quote_input(
