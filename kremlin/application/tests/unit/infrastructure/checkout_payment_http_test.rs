@@ -793,3 +793,100 @@ async fn tenant_bound_purchase_is_not_payable_or_readable_from_another_tenant() 
     assert_eq!(status, StatusCode::OK);
     cleanup(root, db, schema).await.unwrap();
 }
+
+fn quote_body(sku_ids: &[i64]) -> Value {
+    let items: Vec<Value> = sku_ids
+        .iter()
+        .map(|sku_id| json!({"skuId":sku_id,"quantity":1}))
+        .collect();
+    json!({
+        "items":items,
+        "addressId":null,
+        "shippingAddress":{
+            "recipient":"Buyer","addressLine1":"Street 1","addressLine2":null,
+            "locality":"Sao Paulo","administrativeArea":"SP","postalCode":"01001000","countryCode":"BR"
+        },
+        "coupons":[]
+    })
+}
+
+#[tokio::test]
+#[ignore = "requires isolated PostgreSQL"]
+async fn marketplace_quote_selection_and_purchase_per_seller() {
+    let (root, db, schema) = database().await.unwrap();
+    Migrator::up(&db, None).await.unwrap();
+    fixtures(&db).await.unwrap();
+    db.execute_unprepared("UPDATE tenant SET listed=false WHERE id=2")
+        .await
+        .unwrap();
+    let app = router(state(db.clone()));
+
+    // TC-13: a seller with the listing flag off is bought like any other in marketplace mode.
+    create_purchase_from_quote(app.clone(), "unlisted", &[2])
+        .await
+        .unwrap();
+
+    // TC-02: one block per seller; the quote totals are the sums.
+    let (status, quote) = request(
+        app.clone(),
+        Method::POST,
+        "/checkout/quotes",
+        Some(quote_body(&[1, 2])),
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(status, StatusCode::CREATED, "{quote}");
+    let sellers = quote["sellers"].as_array().unwrap();
+    assert_eq!(sellers.len(), 2);
+    assert_eq!(
+        (sellers[0]["tenantId"].as_i64(), sellers[0]["subtotalCents"].as_i64(), sellers[0]["shippingCents"].as_i64()),
+        (Some(1), Some(5000), Some(1500))
+    );
+    assert_eq!(
+        (sellers[1]["tenantId"].as_i64(), sellers[1]["subtotalCents"].as_i64(), sellers[1]["shippingCents"].as_i64()),
+        (Some(2), Some(6500), Some(1800))
+    );
+    let sum: i64 = sellers.iter().map(|s| s["totalCents"].as_i64().unwrap()).sum();
+    assert_eq!(quote["totalCents"].as_i64().unwrap(), sum);
+
+    // TC-16: a selection must choose for every seller.
+    let quote_id = quote["id"].as_i64().unwrap();
+    let option = |seller: &Value| seller["shipping"]["selectedOption"]["id"].clone();
+    let (status, body) = request(
+        app.clone(),
+        Method::POST,
+        &format!("/checkout/quotes/{quote_id}/shipping-selection"),
+        Some(json!([{"tenantId":1,"optionId":option(&sellers[0])}])),
+        None,
+    )
+    .await
+    .unwrap();
+    assert!(status.is_client_error(), "{status}: {body}");
+
+    // TC-16 step 1 and TC-05: purchase straight from the fresh quote uses the default options.
+    let (status, purchase) = request(
+        app.clone(),
+        Method::POST,
+        "/purchases",
+        Some(json!({"quoteId":quote_id,"email":"buyer@test.local","phone":"11999999999"})),
+        Some("default-selection"),
+    )
+    .await
+    .unwrap();
+    assert_eq!(status, StatusCode::CREATED, "{purchase}");
+    let orders = purchase["orders"].as_array().unwrap();
+    assert_eq!(orders.len(), 2);
+    let mut tenants: Vec<_> = orders.iter().map(|o| o["tenantId"].as_i64().unwrap()).collect();
+    tenants.sort();
+    assert_eq!(tenants, [1, 2]);
+    let shipping: Vec<_> = orders.iter().map(|o| o["shippingCents"].as_i64().unwrap()).collect();
+    assert!(shipping.contains(&1500) && shipping.contains(&1800), "{shipping:?}");
+    let order_total: i64 = orders.iter().map(|o| o["totalCents"].as_i64().unwrap()).sum();
+    assert_eq!(purchase["totalCents"].as_i64().unwrap(), order_total);
+
+    // TC-01: a tenant-less cart holds items of several sellers.
+    let cart_id = cart_fixture(&db, None, 1, &[1, 2]).await.unwrap();
+    assert_eq!(cart_counts(&db, cart_id).await.unwrap(), (1, 2));
+    cleanup(root, db, schema).await.unwrap();
+}
