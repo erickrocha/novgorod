@@ -394,6 +394,13 @@ async fn start() -> anyhow::Result<()> {
             .filter(|token| !token.is_empty())
             .map(Arc::from),
     };
+    if let Err(e) = crate::endpoints::checkout_payment_endpoint::mock_mode_guard(
+        env::var("PAYMENT_PROVIDER_MODE").ok().as_deref(),
+        env::var("PAYMENT_MOCK_ALLOWED").ok().as_deref(),
+    ) {
+        log::error!("{e}");
+        std::process::exit(1);
+    }
     crate::endpoints::checkout_payment_endpoint::spawn_payment_reconciliation(state.clone());
     crate::endpoints::checkout_payment_endpoint::spawn_stock_expiry(state.clone());
 

@@ -96,6 +96,7 @@ Para validar o fluxo de pagamento do `kremlin` sem chamar gateways externos, con
 
 ```dotenv
 PAYMENT_PROVIDER_MODE=mock
+PAYMENT_MOCK_ALLOWED=true
 PAYMENT_MOCK_PROVIDER=pagseguro
 ```
 

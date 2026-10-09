@@ -81,6 +81,7 @@ Para validar o fluxo de pagamento do `kremlin` sem chamar o Mercado Pago ou o Pa
 
 ```dotenv
 PAYMENT_PROVIDER_MODE=mock
+PAYMENT_MOCK_ALLOWED=true
 PAYMENT_MOCK_PROVIDER=mercado_pago
 ```
 

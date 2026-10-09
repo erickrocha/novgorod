@@ -177,6 +177,14 @@ fn mock_provider_for_config(
     }
 }
 
+/// Startup guard: mock payments need an explicit opt-in so they cannot run in production by accident.
+pub fn mock_mode_guard(mode: Option<&str>, allow: Option<&str>) -> Result<(), String> {
+    if mode == Some("mock") && allow != Some("true") {
+        return Err("PAYMENT_PROVIDER_MODE=mock requires PAYMENT_MOCK_ALLOWED=true (test environments only)".into());
+    }
+    Ok(())
+}
+
 fn configured_mock_provider() -> Result<Option<MockPaymentProvider>, ApiError> {
     match std::env::var("PAYMENT_PROVIDER_MODE") {
         Ok(mode) if mode == "mock" => {

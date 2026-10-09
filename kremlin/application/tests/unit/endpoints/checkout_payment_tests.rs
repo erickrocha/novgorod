@@ -206,3 +206,12 @@ async fn mock_cancel_voids_pending_and_refuses_captured() {
             .is_err()
     );
 }
+
+#[test]
+fn mock_mode_requires_explicit_allow() {
+    assert!(mock_mode_guard(None, None).is_ok());
+    assert!(mock_mode_guard(Some("real"), None).is_ok());
+    assert!(mock_mode_guard(Some("mock"), None).is_err());
+    assert!(mock_mode_guard(Some("mock"), Some("1")).is_err());
+    assert!(mock_mode_guard(Some("mock"), Some("true")).is_ok());
+}
