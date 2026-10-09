@@ -38,15 +38,13 @@ struct PaymentResponse {
 }
 
 impl MercadoPago {
-    pub fn configured() -> Result<Self, ProviderError> {
-        let access_token = std::env::var("MP_ACCESS_TOKEN").map_err(|_| ProviderError("Mercado Pago não configurado".into()))?;
-        let collector_id = std::env::var("MP_COLLECTOR_ID").ok().and_then(|s| s.parse().ok())
-            .ok_or_else(|| ProviderError("Mercado Pago não configurado".into()))?;
-        if access_token.is_empty() { return Err(ProviderError("Mercado Pago não configurado".into())); }
+    /// Tenant-owned credentials; a missing collector id disables the collector check (0).
+    pub fn with_credentials(access_token: String, collector_id: Option<i64>) -> Result<Self, ProviderError> {
+        if access_token.trim().is_empty() { return Err(ProviderError("Mercado Pago não configurado".into())); }
         let base_url = std::env::var("MP_API_BASE_URL").ok().filter(|u| !u.is_empty())
             .unwrap_or_else(|| "https://api.mercadopago.com".to_string());
         Ok(Self { client: reqwest::Client::builder().timeout(std::time::Duration::from_secs(15)).build()
-            .map_err(|e| ProviderError(e.to_string()))?, access_token, collector_id, base_url })
+            .map_err(|e| ProviderError(e.to_string()))?, access_token, collector_id: collector_id.unwrap_or(0), base_url })
     }
 
     fn normalized_response(response: PaymentResponse) -> Result<ProviderResult, ProviderError> {

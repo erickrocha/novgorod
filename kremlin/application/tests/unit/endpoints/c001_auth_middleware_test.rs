@@ -1205,7 +1205,7 @@ async fn payment_config_is_customer_only() {
 }
 
 #[tokio::test]
-async fn payment_config_uses_fake_pagseguro_public_key_without_provider_call() {
+async fn payment_config_without_tenant_ignores_platform_public_key_and_is_unavailable() {
     let _env_guard = PAYMENT_CONFIG_ENV_LOCK.lock().unwrap();
     unsafe {
         std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET);
@@ -1251,10 +1251,9 @@ async fn payment_config_uses_fake_pagseguro_public_key_without_provider_call() {
         }
     }
 
-    assert_eq!(status, StatusCode::OK);
-    let config: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(config["provider"], "pagseguro");
-    assert_eq!(config["publicKey"], "pk_test_dummy");
+    // NOV-5 TC-14/16 (SR-PAY-014): no platform or other-tenant fallback.
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert!(!String::from_utf8_lossy(&body).contains("pk_test_dummy"));
 }
 
 #[tokio::test]

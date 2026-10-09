@@ -103,3 +103,68 @@ fn test_verify_signature_malformed_header_fails() {
         Err("Assinatura inválida")
     );
 }
+
+fn mp_payload(token: &str) -> TenantCredentialsPayload {
+    TenantCredentialsPayload::MercadoPago(crate::infrastructure::payment_credentials::MercadoPagoCredentials {
+        access_token: token.into(),
+        public_key: None,
+        collector_id: Some(7),
+        webhook_secret: Some("whsec".into()),
+    })
+}
+
+fn ps_payload(token: &str, environment: Option<&str>) -> TenantCredentialsPayload {
+    TenantCredentialsPayload::PagSeguro(crate::infrastructure::payment_credentials::PagSeguroCredentials {
+        token: token.into(),
+        public_key: None,
+        environment: environment.map(str::to_owned),
+    })
+}
+
+// NOV-5 TC-15 (SR-PAY-015): tenant credentials only, no silent fallback.
+#[test]
+fn tenant_provider_is_built_from_tenant_credentials_only() {
+    let mp = build_tenant_provider("mercado_pago", mp_payload("tok")).unwrap();
+    assert_eq!(mp.name(), "mercado_pago");
+    assert_eq!(mp.collector_id(), 7);
+    let ps = build_tenant_provider("pagseguro", ps_payload("tok", Some("sandbox"))).unwrap();
+    assert_eq!(ps.name(), "pagseguro");
+    assert!(build_tenant_provider("pagseguro", ps_payload("tok", Some("production"))).is_ok());
+}
+
+#[test]
+fn tenant_provider_rejects_column_mismatch_and_invalid_credentials() {
+    assert!(build_tenant_provider("pagseguro", mp_payload("tok")).is_err());
+    assert!(build_tenant_provider("mercado_pago", ps_payload("tok", Some("sandbox"))).is_err());
+    assert!(build_tenant_provider("mercado_pago", mp_payload("  ")).is_err());
+    assert!(build_tenant_provider("pagseguro", ps_payload("", Some("sandbox"))).is_err());
+}
+
+#[test]
+fn pagseguro_environment_is_validated_not_defaulted_to_sandbox() {
+    assert!(build_tenant_provider("pagseguro", ps_payload("tok", None)).is_err());
+    assert!(build_tenant_provider("pagseguro", ps_payload("tok", Some("prod"))).is_err());
+    assert!(build_tenant_provider("pagseguro", ps_payload("tok", Some(""))).is_err());
+}
+
+// NOV-5 TC-22 (SR-PAY-020): numeric ids are read without leaking per call.
+#[test]
+fn notification_data_id_reads_query_and_numeric_or_string_body_ids() {
+    assert_eq!(notification_data_id(Some("11".into()), b""), Some("11".into()));
+    assert_eq!(notification_data_id(None, br#"{"data":{"id":123}}"#), Some("123".into()));
+    assert_eq!(notification_data_id(None, br#"{"data":{"id":"456"}}"#), Some("456".into()));
+    assert_eq!(notification_data_id(None, br#"{"id":789}"#), Some("789".into()));
+    assert_eq!(notification_data_id(None, b"not json"), None);
+    assert_eq!(notification_data_id(None, b""), None);
+}
+
+// NOV-5 TC-19 (SR-PAY-017): the notification only names the payment; its status is never used.
+#[test]
+fn pagseguro_notification_yields_only_the_reference() {
+    let body = br#"{"id":"CHAR_1","reference_id":"torg-5-key","status":"PAID","amount":{"value":1,"currency":"BRL"}}"#;
+    assert_eq!(pagseguro_notification_reference(body), Some("torg-5-key".into()));
+    let nested = br#"{"charges":[{"reference_id":"torg-6-key2","status":"PAID"}]}"#;
+    assert_eq!(pagseguro_notification_reference(nested), Some("torg-6-key2".into()));
+    assert_eq!(pagseguro_notification_reference(b"{}"), None);
+    assert_eq!(pagseguro_notification_reference(b"garbage"), None);
+}

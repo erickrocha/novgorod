@@ -60,16 +60,6 @@ fn parse_int_or_str(v: &serde_json::Value) -> Option<i32> {
 }
 
 impl PagSeguro {
-    pub fn configured() -> Result<Self, ProviderError> {
-        let token = std::env::var("PAGSEGURO_TOKEN")
-            .map_err(|_| ProviderError("PagSeguro não configurado".into()))?;
-        if token.is_empty() {
-            return Err(ProviderError("PagSeguro não configurado".into()));
-        }
-        let env_mode = std::env::var("PAGSEGURO_ENVIRONMENT").unwrap_or_else(|_| "sandbox".into());
-        Self::with_credentials(token, Some(&env_mode))
-    }
-
     pub fn with_credentials(
         token: String,
         environment: Option<&str>,
@@ -79,7 +69,8 @@ impl PagSeguro {
         }
         let base_url = match environment {
             Some("production") => "https://api.pagseguro.com".to_string(),
-            _ => "https://sandbox.api.pagseguro.com".to_string(),
+            Some("sandbox") => "https://sandbox.api.pagseguro.com".to_string(),
+            _ => return Err(ProviderError("Ambiente do PagSeguro inválido".into())),
         };
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(15))

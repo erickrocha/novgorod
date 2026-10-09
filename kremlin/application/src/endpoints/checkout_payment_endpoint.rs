@@ -62,65 +62,31 @@ pub async fn config(
         return Err(bad(StatusCode::FORBIDDEN, "Acesso negado"));
     }
 
-    if let Some(tenant_id_str) = params.get("tenantId").or_else(|| params.get("tenant_id"))
-        && let Ok(tid) = tenant_id_str.parse::<i64>()
-            && let Ok(Some(row)) = state
-                .conn
-                .query_one_raw(Statement::from_sql_and_values(
-                    DbBackend::Postgres,
-                    "SELECT provider, configuration FROM tenant_payment_settings WHERE tenant_id=$1",
-                    [tid.into()],
-                ))
-                .await
-            {
-                let provider: String = row.try_get("", "provider").unwrap_or_else(|_| "mercado_pago".into());
-                let config_val: serde_json::Value = row.try_get("", "configuration").unwrap_or_default();
-                if let Some(pk) = config_val.get("publicKey").and_then(|v| v.as_str())
-                    && !pk.is_empty() {
-                        return Ok(Json(PaymentConfig {
-                            provider,
-                            public_key: pk.to_owned(),
-                        }));
-                    }
-            }
-
-    if let Ok(Some(row)) = state
+    let tid = params
+        .get("tenantId")
+        .or_else(|| params.get("tenant_id"))
+        .and_then(|v| v.parse::<i64>().ok())
+        .ok_or_else(unavailable)?;
+    let row = state
         .conn
         .query_one_raw(Statement::from_sql_and_values(
             DbBackend::Postgres,
-            "SELECT provider, configuration FROM tenant_payment_settings ORDER BY version DESC LIMIT 1",
-            [],
+            "SELECT provider, configuration FROM tenant_payment_settings WHERE tenant_id=$1",
+            [tid.into()],
         ))
         .await
-    {
-        let provider: String = row.try_get("", "provider").unwrap_or_else(|_| "mercado_pago".into());
-        let config_val: serde_json::Value = row.try_get("", "configuration").unwrap_or_default();
-        if let Some(pk) = config_val.get("publicKey").and_then(|v| v.as_str())
-            && !pk.is_empty() {
-                return Ok(Json(PaymentConfig {
-                    provider,
-                    public_key: pk.to_owned(),
-                }));
-            }
+        .ok()
+        .flatten()
+        .ok_or_else(unavailable)?;
+    let provider: String = row.try_get("", "provider").map_err(|_| unavailable())?;
+    let config_val: serde_json::Value = row.try_get("", "configuration").unwrap_or_default();
+    match config_val.get("publicKey").and_then(|v| v.as_str()) {
+        Some(pk) if !pk.is_empty() => Ok(Json(PaymentConfig {
+            provider,
+            public_key: pk.to_owned(),
+        })),
+        _ => Err(unavailable()),
     }
-
-    if let Ok(public_key) = std::env::var("PAGSEGURO_PUBLIC_KEY")
-        && !public_key.is_empty() {
-            return Ok(Json(PaymentConfig {
-                provider: "pagseguro".into(),
-                public_key,
-            }));
-        }
-
-    if let Ok(public_key) = std::env::var("MP_PUBLIC_KEY")
-        && !public_key.is_empty() {
-            return Ok(Json(PaymentConfig {
-                provider: "mercado_pago".into(),
-                public_key,
-            }));
-        }
-
-    Err(unavailable())
 }
 
 #[derive(Deserialize)]
@@ -215,65 +181,90 @@ fn configured_mock_provider() -> Result<Option<MockPaymentProvider>, ApiError> {
     }
 }
 
-async fn resolve_provider(state: &AppState, purchase_id: i64) -> Result<ResolvedProvider, ApiError> {
-    if let Some(provider) = configured_mock_provider()? {
-        return Ok(ResolvedProvider::Mock(provider));
+fn build_tenant_provider(
+    column: &str,
+    payload: TenantCredentialsPayload,
+) -> Result<ResolvedProvider, &'static str> {
+    match payload {
+        TenantCredentialsPayload::MercadoPago(mp) => {
+            if column != "mercado_pago" {
+                return Err("provider column does not match credentials");
+            }
+            MercadoPago::with_credentials(mp.access_token, mp.collector_id)
+                .map(ResolvedProvider::MercadoPago)
+                .map_err(|_| "invalid Mercado Pago credentials")
+        }
+        TenantCredentialsPayload::PagSeguro(ps) => {
+            if column != "pagseguro" {
+                return Err("provider column does not match credentials");
+            }
+            PagSeguro::with_credentials(ps.token, ps.environment.as_deref())
+                .map(ResolvedProvider::PagSeguro)
+                .map_err(|_| "invalid PagSeguro credentials")
+        }
     }
+}
 
+/// Tenant-owned payment: the tenant's stored credentials are the only source (SR-PAY-015).
+async fn load_tenant_credentials(
+    state: &AppState,
+    tid: i64,
+) -> Result<(String, TenantCredentialsPayload), &'static str> {
+    let row = state
+        .conn
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT provider, credentials, key_version FROM tenant_payment_settings WHERE tenant_id=$1",
+            [tid.into()],
+        ))
+        .await
+        .map_err(|_| "payment settings unavailable")?
+        .ok_or("tenant has no payment settings")?;
+    let provider: String = row.try_get("", "provider").map_err(|_| "payment settings invalid")?;
+    let bytes: Vec<u8> = row
+        .try_get::<Option<Vec<u8>>>("", "credentials")
+        .ok()
+        .flatten()
+        .ok_or("tenant has no payment credentials")?;
+    let key: String = row
+        .try_get::<Option<String>>("", "key_version")
+        .ok()
+        .flatten()
+        .ok_or("tenant has no payment credentials")?;
+    let payload = state
+        .payment_keys
+        .decrypt_payload(tid, &key, &bytes)
+        .map_err(|_| "tenant payment credentials cannot be decrypted")?;
+    Ok((provider, payload))
+}
+
+async fn tenant_provider(state: &AppState, tid: i64) -> Result<ResolvedProvider, ApiError> {
+    let (column, payload) = load_tenant_credentials(state, tid).await.map_err(|reason| {
+        log::warn!("payment provider unavailable for tenant {tid}: {reason}");
+        unavailable()
+    })?;
+    build_tenant_provider(&column, payload).map_err(|reason| {
+        log::warn!("payment provider unavailable for tenant {tid}: {reason}");
+        unavailable()
+    })
+}
+
+async fn purchase_tenant(state: &AppState, purchase_id: i64) -> Result<i64, ApiError> {
     let order = orders_entity::Entity::find()
         .filter(orders_entity::Column::PurchaseId.eq(purchase_id))
         .one(state.conn.as_ref())
         .await
-        .map_err(|_| unavailable())?;
+        .map_err(|_| unavailable())?
+        .ok_or_else(unavailable)?;
+    Ok(order.tenant_id)
+}
 
-    if let Some(order) = order {
-        let tid = order.tenant_id;
-        if let Ok(Some(row)) = state
-            .conn
-            .query_one_raw(Statement::from_sql_and_values(
-                DbBackend::Postgres,
-                "SELECT provider, credentials, key_version FROM tenant_payment_settings WHERE tenant_id=$1",
-                [tid.into()],
-            ))
-            .await
-        {
-            let provider_name: String = row.try_get("", "provider").unwrap_or_else(|_| "mercado_pago".into());
-            let credentials_bytes: Option<Vec<u8>> = row.try_get("", "credentials").ok().flatten();
-            let key_version: Option<String> = row.try_get("", "key_version").ok().flatten();
-
-            if let (Some(bytes), Some(key)) = (credentials_bytes, key_version)
-                && let Ok(payload) = state.payment_keys.decrypt_payload(tid, &key, &bytes) {
-                    match payload {
-                        TenantCredentialsPayload::PagSeguro(ps) => {
-                            if let Ok(ps_instance) =
-                                PagSeguro::with_credentials(ps.token, ps.environment.as_deref())
-                            {
-                                return Ok(ResolvedProvider::PagSeguro(ps_instance));
-                            }
-                        }
-                        TenantCredentialsPayload::MercadoPago(_mp) => {
-                            if let Ok(mp_instance) = MercadoPago::configured() {
-                                return Ok(ResolvedProvider::MercadoPago(mp_instance));
-                            }
-                        }
-                    }
-                }
-
-            if provider_name == "pagseguro"
-                && let Ok(ps) = PagSeguro::configured() {
-                    return Ok(ResolvedProvider::PagSeguro(ps));
-                }
-        }
+async fn resolve_provider(state: &AppState, purchase_id: i64) -> Result<ResolvedProvider, ApiError> {
+    if let Some(provider) = configured_mock_provider()? {
+        return Ok(ResolvedProvider::Mock(provider));
     }
-
-    if let Ok(mp) = MercadoPago::configured() {
-        return Ok(ResolvedProvider::MercadoPago(mp));
-    }
-    if let Ok(ps) = PagSeguro::configured() {
-        return Ok(ResolvedProvider::PagSeguro(ps));
-    }
-
-    Err(unavailable())
+    let tid = purchase_tenant(state, purchase_id).await?;
+    tenant_provider(state, tid).await
 }
 
 async fn owned(
@@ -934,13 +925,27 @@ pub fn verify_signature(
     Ok(())
 }
 
+fn json_id(v: &serde_json::Value) -> Option<String> {
+    v.as_str().map(str::to_owned).or_else(|| v.as_i64().map(|n| n.to_string()))
+}
+
+fn notification_data_id(query_id: Option<String>, body: &[u8]) -> Option<String> {
+    if query_id.is_some() || body.is_empty() {
+        return query_id;
+    }
+    let json: serde_json::Value = serde_json::from_slice(body).ok()?;
+    json.get("data")
+        .and_then(|d| d.get("id"))
+        .and_then(json_id)
+        .or_else(|| json.get("id").and_then(json_id))
+}
+
 pub async fn webhook(
     State(app): State<AppState>,
     headers: HeaderMap,
     Query(query): Query<NotificationQuery>,
     body_bytes: Bytes,
 ) -> Result<StatusCode, ApiError> {
-    let secret = std::env::var("MP_WEBHOOK_SECRET").map_err(|_| unavailable())?;
     let signature = headers
         .get("x-signature")
         .and_then(|v| v.to_str().ok())
@@ -949,83 +954,87 @@ pub async fn webhook(
         .get("x-request-id")
         .and_then(|v| v.to_str().ok())
         .ok_or_else(|| bad(StatusCode::UNAUTHORIZED, "Identificador ausente"))?;
-    let mut data_id = query.data_id.or(query.id);
-    if data_id.is_none() && !body_bytes.is_empty()
-        && let Ok(json_body) = serde_json::from_slice::<serde_json::Value>(&body_bytes) {
-            data_id = json_body
-                .get("data")
-                .and_then(|d| d.get("id"))
-                .and_then(|v| {
-                    v.as_str()
-                        .or_else(|| v.as_i64().map(|n| Box::leak(n.to_string().into_boxed_str()) as &str))
-                })
-                .map(str::to_owned)
-                .or_else(|| {
-                    json_body.get("id").and_then(|v| {
-                        v.as_str()
-                            .or_else(|| v.as_i64().map(|n| Box::leak(n.to_string().into_boxed_str()) as &str))
-                    }).map(str::to_owned)
-                });
-        }
-    let data_id = data_id.ok_or_else(|| bad(StatusCode::UNAUTHORIZED, "Pagamento ausente"))?;
+    let data_id = notification_data_id(query.data_id.or(query.id), &body_bytes)
+        .ok_or_else(|| bad(StatusCode::UNAUTHORIZED, "Pagamento ausente"))?;
     if !data_id.bytes().all(|b| b.is_ascii_digit()) {
         return Err(bad(StatusCode::UNAUTHORIZED, "Pagamento inválido"));
     }
-    verify_signature(&secret, signature, request_id, &data_id)
-        .map_err(|msg| bad(StatusCode::UNAUTHORIZED, msg))?;
-    let provider = MercadoPago::configured().map_err(|_| unavailable())?;
-    let outcome = provider.status(&data_id).await.map_err(|_| unavailable())?;
-    let id = outcome
-        .external_reference
-        .strip_prefix("torg-")
-        .and_then(|s| s.split_once('-'))
-        .and_then(|(id, _)| id.parse::<i64>().ok());
-    let Some(id) = id else { return Ok(StatusCode::OK); };
-    let purchase = purchase_entity::Entity::find_by_id(id)
+    // The owner is found by the gateway reference we stored; the notification is not trusted for it.
+    let payment = payment_entity::Entity::find()
+        .filter(payment_entity::Column::GatewayReference.eq(data_id.clone()))
+        .one(app.conn.as_ref())
+        .await
+        .map_err(|_| unavailable())?;
+    let Some(payment) = payment else {
+        log::warn!("mercado pago webhook: no payment with gateway reference {data_id}");
+        return Ok(StatusCode::OK);
+    };
+    let purchase = purchase_entity::Entity::find_by_id(payment.purchase_id)
         .one(app.conn.as_ref())
         .await
         .map_err(|_| unavailable())?;
     let Some(purchase) = purchase else { return Ok(StatusCode::OK); };
-    let payment = payment_entity::Entity::find()
-        .filter(payment_entity::Column::PurchaseId.eq(id))
-        .one(app.conn.as_ref())
-        .await
-        .map_err(|_| unavailable())?;
-    let Some(payment) = payment else { return Ok(StatusCode::OK); };
+    let Ok(tid) = purchase_tenant(&app, purchase.id).await else {
+        log::warn!("mercado pago webhook: purchase {} has no order tenant", purchase.id);
+        return Ok(StatusCode::OK);
+    };
+    let (column, payload) = match load_tenant_credentials(&app, tid).await {
+        Ok(found) => found,
+        Err(reason) => {
+            log::warn!("mercado pago webhook: tenant {tid}: {reason}");
+            return Ok(StatusCode::OK);
+        }
+    };
+    let secret = match &payload {
+        TenantCredentialsPayload::MercadoPago(mp) => {
+            mp.webhook_secret.clone().filter(|s| !s.is_empty())
+        }
+        TenantCredentialsPayload::PagSeguro(_) => None,
+    };
+    let Some(secret) = secret else {
+        log::warn!("mercado pago webhook: tenant {tid} has no Mercado Pago webhook secret");
+        return Err(bad(StatusCode::UNAUTHORIZED, "Assinatura inválida"));
+    };
+    verify_signature(&secret, signature, request_id, &data_id)
+        .map_err(|msg| bad(StatusCode::UNAUTHORIZED, msg))?;
+    let provider = build_tenant_provider(&column, payload).map_err(|reason| {
+        log::warn!("mercado pago webhook: tenant {tid}: {reason}");
+        unavailable()
+    })?;
+    let outcome = provider.status(&data_id).await.map_err(|_| unavailable())?;
     apply_result(
         &app,
         &purchase,
         &payment,
         outcome,
-        provider.collector_id,
-        "mercado_pago",
+        provider.collector_id(),
+        provider.name(),
     )
     .await?;
     Ok(StatusCode::OK)
+}
+
+fn pagseguro_notification_reference(body: &[u8]) -> Option<String> {
+    let json: serde_json::Value = serde_json::from_slice(body).ok()?;
+    let reference = |v: &serde_json::Value| {
+        v.get("reference_id").and_then(|r| r.as_str()).map(str::to_owned)
+    };
+    reference(&json).or_else(|| json.get("charges")?.as_array()?.first().and_then(reference))
 }
 
 pub async fn pagseguro_webhook(
     State(app): State<AppState>,
     body_bytes: Bytes,
 ) -> Result<StatusCode, ApiError> {
-    if body_bytes.is_empty() {
-        return Ok(StatusCode::OK);
-    }
-    let Ok(json_body) = serde_json::from_slice::<serde_json::Value>(&body_bytes) else {
+    // Trigger only: the body selects which payment to refresh and is never applied (SR-PAY-017).
+    let Some(reference) = pagseguro_notification_reference(&body_bytes) else {
         return Ok(StatusCode::OK);
     };
-
-    let outcome = match PagSeguro::parse_payment_json(json_body) {
-        Ok(res) => res,
-        Err(_) => return Ok(StatusCode::OK),
-    };
-
-    let id = outcome
-        .external_reference
+    let parsed = reference
         .strip_prefix("torg-")
         .and_then(|s| s.split_once('-'))
-        .and_then(|(id, _)| id.parse::<i64>().ok());
-    let Some(id) = id else { return Ok(StatusCode::OK); };
+        .and_then(|(id, key)| id.parse::<i64>().ok().map(|id| (id, key.to_owned())));
+    let Some((id, key)) = parsed else { return Ok(StatusCode::OK); };
     let purchase = purchase_entity::Entity::find_by_id(id)
         .one(app.conn.as_ref())
         .await
@@ -1037,8 +1046,30 @@ pub async fn pagseguro_webhook(
         .await
         .map_err(|_| unavailable())?;
     let Some(payment) = payment else { return Ok(StatusCode::OK); };
-
-    apply_result(&app, &purchase, &payment, outcome, 0, "pagseguro").await?;
+    if payment.attempt_key.as_deref() != Some(key.as_str()) {
+        return Ok(StatusCode::OK);
+    }
+    let Ok(tid) = purchase_tenant(&app, id).await else {
+        log::warn!("pagseguro webhook: purchase {id} has no order tenant");
+        return Ok(StatusCode::OK);
+    };
+    let provider = match tenant_provider(&app, tid).await {
+        Ok(p) if p.name() == "pagseguro" => p,
+        _ => {
+            log::warn!("pagseguro webhook: tenant {tid} has no usable PagSeguro provider");
+            return Ok(StatusCode::OK);
+        }
+    };
+    let outcome = if let Some(gateway_reference) = payment.gateway_reference.as_deref() {
+        Some(provider.status(gateway_reference).await.map_err(|_| unavailable())?)
+    } else {
+        provider
+            .search(&format!("torg-{id}-{key}"))
+            .await
+            .map_err(|_| unavailable())?
+    };
+    let Some(outcome) = outcome else { return Ok(StatusCode::OK); };
+    apply_result(&app, &purchase, &payment, outcome, provider.collector_id(), provider.name()).await?;
     Ok(StatusCode::OK)
 }
 
