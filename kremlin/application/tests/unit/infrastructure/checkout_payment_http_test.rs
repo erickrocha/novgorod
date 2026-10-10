@@ -2,7 +2,7 @@ use crate::{
     AppState,
     commons::{i18n::Locale, tenant_context::TenantContext},
     endpoints::{
-        checkout_payment_endpoint::{pagseguro_webhook, status, submit},
+        checkout_payment_endpoint::{pagseguro_webhook, status, submit, webhook},
         checkout_quote_endpoint::{quote, select_shipping},
         orders_endpoint::{
             create_purchase, get_by_id, get_purchase, history, payments, transactions,
@@ -10,7 +10,10 @@ use crate::{
     },
     infrastructure::{
         correios::Correios,
-        payment_credentials::{PagSeguroCredentials, PaymentKeyRing, TenantCredentialsPayload},
+        payment_credentials::{
+            MercadoPagoCredentials, PagSeguroCredentials, PaymentKeyRing,
+            TenantCredentialsPayload,
+        },
         shipping_credentials::ShippingKeyRing,
     },
 };
@@ -208,6 +211,7 @@ fn router(state: AppState) -> Router {
         .route("/purchases/{id}/payments/submit", post(submit))
         .route("/purchases/{id}/payments/status", get(status))
         .route("/webhooks/pagseguro", post(pagseguro_webhook))
+        .route("/webhooks/mercadopago", post(webhook))
         .route("/orders/{id}", get(get_by_id))
         .route("/orders/{id}/status-history", get(history))
         .route("/payments/{id}/transactions", get(transactions))
@@ -289,12 +293,67 @@ async fn webhook_request_with_headers(
     Ok(app.oneshot(request).await?.status())
 }
 
+async fn mercado_pago_webhook_request(
+    app: Router,
+    body: &[u8],
+    request_id: &str,
+    signature: &str,
+) -> anyhow::Result<StatusCode> {
+    let request = Request::builder()
+        .method(Method::POST)
+        .uri("/webhooks/mercadopago")
+        .header("content-type", "application/json")
+        .header("x-request-id", request_id)
+        .header("x-signature", signature)
+        .body(Body::from(body.to_vec()))?;
+    Ok(app.oneshot(request).await?.status())
+}
+
 fn pagbank_signature(token: &str, body: &[u8]) -> String {
     let mut digest = Sha256::new();
     digest.update(token.as_bytes());
     digest.update(b"-");
     digest.update(body);
     format!("{:x}", digest.finalize())
+}
+
+struct EnvironmentRestore(Vec<(&'static str, Option<std::ffi::OsString>)>);
+
+impl EnvironmentRestore {
+    fn capture(names: &[&'static str]) -> Self {
+        Self(
+            names
+                .iter()
+                .map(|name| (*name, std::env::var_os(name)))
+                .collect(),
+        )
+    }
+}
+
+impl Drop for EnvironmentRestore {
+    fn drop(&mut self) {
+        for (name, value) in self.0.drain(..) {
+            unsafe {
+                if let Some(value) = value {
+                    std::env::set_var(name, value);
+                } else {
+                    std::env::remove_var(name);
+                }
+            }
+        }
+    }
+}
+
+fn mercado_pago_signature(secret: &str, timestamp: &str, request_id: &str, data_id: &str) -> String {
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
+
+    let manifest = format!("id:{data_id};request-id:{request_id};ts:{timestamp};");
+    let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).unwrap();
+    mac.update(manifest.as_bytes());
+    let digest = mac.finalize().into_bytes();
+    let hex = digest.iter().map(|byte| format!("{byte:02x}")).collect::<String>();
+    format!("ts={timestamp},v1={hex}")
 }
 
 #[derive(Clone)]
@@ -318,6 +377,38 @@ async fn pagbank_status_double(
         "reference_id": external_reference,
         "status": "DECLINED",
         "amount": {"value": state.amount_cents, "currency": "BRL"}
+    }))
+}
+
+#[derive(Clone)]
+struct MercadoPagoDoubleState {
+    authorization: Arc<std::sync::Mutex<Vec<String>>>,
+    amount_cents: i64,
+    external_reference: String,
+    collector_id: i64,
+}
+
+async fn mercado_pago_status_double(
+    axum::extract::State(state): axum::extract::State<MercadoPagoDoubleState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> axum::Json<Value> {
+    state.authorization.lock().unwrap().push(
+        headers
+            .get("authorization")
+            .and_then(|header| header.to_str().ok())
+            .unwrap_or_default()
+            .to_owned(),
+    );
+    axum::Json(json!({
+        "id": id,
+        "status": "rejected",
+        "transaction_amount": state.amount_cents as f64 / 100.0,
+        "currency_id": "BRL",
+        "external_reference": state.external_reference,
+        "collector_id": state.collector_id,
+        "payment_type_id": "credit_card",
+        "payment_method_id": "visa"
     }))
 }
 
@@ -979,6 +1070,183 @@ async fn pagseguro_webhook_authenticates_then_refreshes_through_mock_provider() 
         .try_get("", "status")
         .unwrap();
     assert_eq!(unchanged_status, "failed");
+    cleanup(root, db, schema).await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires isolated PostgreSQL, test keyring, and PAYMENT_PROVIDER_MODE=mock"]
+async fn mercado_pago_webhook_uses_tenant_secret_and_token_with_local_double() {
+    const TENANT_TOKEN: &str = "tenant-mp-token-for-tests-only";
+    const TENANT_SECRET: &str = "tenant-mp-secret-for-tests-only";
+    const OTHER_TENANT_SECRET: &str = "other-tenant-mp-secret";
+    const PLATFORM_SECRET: &str = "platform-mp-secret";
+    const PAYMENT_ID: &str = "987654321";
+    const REQUEST_ID: &str = "mp-request-id-for-tests";
+    const TIMESTAMP: &str = "1727280000";
+
+    assert_eq!(
+        std::env::var("PAYMENT_PROVIDER_MODE").as_deref().ok(),
+        Some("mock")
+    );
+    let _environment_restore = EnvironmentRestore::capture(&["MP_API_BASE_URL", "MP_WEBHOOK_SECRET"]);
+    let payment_keys = Arc::new(PaymentKeyRing::from_env().unwrap());
+    let (root, db, schema) = database().await.unwrap();
+    Migrator::up(&db, None).await.unwrap();
+    fixtures(&db).await.unwrap();
+    let credentials = TenantCredentialsPayload::MercadoPago(MercadoPagoCredentials {
+        access_token: TENANT_TOKEN.into(),
+        public_key: Some("tenant-mp-public-key".into()),
+        collector_id: Some(4567),
+        webhook_secret: Some(TENANT_SECRET.into()),
+    });
+    let (key_version, encrypted) = payment_keys.encrypt_payload(1, &credentials).unwrap();
+    db.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "INSERT INTO tenant_payment_settings (tenant_id, provider, credentials, key_version) VALUES ($1, 'mercado_pago', $2, $3)",
+        [1_i64.into(), encrypted.into(), key_version.into()],
+    ))
+    .await
+    .unwrap();
+    let mut app_state = state(db.clone());
+    app_state.payment_keys = payment_keys.clone();
+    let app = router(app_state);
+
+    cart_fixture(&db, Some(1), 1, &[1]).await.unwrap();
+    let purchase_id = create_purchase_from_quote(app.clone(), "mp-webhook-mock", &[1])
+        .await
+        .unwrap();
+    let (status, submitted) = request(
+        app.clone(),
+        Method::POST,
+        &format!("/purchases/{purchase_id}/payments/submit"),
+        Some(json!({
+            "token":"mock:pending",
+            "paymentMethodId":"visa",
+            "installments":1
+        })),
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(status, StatusCode::OK, "{submitted}");
+    assert_eq!(submitted["status"], "pending");
+    let payment = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT amount_cents,attempt_key FROM payment WHERE purchase_id=$1",
+            [purchase_id.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap();
+    let amount_cents: i64 = payment.try_get("", "amount_cents").unwrap();
+    let attempt_key: String = payment.try_get("", "attempt_key").unwrap();
+    let external_reference = format!("torg-{purchase_id}-{attempt_key}");
+    db.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "UPDATE payment SET gateway_provider='mercado_pago',gateway_reference=$1 WHERE purchase_id=$2",
+        [PAYMENT_ID.into(), purchase_id.into()],
+    ))
+    .await
+    .unwrap();
+
+    let authorization = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let double = Router::new()
+        .route("/v1/payments/{id}", get(mercado_pago_status_double))
+        .with_state(MercadoPagoDoubleState {
+            authorization: authorization.clone(),
+            amount_cents,
+            external_reference,
+            collector_id: 4567,
+        });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, double).await.unwrap() });
+    unsafe {
+        std::env::set_var("MP_API_BASE_URL", format!("http://{address}"));
+        std::env::set_var("MP_WEBHOOK_SECRET", PLATFORM_SECRET);
+    }
+
+    let body = format!(r#"{{"data":{{"id":"{PAYMENT_ID}"}}}}"#);
+    for secret in [PLATFORM_SECRET, OTHER_TENANT_SECRET] {
+        let signature = mercado_pago_signature(secret, TIMESTAMP, REQUEST_ID, PAYMENT_ID);
+        let rejected = mercado_pago_webhook_request(
+            app.clone(),
+            body.as_bytes(),
+            REQUEST_ID,
+            &signature,
+        )
+        .await
+        .unwrap();
+        assert_eq!(rejected, StatusCode::UNAUTHORIZED);
+    }
+    assert!(authorization.lock().unwrap().is_empty());
+    let pending_status: String = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT status FROM payment WHERE purchase_id=$1",
+            [purchase_id.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "status")
+        .unwrap();
+    assert_eq!(pending_status, "pending");
+
+    let valid_signature = mercado_pago_signature(TENANT_SECRET, TIMESTAMP, REQUEST_ID, PAYMENT_ID);
+    let accepted = mercado_pago_webhook_request(
+        app.clone(),
+        body.as_bytes(),
+        REQUEST_ID,
+        &valid_signature,
+    )
+    .await
+    .unwrap();
+    assert_eq!(accepted, StatusCode::OK);
+    assert_eq!(
+        authorization.lock().unwrap().as_slice(),
+        &[format!("Bearer {TENANT_TOKEN}")]
+    );
+
+    let secretless = TenantCredentialsPayload::MercadoPago(MercadoPagoCredentials {
+        access_token: TENANT_TOKEN.into(),
+        public_key: Some("tenant-mp-public-key".into()),
+        collector_id: Some(4567),
+        webhook_secret: None,
+    });
+    let (key_version, encrypted) = payment_keys.encrypt_payload(1, &secretless).unwrap();
+    db.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "UPDATE tenant_payment_settings SET credentials=$1,key_version=$2 WHERE tenant_id=1",
+        [encrypted.into(), key_version.into()],
+    ))
+    .await
+    .unwrap();
+    let rejected = mercado_pago_webhook_request(
+        app,
+        body.as_bytes(),
+        REQUEST_ID,
+        &valid_signature,
+    )
+    .await
+    .unwrap();
+    assert_eq!(rejected, StatusCode::UNAUTHORIZED);
+    assert_eq!(authorization.lock().unwrap().len(), 1);
+    let unchanged_status: String = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT status FROM payment WHERE purchase_id=$1",
+            [purchase_id.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "status")
+        .unwrap();
+    assert_eq!(unchanged_status, "failed");
+
+    server.abort();
     cleanup(root, db, schema).await.unwrap();
 }
 
