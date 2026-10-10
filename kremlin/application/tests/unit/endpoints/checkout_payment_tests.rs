@@ -158,6 +158,17 @@ fn notification_data_id_reads_query_and_numeric_or_string_body_ids() {
     assert_eq!(notification_data_id(None, b""), None);
 }
 
+#[test]
+fn repeated_numeric_notification_ids_remain_owned_and_stable() {
+    for id in 1..=10_000 {
+        let body = format!(r#"{{"data":{{"id":{id}}}}}"#);
+        assert_eq!(
+            notification_data_id(None, body.as_bytes()),
+            Some(id.to_string())
+        );
+    }
+}
+
 // NOV-5 TC-19 (SR-PAY-017): the notification only names the payment; its status is never used.
 #[test]
 fn pagseguro_notification_yields_only_the_reference() {
