@@ -88,7 +88,10 @@ impl PagSeguro {
     }
 
     #[cfg(test)]
-    fn with_base_url_for_test(token: String, base_url: String) -> Result<Self, ProviderError> {
+    pub(crate) fn with_base_url_for_test(
+        token: String,
+        base_url: String,
+    ) -> Result<Self, ProviderError> {
         Self::with_base_url(token, base_url)
     }
 

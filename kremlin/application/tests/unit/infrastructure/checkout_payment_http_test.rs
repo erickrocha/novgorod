@@ -17,7 +17,8 @@ use crate::{
 use axum::{
     Router,
     body::{Body, to_bytes},
-    http::{Method, Request, StatusCode},
+    extract::Path,
+    http::{HeaderMap, Method, Request, StatusCode},
     routing::{get, post},
 };
 use business::{
@@ -256,12 +257,24 @@ async fn webhook_request(
     body: &[u8],
     signature: &str,
 ) -> anyhow::Result<StatusCode> {
-    let request = Request::builder()
+    webhook_request_with_provider_base(app, body, signature, None).await
+}
+
+async fn webhook_request_with_provider_base(
+    app: Router,
+    body: &[u8],
+    signature: &str,
+    provider_base_url: Option<&str>,
+) -> anyhow::Result<StatusCode> {
+    let mut builder = Request::builder()
         .method(Method::POST)
         .uri("/webhooks/pagseguro")
         .header("content-type", "application/json")
-        .header("x-authenticity-token", signature)
-        .body(Body::from(body.to_vec()))?;
+        .header("x-authenticity-token", signature);
+    if let Some(base_url) = provider_base_url {
+        builder = builder.header("x-test-pagseguro-base-url", base_url);
+    }
+    let request = builder.body(Body::from(body.to_vec()))?;
     Ok(app.oneshot(request).await?.status())
 }
 
@@ -271,6 +284,30 @@ fn pagbank_signature(token: &str, body: &[u8]) -> String {
     digest.update(b"-");
     digest.update(body);
     format!("{:x}", digest.finalize())
+}
+
+#[derive(Clone)]
+struct PagBankDoubleState {
+    authorization: Arc<std::sync::Mutex<Option<String>>>,
+    amount_cents: i64,
+}
+
+async fn pagbank_status_double(
+    axum::extract::State(state): axum::extract::State<PagBankDoubleState>,
+    Path(reference): Path<String>,
+    headers: HeaderMap,
+) -> axum::Json<Value> {
+    *state.authorization.lock().unwrap() = headers
+        .get("authorization")
+        .and_then(|header| header.to_str().ok())
+        .map(str::to_owned);
+    let external_reference = reference.splitn(6, ':').nth(5).unwrap_or_default();
+    axum::Json(json!({
+        "id": reference,
+        "reference_id": external_reference,
+        "status": "DECLINED",
+        "amount": {"value": state.amount_cents, "currency": "BRL"}
+    }))
 }
 
 async fn create_purchase_from_quote(
@@ -797,24 +834,17 @@ async fn pagseguro_webhook_authenticates_then_refreshes_through_mock_provider() 
         .unwrap();
     let attempt_key: String = payment.try_get("", "attempt_key").unwrap();
     let reference = format!("torg-{purchase_id}-{attempt_key}");
-    let payment = db
+    let amount_cents: i64 = db
         .query_one_raw(Statement::from_sql_and_values(
             DbBackend::Postgres,
-            "SELECT gateway_reference FROM payment WHERE purchase_id=$1",
+            "SELECT amount_cents FROM payment WHERE purchase_id=$1",
             [purchase_id.into()],
         ))
         .await
         .unwrap()
+        .unwrap()
+        .try_get("", "amount_cents")
         .unwrap();
-    let gateway_reference: String = payment.try_get("", "gateway_reference").unwrap();
-    let declined_reference = gateway_reference.replacen(":pending:", ":failed:", 1);
-    db.execute_raw(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        "UPDATE payment SET gateway_reference=$1 WHERE purchase_id=$2",
-        [declined_reference.into(), purchase_id.into()],
-    ))
-    .await
-    .unwrap();
     let body = format!(r#"{{"reference_id":"{reference}","status":"PAID"}}"#);
     let valid_signature = pagbank_signature(TOKEN, body.as_bytes());
     let rejected = webhook_request(app.clone(), body.as_bytes(), &"0".repeat(64))
@@ -845,10 +875,30 @@ async fn pagseguro_webhook_authenticates_then_refreshes_through_mock_provider() 
         .unwrap();
     assert_eq!(payment_status, "pending");
 
-    let accepted = webhook_request(app.clone(), body.as_bytes(), &valid_signature)
+    let authorization = Arc::new(std::sync::Mutex::new(None));
+    let double = Router::new()
+        .route("/charges/{reference}", get(pagbank_status_double))
+        .with_state(PagBankDoubleState {
+            authorization: authorization.clone(),
+            amount_cents,
+        });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, double).await.unwrap() });
+    let provider_base_url = format!("http://{address}");
+    let accepted = webhook_request_with_provider_base(
+        app.clone(),
+        body.as_bytes(),
+        &valid_signature,
+        Some(&provider_base_url),
+    )
         .await
         .unwrap();
     assert_eq!(accepted, StatusCode::OK);
+    assert_eq!(
+        authorization.lock().unwrap().as_deref(),
+        Some("Bearer pagbank-account-token-for-tests-only")
+    );
 
     let payment_status: String = db
         .query_one_raw(Statement::from_sql_and_values(
@@ -862,6 +912,7 @@ async fn pagseguro_webhook_authenticates_then_refreshes_through_mock_provider() 
         .try_get("", "status")
         .unwrap();
     assert_eq!(payment_status, "failed");
+    server.abort();
 
     let unknown_reference = format!(
         r#"{{"reference_id":"torg-{purchase_id}-unknown-attempt","status":"PAID"}}"#

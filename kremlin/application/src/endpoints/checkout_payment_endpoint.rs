@@ -1089,6 +1089,11 @@ pub async fn pagseguro_webhook(
     headers: HeaderMap,
     body_bytes: Bytes,
 ) -> Result<StatusCode, ApiError> {
+    #[cfg(test)]
+    let test_provider_base_url = headers
+        .get("x-test-pagseguro-base-url")
+        .and_then(|value| value.to_str().ok());
+
     let signature = pagseguro_signature_header(&headers)
         .map_err(|_| bad(StatusCode::UNAUTHORIZED, "Assinatura inválida"))?;
     // Trigger only: the body selects which payment to refresh and is never applied (SR-PAY-017).
@@ -1147,6 +1152,42 @@ pub async fn pagseguro_webhook(
     };
     verify_pagseguro_signature(token, signature, &body_bytes)
         .map_err(|_| bad(StatusCode::UNAUTHORIZED, "Assinatura inválida"))?;
+    #[cfg(test)]
+    let provider = if let Some(base_url) = test_provider_base_url {
+        match (&column, credentials) {
+            (provider, TenantCredentialsPayload::PagSeguro(credentials))
+                if provider == "pagseguro" =>
+            {
+                match PagSeguro::with_base_url_for_test(credentials.token, base_url.to_owned()) {
+                    Ok(provider) => ResolvedProvider::PagSeguro(provider),
+                    Err(_) => {
+                        log::warn!("pagseguro webhook: tenant {tid} has no usable PagSeguro provider");
+                        return Ok(StatusCode::OK);
+                    }
+                }
+            }
+            _ => {
+                log::warn!("pagseguro webhook: tenant {tid} has no usable PagSeguro provider");
+                return Ok(StatusCode::OK);
+            }
+        }
+    } else {
+        match configured_mock_provider()? {
+            Some(provider) if provider.name() == "pagseguro" => ResolvedProvider::Mock(provider),
+            Some(_) => {
+                log::warn!("pagseguro webhook: tenant {tid} has no usable PagSeguro provider");
+                return Ok(StatusCode::OK);
+            }
+            None => match build_tenant_provider(&column, credentials) {
+                Ok(provider) if provider.name() == "pagseguro" => provider,
+                _ => {
+                    log::warn!("pagseguro webhook: tenant {tid} has no usable PagSeguro provider");
+                    return Ok(StatusCode::OK);
+                }
+            },
+        }
+    };
+    #[cfg(not(test))]
     let provider = match configured_mock_provider()? {
         Some(provider) if provider.name() == "pagseguro" => ResolvedProvider::Mock(provider),
         Some(_) => {
