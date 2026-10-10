@@ -257,7 +257,7 @@ async fn webhook_request(
     body: &[u8],
     signature: &str,
 ) -> anyhow::Result<StatusCode> {
-    webhook_request_with_provider_base(app, body, signature, None).await
+    webhook_request_with_headers(app, body, &[signature], None).await
 }
 
 async fn webhook_request_with_provider_base(
@@ -266,11 +266,22 @@ async fn webhook_request_with_provider_base(
     signature: &str,
     provider_base_url: Option<&str>,
 ) -> anyhow::Result<StatusCode> {
+    webhook_request_with_headers(app, body, &[signature], provider_base_url).await
+}
+
+async fn webhook_request_with_headers(
+    app: Router,
+    body: &[u8],
+    signatures: &[&str],
+    provider_base_url: Option<&str>,
+) -> anyhow::Result<StatusCode> {
     let mut builder = Request::builder()
         .method(Method::POST)
         .uri("/webhooks/pagseguro")
-        .header("content-type", "application/json")
-        .header("x-authenticity-token", signature);
+        .header("content-type", "application/json");
+    for signature in signatures {
+        builder = builder.header("x-authenticity-token", *signature);
+    }
     if let Some(base_url) = provider_base_url {
         builder = builder.header("x-test-pagseguro-base-url", base_url);
     }
@@ -847,20 +858,59 @@ async fn pagseguro_webhook_authenticates_then_refreshes_through_mock_provider() 
         .unwrap();
     let body = format!(r#"{{"reference_id":"{reference}","status":"PAID"}}"#);
     let valid_signature = pagbank_signature(TOKEN, body.as_bytes());
-    let rejected = webhook_request(app.clone(), body.as_bytes(), &"0".repeat(64))
+    let authorization = Arc::new(std::sync::Mutex::new(None));
+    let double = Router::new()
+        .route("/charges/{reference}", get(pagbank_status_double))
+        .with_state(PagBankDoubleState {
+            authorization: authorization.clone(),
+            amount_cents,
+        });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, double).await.unwrap() });
+    let provider_base_url = format!("http://{address}");
+
+    for signatures in [vec![], vec![valid_signature.as_str(), valid_signature.as_str()], vec!["not-a-digest"]] {
+        let rejected = webhook_request_with_headers(
+            app.clone(),
+            body.as_bytes(),
+            &signatures,
+            Some(&provider_base_url),
+        )
         .await
         .unwrap();
+        assert_eq!(rejected, StatusCode::UNAUTHORIZED);
+    }
+    let rejected = webhook_request_with_provider_base(
+        app.clone(),
+        body.as_bytes(),
+        &"0".repeat(64),
+        Some(&provider_base_url),
+    )
+    .await
+    .unwrap();
     assert_eq!(rejected, StatusCode::UNAUTHORIZED);
     let wrong_tenant_signature = pagbank_signature("other-tenant-token", body.as_bytes());
-    let rejected = webhook_request(app.clone(), body.as_bytes(), &wrong_tenant_signature)
+    let rejected = webhook_request_with_provider_base(
+        app.clone(),
+        body.as_bytes(),
+        &wrong_tenant_signature,
+        Some(&provider_base_url),
+    )
         .await
         .unwrap();
     assert_eq!(rejected, StatusCode::UNAUTHORIZED);
     let tampered_body = body.replace("PAID", "PENDING");
-    let rejected = webhook_request(app.clone(), tampered_body.as_bytes(), &valid_signature)
+    let rejected = webhook_request_with_provider_base(
+        app.clone(),
+        tampered_body.as_bytes(),
+        &valid_signature,
+        Some(&provider_base_url),
+    )
         .await
         .unwrap();
     assert_eq!(rejected, StatusCode::UNAUTHORIZED);
+    assert_eq!(authorization.lock().unwrap().as_deref(), None);
 
     let payment_status: String = db
         .query_one_raw(Statement::from_sql_and_values(
@@ -875,17 +925,6 @@ async fn pagseguro_webhook_authenticates_then_refreshes_through_mock_provider() 
         .unwrap();
     assert_eq!(payment_status, "pending");
 
-    let authorization = Arc::new(std::sync::Mutex::new(None));
-    let double = Router::new()
-        .route("/charges/{reference}", get(pagbank_status_double))
-        .with_state(PagBankDoubleState {
-            authorization: authorization.clone(),
-            amount_cents,
-        });
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let address = listener.local_addr().unwrap();
-    let server = tokio::spawn(async move { axum::serve(listener, double).await.unwrap() });
-    let provider_base_url = format!("http://{address}");
     let accepted = webhook_request_with_provider_base(
         app.clone(),
         body.as_bytes(),
