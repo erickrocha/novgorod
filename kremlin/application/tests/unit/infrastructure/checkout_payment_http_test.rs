@@ -797,6 +797,24 @@ async fn pagseguro_webhook_authenticates_then_refreshes_through_mock_provider() 
         .unwrap();
     let attempt_key: String = payment.try_get("", "attempt_key").unwrap();
     let reference = format!("torg-{purchase_id}-{attempt_key}");
+    let payment = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT gateway_reference FROM payment WHERE purchase_id=$1",
+            [purchase_id.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap();
+    let gateway_reference: String = payment.try_get("", "gateway_reference").unwrap();
+    let declined_reference = gateway_reference.replacen(":pending:", ":failed:", 1);
+    db.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "UPDATE payment SET gateway_reference=$1 WHERE purchase_id=$2",
+        [declined_reference.into(), purchase_id.into()],
+    ))
+    .await
+    .unwrap();
     let body = format!(r#"{{"reference_id":"{reference}","status":"PAID"}}"#);
     let valid_signature = pagbank_signature(TOKEN, body.as_bytes());
     let rejected = webhook_request(app.clone(), body.as_bytes(), &"0".repeat(64))
@@ -843,7 +861,28 @@ async fn pagseguro_webhook_authenticates_then_refreshes_through_mock_provider() 
         .unwrap()
         .try_get("", "status")
         .unwrap();
-    assert_eq!(payment_status, "pending");
+    assert_eq!(payment_status, "failed");
+
+    let unknown_reference = format!(
+        r#"{{"reference_id":"torg-{purchase_id}-unknown-attempt","status":"PAID"}}"#
+    );
+    let unknown_signature = pagbank_signature(TOKEN, unknown_reference.as_bytes());
+    let unknown_status = webhook_request(app.clone(), unknown_reference.as_bytes(), &unknown_signature)
+        .await
+        .unwrap();
+    assert_eq!(unknown_status, StatusCode::OK);
+    let unchanged_status: String = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT status FROM payment WHERE purchase_id=$1",
+            [purchase_id.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "status")
+        .unwrap();
+    assert_eq!(unchanged_status, "failed");
     cleanup(root, db, schema).await.unwrap();
 }
 

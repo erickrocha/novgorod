@@ -1093,25 +1093,36 @@ pub async fn pagseguro_webhook(
         .map_err(|_| bad(StatusCode::UNAUTHORIZED, "Assinatura inválida"))?;
     // Trigger only: the body selects which payment to refresh and is never applied (SR-PAY-017).
     let Some(reference) = pagseguro_notification_reference(&body_bytes) else {
+        log::warn!("pagseguro webhook: notification has no payment reference");
         return Ok(StatusCode::OK);
     };
     let parsed = reference
         .strip_prefix("torg-")
         .and_then(|s| s.split_once('-'))
         .and_then(|(id, key)| id.parse::<i64>().ok().map(|id| (id, key.to_owned())));
-    let Some((id, key)) = parsed else { return Ok(StatusCode::OK); };
+    let Some((id, key)) = parsed else {
+        log::warn!("pagseguro webhook: notification has an invalid payment reference");
+        return Ok(StatusCode::OK);
+    };
     let purchase = purchase_entity::Entity::find_by_id(id)
         .one(app.conn.as_ref())
         .await
         .map_err(|_| unavailable())?;
-    let Some(purchase) = purchase else { return Ok(StatusCode::OK); };
+    let Some(purchase) = purchase else {
+        log::warn!("pagseguro webhook: no purchase for reference id {id}");
+        return Ok(StatusCode::OK);
+    };
     let payment = payment_entity::Entity::find()
         .filter(payment_entity::Column::PurchaseId.eq(id))
         .one(app.conn.as_ref())
         .await
         .map_err(|_| unavailable())?;
-    let Some(payment) = payment else { return Ok(StatusCode::OK); };
+    let Some(payment) = payment else {
+        log::warn!("pagseguro webhook: purchase {id} has no payment for reference");
+        return Ok(StatusCode::OK);
+    };
     if payment.attempt_key.as_deref() != Some(key.as_str()) {
+        log::warn!("pagseguro webhook: unknown payment attempt for purchase {id}");
         return Ok(StatusCode::OK);
     }
     let Ok(tid) = purchase_tenant(&app, id).await else {
