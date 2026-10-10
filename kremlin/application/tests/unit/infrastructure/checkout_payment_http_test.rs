@@ -2,14 +2,15 @@ use crate::{
     AppState,
     commons::{i18n::Locale, tenant_context::TenantContext},
     endpoints::{
-        checkout_payment_endpoint::{status, submit},
+        checkout_payment_endpoint::{pagseguro_webhook, status, submit},
         checkout_quote_endpoint::{quote, select_shipping},
         orders_endpoint::{
             create_purchase, get_by_id, get_purchase, history, payments, transactions,
         },
     },
     infrastructure::{
-        correios::Correios, payment_credentials::PaymentKeyRing,
+        correios::Correios,
+        payment_credentials::{PagSeguroCredentials, PaymentKeyRing, TenantCredentialsPayload},
         shipping_credentials::ShippingKeyRing,
     },
 };
@@ -25,6 +26,7 @@ use business::{
 };
 use migration::{Migrator, MigratorTrait};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use tower::ServiceExt;
 
@@ -204,6 +206,7 @@ fn router(state: AppState) -> Router {
         .route("/purchases/{id}/payments", get(payments))
         .route("/purchases/{id}/payments/submit", post(submit))
         .route("/purchases/{id}/payments/status", get(status))
+        .route("/webhooks/pagseguro", post(pagseguro_webhook))
         .route("/orders/{id}", get(get_by_id))
         .route("/orders/{id}/status-history", get(history))
         .route("/payments/{id}/transactions", get(transactions))
@@ -246,6 +249,28 @@ async fn request_as(
     let bytes = to_bytes(response.into_body(), usize::MAX).await?;
     let body = serde_json::from_slice(&bytes)?;
     Ok((status, body))
+}
+
+async fn webhook_request(
+    app: Router,
+    body: &[u8],
+    signature: &str,
+) -> anyhow::Result<StatusCode> {
+    let request = Request::builder()
+        .method(Method::POST)
+        .uri("/webhooks/pagseguro")
+        .header("content-type", "application/json")
+        .header("x-authenticity-token", signature)
+        .body(Body::from(body.to_vec()))?;
+    Ok(app.oneshot(request).await?.status())
+}
+
+fn pagbank_signature(token: &str, body: &[u8]) -> String {
+    let mut digest = Sha256::new();
+    digest.update(token.as_bytes());
+    digest.update(b"-");
+    digest.update(body);
+    format!("{:x}", digest.finalize())
 }
 
 async fn create_purchase_from_quote(
@@ -704,6 +729,121 @@ async fn checkout_payment_http_enforces_ownership_and_mock_lifecycle() {
     assert_eq!(cart_counts(&db, seller_two_cart).await.unwrap(), (1, 1));
     assert_eq!(cart_counts(&db, other_customer_cart).await.unwrap(), (1, 2));
 
+    cleanup(root, db, schema).await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires isolated PostgreSQL, PagBank test keyring, and PAYMENT_PROVIDER_MODE=mock"]
+async fn pagseguro_webhook_authenticates_then_refreshes_through_mock_provider() {
+    const TOKEN: &str = "pagbank-account-token-for-tests-only";
+    assert_eq!(
+        std::env::var("PAYMENT_PROVIDER_MODE").as_deref().ok(),
+        Some("mock")
+    );
+    assert_eq!(
+        std::env::var("PAYMENT_MOCK_PROVIDER").as_deref().ok(),
+        Some("pagseguro")
+    );
+
+    let payment_keys = Arc::new(PaymentKeyRing::from_env().unwrap());
+    let (root, db, schema) = database().await.unwrap();
+    Migrator::up(&db, None).await.unwrap();
+    fixtures(&db).await.unwrap();
+    let credentials = TenantCredentialsPayload::PagSeguro(PagSeguroCredentials {
+        token: TOKEN.into(),
+        public_key: None,
+        environment: Some("sandbox".into()),
+    });
+    let (key_version, encrypted) = payment_keys.encrypt_payload(1, &credentials).unwrap();
+    db.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "INSERT INTO tenant_payment_settings (tenant_id, provider, credentials, key_version) VALUES ($1, 'pagseguro', $2, $3)",
+        [1_i64.into(), encrypted.into(), key_version.into()],
+    ))
+    .await
+    .unwrap();
+    let mut app_state = state(db.clone());
+    app_state.payment_keys = payment_keys;
+    let app = router(app_state);
+
+    cart_fixture(&db, Some(1), 1, &[1]).await.unwrap();
+    let purchase_id = create_purchase_from_quote(app.clone(), "pagbank-mock", &[1])
+        .await
+        .unwrap();
+    let (status, submitted) = request(
+        app.clone(),
+        Method::POST,
+        &format!("/purchases/{purchase_id}/payments/submit"),
+        Some(json!({
+            "token":"mock:pending",
+            "paymentMethodId":"visa",
+            "installments":1
+        })),
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(status, StatusCode::OK, "{submitted}");
+    assert_eq!(submitted["status"], "pending");
+
+    let payment = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT attempt_key FROM payment WHERE purchase_id=$1",
+            [purchase_id.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap();
+    let attempt_key: String = payment.try_get("", "attempt_key").unwrap();
+    let reference = format!("torg-{purchase_id}-{attempt_key}");
+    let body = format!(r#"{{"reference_id":"{reference}","status":"PAID"}}"#);
+    let valid_signature = pagbank_signature(TOKEN, body.as_bytes());
+    let rejected = webhook_request(app.clone(), body.as_bytes(), &"0".repeat(64))
+        .await
+        .unwrap();
+    assert_eq!(rejected, StatusCode::UNAUTHORIZED);
+    let wrong_tenant_signature = pagbank_signature("other-tenant-token", body.as_bytes());
+    let rejected = webhook_request(app.clone(), body.as_bytes(), &wrong_tenant_signature)
+        .await
+        .unwrap();
+    assert_eq!(rejected, StatusCode::UNAUTHORIZED);
+    let tampered_body = body.replace("PAID", "PENDING");
+    let rejected = webhook_request(app.clone(), tampered_body.as_bytes(), &valid_signature)
+        .await
+        .unwrap();
+    assert_eq!(rejected, StatusCode::UNAUTHORIZED);
+
+    let payment_status: String = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT status FROM payment WHERE purchase_id=$1",
+            [purchase_id.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "status")
+        .unwrap();
+    assert_eq!(payment_status, "pending");
+
+    let accepted = webhook_request(app.clone(), body.as_bytes(), &valid_signature)
+        .await
+        .unwrap();
+    assert_eq!(accepted, StatusCode::OK);
+
+    let payment_status: String = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT status FROM payment WHERE purchase_id=$1",
+            [purchase_id.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "status")
+        .unwrap();
+    assert_eq!(payment_status, "pending");
     cleanup(root, db, schema).await.unwrap();
 }
 
