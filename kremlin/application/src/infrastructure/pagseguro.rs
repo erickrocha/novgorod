@@ -60,18 +60,10 @@ fn parse_int_or_str(v: &serde_json::Value) -> Option<i32> {
 }
 
 impl PagSeguro {
-    pub fn with_credentials(
-        token: String,
-        environment: Option<&str>,
-    ) -> Result<Self, ProviderError> {
+    fn with_base_url(token: String, base_url: String) -> Result<Self, ProviderError> {
         if token.is_empty() {
             return Err(ProviderError("Token do PagSeguro inválido".into()));
         }
-        let base_url = match environment {
-            Some("production") => "https://api.pagseguro.com".to_string(),
-            Some("sandbox") => "https://sandbox.api.pagseguro.com".to_string(),
-            _ => return Err(ProviderError("Ambiente do PagSeguro inválido".into())),
-        };
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(15))
             .build()
@@ -81,6 +73,23 @@ impl PagSeguro {
             token,
             base_url,
         })
+    }
+
+    pub fn with_credentials(
+        token: String,
+        environment: Option<&str>,
+    ) -> Result<Self, ProviderError> {
+        let base_url = match environment {
+            Some("production") => "https://api.pagseguro.com".to_string(),
+            Some("sandbox") => "https://sandbox.api.pagseguro.com".to_string(),
+            _ => return Err(ProviderError("Ambiente do PagSeguro inválido".into())),
+        };
+        Self::with_base_url(token, base_url)
+    }
+
+    #[cfg(test)]
+    fn with_base_url_for_test(token: String, base_url: String) -> Result<Self, ProviderError> {
+        Self::with_base_url(token, base_url)
     }
 
     /// Only provider error codes may be logged; the body can echo card or customer data.

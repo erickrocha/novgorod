@@ -1,5 +1,48 @@
 use super::*;
+use axum::{Json, Router, extract::State, http::HeaderMap, routing::get};
 use serde_json::json;
+use std::sync::{Arc, Mutex};
+
+async fn status_double(
+    State(authorization): State<Arc<Mutex<Option<String>>>>,
+    headers: HeaderMap,
+) -> Json<serde_json::Value> {
+    *authorization.lock().unwrap() = headers
+        .get("authorization")
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned);
+    Json(json!({
+        "id": "CHAR_LOCAL_DOUBLE",
+        "reference_id": "torg-42-attempt",
+        "status": "DECLINED",
+        "amount": {"value": 25000, "currency": "BRL"}
+    }))
+}
+
+#[tokio::test]
+async fn status_sends_tenant_token_to_local_provider_double() {
+    let authorization = Arc::new(Mutex::new(None));
+    let app = Router::new()
+        .route("/charges/{reference}", get(status_double))
+        .with_state(authorization.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let provider = PagSeguro::with_base_url_for_test(
+        "tenant-pagbank-token-sentinel".into(),
+        format!("http://{address}"),
+    )
+    .unwrap();
+
+    let result = provider.status("CHAR_LOCAL_DOUBLE").await.unwrap();
+
+    assert_eq!(result.status, ProviderStatus::Failed);
+    assert_eq!(
+        authorization.lock().unwrap().as_deref(),
+        Some("Bearer tenant-pagbank-token-sentinel")
+    );
+    server.abort();
+}
 
 #[test]
 fn parse_payment_paid_maps_to_captured_with_card_metadata() {
