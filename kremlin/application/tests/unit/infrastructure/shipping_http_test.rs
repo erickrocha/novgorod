@@ -23,7 +23,7 @@ use migration::{Migrator, MigratorTrait};
 use serde_json::{Value, json};
 use std::{
     sync::{
-        Arc, Mutex,
+        Arc,
         atomic::{AtomicUsize, Ordering},
     },
     time::Duration,
@@ -39,27 +39,6 @@ const SECRET_SENTINELS: [&str; 3] = [
     "correios-token-sentinel",
     "correios-body-sentinel",
 ];
-static CAPTURED_LOGS: Mutex<Vec<String>> = Mutex::new(Vec::new());
-
-struct CaptureLogger;
-
-impl log::Log for CaptureLogger {
-    fn enabled(&self, _: &log::Metadata<'_>) -> bool {
-        true
-    }
-
-    fn log(&self, record: &log::Record<'_>) {
-        CAPTURED_LOGS
-            .lock()
-            .unwrap()
-            .push(record.args().to_string());
-    }
-
-    fn flush(&self) {}
-}
-
-static CAPTURE_LOGGER: CaptureLogger = CaptureLogger;
-
 #[derive(Default)]
 struct CorreiosDouble {
     mode: AtomicUsize,
@@ -268,9 +247,7 @@ fn state(
 }
 
 async fn execute_cases(db: DbConn) -> anyhow::Result<()> {
-    log::set_logger(&CAPTURE_LOGGER)
-        .map_err(|_| anyhow::anyhow!("test logger already installed"))?;
-    log::set_max_level(log::LevelFilter::Trace);
+    crate::test_log_capture::install();
     let keys = Arc::new(ShippingKeyRing::for_test());
     let double = Arc::new(CorreiosDouble::default());
     let (base_url, task) = start_double(double.clone()).await;
@@ -326,7 +303,7 @@ async fn execute_cases(db: DbConn) -> anyhow::Result<()> {
     anyhow::ensure!(correios["sellers"][0]["shipping"]["selectedOption"]["priceCents"] == 2450);
     anyhow::ensure!(double.auth_calls.load(Ordering::SeqCst) == 1);
 
-    CAPTURED_LOGS.lock().unwrap().clear();
+    crate::test_log_capture::clear();
     for mode in [AUTH_FAILURE, MALFORMED_RESPONSE, TIMEOUT, PROVIDER_OUTAGE] {
         double.mode.store(mode, Ordering::SeqCst);
         let provider = Arc::new(
@@ -343,7 +320,7 @@ async fn execute_cases(db: DbConn) -> anyhow::Result<()> {
             anyhow::ensure!(!body.contains(sentinel), "HTTP response exposed {sentinel}");
         }
     }
-    let logs = CAPTURED_LOGS.lock().unwrap().join("\n");
+    let logs = crate::test_log_capture::contents();
     for sentinel in SECRET_SENTINELS {
         anyhow::ensure!(
             !logs.contains(sentinel),

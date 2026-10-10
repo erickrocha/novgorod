@@ -592,6 +592,47 @@ mod shipping_api_tests {
 }
 
 #[cfg(test)]
+mod test_log_capture {
+    use std::sync::{Mutex, Once};
+
+    static INSTALL: Once = Once::new();
+    static LOGS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+    struct CaptureLogger;
+
+    impl log::Log for CaptureLogger {
+        fn enabled(&self, _: &log::Metadata<'_>) -> bool {
+            true
+        }
+
+        fn log(&self, record: &log::Record<'_>) {
+            LOGS.lock()
+                .unwrap()
+                .push(format!("{} {}", record.level(), record.args()));
+        }
+
+        fn flush(&self) {}
+    }
+
+    static LOGGER: CaptureLogger = CaptureLogger;
+
+    pub fn install() {
+        INSTALL.call_once(|| {
+            log::set_logger(&LOGGER).expect("test logger should be installed once");
+            log::set_max_level(log::LevelFilter::Trace);
+        });
+    }
+
+    pub fn clear() {
+        LOGS.lock().unwrap().clear();
+    }
+
+    pub fn contents() -> String {
+        LOGS.lock().unwrap().join("\n")
+    }
+}
+
+#[cfg(test)]
 #[path = "../tests/unit/infrastructure/shipping_http_test.rs"]
 mod shipping_http_tests;
 

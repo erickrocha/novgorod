@@ -867,10 +867,16 @@ async fn pagseguro_webhook_authenticates_then_refreshes_through_mock_provider() 
         r#"{{"reference_id":"torg-{purchase_id}-unknown-attempt","status":"PAID"}}"#
     );
     let unknown_signature = pagbank_signature(TOKEN, unknown_reference.as_bytes());
+    crate::test_log_capture::install();
+    crate::test_log_capture::clear();
     let unknown_status = webhook_request(app.clone(), unknown_reference.as_bytes(), &unknown_signature)
         .await
         .unwrap();
     assert_eq!(unknown_status, StatusCode::OK);
+    let captured_logs = crate::test_log_capture::contents();
+    assert!(captured_logs.contains("WARN pagseguro webhook: unknown payment attempt"));
+    assert!(!captured_logs.contains(&unknown_reference));
+    assert!(!captured_logs.contains(TOKEN));
     let unchanged_status: String = db
         .query_one_raw(Statement::from_sql_and_values(
             DbBackend::Postgres,
