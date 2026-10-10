@@ -34,6 +34,7 @@ use entity::{
     purchase_entity,
 };
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 type ApiError = (StatusCode, Json<serde_json::Value>);
 fn bad(status: StatusCode, message: &str) -> ApiError {
@@ -1038,10 +1039,58 @@ fn pagseguro_notification_reference(body: &[u8]) -> Option<String> {
     reference(&json).or_else(|| json.get("charges")?.as_array()?.first().and_then(reference))
 }
 
+fn pagseguro_signature_header(headers: &HeaderMap) -> Result<&str, &'static str> {
+    let signatures = headers.get_all("x-authenticity-token");
+    if signatures.iter().count() != 1 {
+        return Err("Assinatura inválida");
+    }
+    let signature = signatures
+        .iter()
+        .next()
+        .and_then(|value| value.to_str().ok())
+        .ok_or("Assinatura inválida")?;
+    if signature.len() != 64 || !signature.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err("Assinatura inválida");
+    }
+    Ok(signature)
+}
+
+fn verify_pagseguro_signature(
+    token: &str,
+    signature: &str,
+    body: &[u8],
+) -> Result<(), &'static str> {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    if signature.len() != 64 {
+        return Err("Assinatura inválida");
+    }
+
+    let mut digest = Sha256::new();
+    digest.update(token.as_bytes());
+    digest.update(b"-");
+    digest.update(body);
+    let digest = digest.finalize();
+    let mut difference = 0_u8;
+    for (index, byte) in digest.iter().enumerate() {
+        let high = HEX[(byte >> 4) as usize];
+        let low = HEX[(byte & 0x0f) as usize];
+        difference |= signature.as_bytes()[index * 2].to_ascii_lowercase() ^ high;
+        difference |= signature.as_bytes()[index * 2 + 1].to_ascii_lowercase() ^ low;
+    }
+    if difference == 0 {
+        Ok(())
+    } else {
+        Err("Assinatura inválida")
+    }
+}
+
 pub async fn pagseguro_webhook(
     State(app): State<AppState>,
+    headers: HeaderMap,
     body_bytes: Bytes,
 ) -> Result<StatusCode, ApiError> {
+    let signature = pagseguro_signature_header(&headers)
+        .map_err(|_| bad(StatusCode::UNAUTHORIZED, "Assinatura inválida"))?;
     // Trigger only: the body selects which payment to refresh and is never applied (SR-PAY-017).
     let Some(reference) = pagseguro_notification_reference(&body_bytes) else {
         return Ok(StatusCode::OK);
@@ -1069,12 +1118,37 @@ pub async fn pagseguro_webhook(
         log::warn!("pagseguro webhook: purchase {id} has no order tenant");
         return Ok(StatusCode::OK);
     };
-    let provider = match tenant_provider(&app, tid).await {
-        Ok(p) if p.name() == "pagseguro" => p,
+    let (column, credentials) = match load_tenant_credentials(&app, tid).await {
+        Ok(credentials) => credentials,
+        Err(reason) => {
+            log::warn!("pagseguro webhook: tenant {tid}: {reason}");
+            return Ok(StatusCode::OK);
+        }
+    };
+    let token = match (&column, &credentials) {
+        (provider, TenantCredentialsPayload::PagSeguro(credentials)) if provider == "pagseguro" => {
+            &credentials.token
+        }
         _ => {
             log::warn!("pagseguro webhook: tenant {tid} has no usable PagSeguro provider");
             return Ok(StatusCode::OK);
         }
+    };
+    verify_pagseguro_signature(token, signature, &body_bytes)
+        .map_err(|_| bad(StatusCode::UNAUTHORIZED, "Assinatura inválida"))?;
+    let provider = match configured_mock_provider()? {
+        Some(provider) if provider.name() == "pagseguro" => ResolvedProvider::Mock(provider),
+        Some(_) => {
+            log::warn!("pagseguro webhook: tenant {tid} has no usable PagSeguro provider");
+            return Ok(StatusCode::OK);
+        }
+        None => match build_tenant_provider(&column, credentials) {
+            Ok(provider) if provider.name() == "pagseguro" => provider,
+            _ => {
+                log::warn!("pagseguro webhook: tenant {tid} has no usable PagSeguro provider");
+                return Ok(StatusCode::OK);
+            }
+        },
     };
     let outcome = if let Some(gateway_reference) = payment.gateway_reference.as_deref() {
         Some(provider.status(gateway_reference).await.map_err(|_| unavailable())?)

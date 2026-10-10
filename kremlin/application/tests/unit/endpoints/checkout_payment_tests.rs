@@ -170,6 +170,62 @@ fn pagseguro_notification_yields_only_the_reference() {
 }
 
 #[test]
+fn pagseguro_signature_uses_account_token_and_raw_request_body() {
+    let body = br#"{"id":"CHAR_1","reference_id":"torg-5-key"}"#;
+    let signature = "91e40d8ea36485a57fe87f33a193f206386b3e9948ddcd613d63819fe36b5107";
+
+    assert_eq!(
+        verify_pagseguro_signature("pagbank-test-token", signature, body),
+        Ok(())
+    );
+    assert_eq!(
+        verify_pagseguro_signature("wrong-token", signature, body),
+        Err("Assinatura inválida")
+    );
+    assert_eq!(
+        verify_pagseguro_signature(
+            "pagbank-test-token",
+            signature,
+            br#"{"id":"CHAR_1", "reference_id":"torg-5-key"}"#
+        ),
+        Err("Assinatura inválida")
+    );
+}
+
+#[test]
+fn pagseguro_signature_header_requires_one_well_formed_digest() {
+    const SIGNATURE: &str = "91e40d8ea36485a57fe87f33a193f206386b3e9948ddcd613d63819fe36b5107";
+    let mut headers = axum::http::HeaderMap::new();
+
+    assert_eq!(
+        pagseguro_signature_header(&headers),
+        Err("Assinatura inválida")
+    );
+    headers.insert(
+        "x-authenticity-token",
+        axum::http::HeaderValue::from_static(SIGNATURE),
+    );
+    assert_eq!(pagseguro_signature_header(&headers), Ok(SIGNATURE));
+    headers.append(
+        "x-authenticity-token",
+        axum::http::HeaderValue::from_static(SIGNATURE),
+    );
+    assert_eq!(
+        pagseguro_signature_header(&headers),
+        Err("Assinatura inválida")
+    );
+    headers.remove("x-authenticity-token");
+    headers.insert(
+        "x-authenticity-token",
+        axum::http::HeaderValue::from_static("not-a-digest"),
+    );
+    assert_eq!(
+        pagseguro_signature_header(&headers),
+        Err("Assinatura inválida")
+    );
+}
+
+#[test]
 fn reconciliation_window_defaults_to_three_hours_and_rejects_invalid_values() {
     assert_eq!(parse_window_hours(None), 3);
     assert_eq!(parse_window_hours(Some("")), 3);
