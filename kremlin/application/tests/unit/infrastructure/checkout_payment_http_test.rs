@@ -2330,6 +2330,194 @@ async fn tc01_card_submit_rejects_invalid_input_and_non_card_provider() {
     cleanup(root, db, schema).await.unwrap();
 }
 
+#[derive(Clone, Default)]
+struct Tc04ChargeDoubleState {
+    requests: Arc<std::sync::Mutex<Vec<Value>>>,
+}
+
+async fn tc04_charge_double(
+    axum::extract::State(state): axum::extract::State<Tc04ChargeDoubleState>,
+    axum::Json(request): axum::Json<Value>,
+) -> axum::Json<Value> {
+    state.requests.lock().unwrap().push(request.clone());
+    axum::Json(json!({
+        "id": "987654321",
+        "status": "approved",
+        "transaction_amount": request["transaction_amount"],
+        "currency_id": "BRL",
+        "external_reference": request["external_reference"],
+        "collector_id": 4567,
+        "payment_type_id": "credit_card",
+        "payment_method_id": "visa",
+        "card": {
+            "last_four_digits": "4242",
+            "expiration_month": 12,
+            "expiration_year": 2030,
+            "cardholder": {"name": "Mock Test Card"}
+        }
+    }))
+}
+
+#[tokio::test]
+#[ignore = "requires isolated PostgreSQL and payment test keyring"]
+async fn tc04_charge_uses_purchase_amount_and_payer_and_skips_zero_total() {
+    let _environment_restore =
+        EnvironmentRestore::capture(&["PAYMENT_PROVIDER_MODE", "MP_API_BASE_URL"]);
+    unsafe {
+        std::env::set_var("PAYMENT_PROVIDER_MODE", "real");
+    }
+    let payment_keys = Arc::new(PaymentKeyRing::from_env().unwrap());
+    let (root, db, schema) = database().await.unwrap();
+    Migrator::up(&db, None).await.unwrap();
+    fixtures(&db).await.unwrap();
+    let credentials = TenantCredentialsPayload::MercadoPago(MercadoPagoCredentials {
+        access_token: "tc04-tenant-mp-token".into(),
+        public_key: Some("tc04-tenant-public-key".into()),
+        collector_id: Some(4567),
+        webhook_secret: Some("tc04-tenant-mp-secret".into()),
+    });
+    let (key_version, encrypted) = payment_keys.encrypt_payload(1, &credentials).unwrap();
+    db.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "INSERT INTO tenant_payment_settings (tenant_id,provider,credentials,key_version) VALUES (1,'mercado_pago',$1,$2)",
+        [encrypted.into(), key_version.into()],
+    ))
+    .await
+    .unwrap();
+    let mut app_state = state(db.clone());
+    app_state.payment_keys = payment_keys;
+    let app = router(app_state);
+    let requests = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let double = Router::new()
+        .route("/v1/payments", post(tc04_charge_double))
+        .with_state(Tc04ChargeDoubleState {
+            requests: requests.clone(),
+        });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, double).await.unwrap() });
+    unsafe {
+        std::env::set_var("MP_API_BASE_URL", format!("http://{address}"));
+    }
+
+    cart_fixture(&db, Some(1), 1, &[1]).await.unwrap();
+    let purchase_id = create_purchase_from_quote(app.clone(), "tc04-known-total", &[1])
+        .await
+        .unwrap();
+    let submit_uri = format!("/purchases/{purchase_id}/payments/submit");
+    let status = request_in(
+        app.clone(),
+        Method::POST,
+        &submit_uri,
+        Some(json!({
+            "token":"tc04-card-token",
+            "paymentMethodId":"visa",
+            "installments":3,
+            "amount":1,
+            "payerEmail":"attacker@example.test",
+            "payerTaxId":"00000000000"
+        })),
+        TenantContext::Marketplace,
+    )
+    .await
+    .unwrap();
+    assert!(status.is_client_error(), "{status}");
+    assert!(requests.lock().unwrap().is_empty());
+
+    let expected = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT p.total_cents,p.customer_email,p.customer_tax_id FROM purchase p WHERE p.id=$1",
+            [purchase_id.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap();
+    let expected_amount_cents: i64 = expected.try_get("", "total_cents").unwrap();
+    let expected_email: String = expected.try_get("", "customer_email").unwrap();
+    let expected_tax_id: String = expected.try_get("", "customer_tax_id").unwrap();
+    let payment_amount_cents: i64 = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT amount_cents FROM payment WHERE purchase_id=$1",
+            [purchase_id.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "amount_cents")
+        .unwrap();
+    let (status, submitted) = request(
+        app.clone(),
+        Method::POST,
+        &submit_uri,
+        Some(json!({
+            "token":"tc04-card-token",
+            "paymentMethodId":"visa",
+            "installments":3
+        })),
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(status, StatusCode::OK, "{submitted}");
+    let captured_requests = requests.lock().unwrap();
+    assert_eq!(captured_requests.len(), 1);
+    let provider_request = &captured_requests[0];
+    assert_eq!(
+        provider_request["transaction_amount"],
+        payment_amount_cents as f64 / 100.0
+    );
+    assert_eq!(payment_amount_cents, expected_amount_cents);
+    assert_eq!(provider_request["payer"]["email"], expected_email);
+    assert_eq!(
+        provider_request["payer"]["identification"]["number"],
+        expected_tax_id
+    );
+    assert_eq!(provider_request["installments"], 3);
+    drop(captured_requests);
+
+    db.execute_unprepared(
+        "UPDATE sku SET price_cents=0 WHERE id=1; UPDATE shipping_rate SET price_cents=0 WHERE tenant_id=1",
+    )
+    .await
+    .unwrap();
+    cart_fixture(&db, Some(1), 1, &[1]).await.unwrap();
+    let zero_purchase_id = create_purchase_from_quote(app.clone(), "tc04-zero-total", &[1])
+        .await
+        .unwrap();
+    let (zero_status, zero_payment) = request(
+        app,
+        Method::POST,
+        &format!("/purchases/{zero_purchase_id}/payments/submit"),
+        Some(json!({
+            "token":"tc04-zero-token",
+            "paymentMethodId":"visa",
+            "installments":1
+        })),
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(zero_status, StatusCode::OK, "{zero_payment}");
+    assert_eq!(requests.lock().unwrap().len(), 1);
+    let zero_transactions: i64 = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT count(*) AS count FROM payment_transaction WHERE payment_id=(SELECT id FROM payment WHERE purchase_id=$1)",
+            [zero_purchase_id.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "count")
+        .unwrap();
+    assert_eq!(zero_transactions, 0);
+
+    server.abort();
+    cleanup(root, db, schema).await.unwrap();
+}
+
 #[tokio::test]
 #[ignore = "requires isolated PostgreSQL and PAYMENT_PROVIDER_MODE=mock"]
 async fn tc03_persists_only_accepted_card_metadata() {
