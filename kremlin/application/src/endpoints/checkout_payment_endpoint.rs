@@ -372,18 +372,18 @@ async fn apply_result(
         .await
         .map_err(|_| unavailable())?
         .ok_or_else(|| bad(StatusCode::NOT_FOUND, "Pagamento não encontrado"))?;
-    if current.status == "captured"
-        || (current.status == "failed" && result.status != ProviderStatus::Captured)
-    {
-        tx.commit().await.map_err(|_| unavailable())?;
-        return Ok(self::state(purchase.id, &current));
-    }
     if current
         .gateway_reference
         .as_deref()
         .is_some_and(|r| r != result.reference)
     {
         return Err(bad(StatusCode::CONFLICT, "Referência de pagamento divergente"));
+    }
+    if current.status == "captured"
+        || (current.status == "failed" && result.status != ProviderStatus::Captured)
+    {
+        tx.commit().await.map_err(|_| unavailable())?;
+        return Ok(self::state(purchase.id, &current));
     }
     let status = match result.status {
         ProviderStatus::Captured => "captured",

@@ -406,13 +406,14 @@ struct PagBankDoubleState {
 }
 
 #[derive(Clone)]
-struct Tc09PagBankDoubleState {
+struct PagBankWebhookDoubleState {
     authorization: Arc<std::sync::Mutex<Vec<String>>>,
     response: Arc<std::sync::Mutex<Value>>,
+    reference_override: Arc<std::sync::Mutex<Option<String>>>,
 }
 
-async fn tc09_pagbank_status_double(
-    axum::extract::State(state): axum::extract::State<Tc09PagBankDoubleState>,
+async fn pagbank_webhook_status_double(
+    axum::extract::State(state): axum::extract::State<PagBankWebhookDoubleState>,
     Path(reference): Path<String>,
     headers: HeaderMap,
 ) -> axum::Json<Value> {
@@ -424,6 +425,12 @@ async fn tc09_pagbank_status_double(
             .to_owned(),
     );
     let mut response = state.response.lock().unwrap().clone();
+    let reference = state
+        .reference_override
+        .lock()
+        .unwrap()
+        .clone()
+        .unwrap_or(reference);
     response["id"] = Value::String(reference);
     axum::Json(response)
 }
@@ -1274,11 +1281,13 @@ async fn tc09_pagseguro_webhook_rejects_invalid_notifications_and_provider_misma
         "amount": {"value": amount_cents, "currency": "BRL"},
         "payment_method": {"type": "CREDIT_CARD"}
     })));
+    let reference_override = Arc::new(std::sync::Mutex::new(None));
     let double = Router::new()
-        .route("/charges/{reference}", get(tc09_pagbank_status_double))
-        .with_state(Tc09PagBankDoubleState {
+        .route("/charges/{reference}", get(pagbank_webhook_status_double))
+        .with_state(PagBankWebhookDoubleState {
             authorization: authorization.clone(),
             response: response.clone(),
+            reference_override,
         });
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
@@ -1354,6 +1363,183 @@ async fn tc09_pagseguro_webhook_rejects_invalid_notifications_and_provider_misma
         authorization.lock().unwrap().as_slice(),
         ["Bearer tc09-pagbank-account-token-for-tests-only"; 4]
     );
+    server.abort();
+    cleanup(root, db, schema).await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires isolated PostgreSQL, PagBank test keyring, and PAYMENT_PROVIDER_MODE=mock"]
+async fn tc10_pagseguro_webhook_preserves_terminal_state_and_rejects_divergent_reference() {
+    const TOKEN: &str = "tc10-pagbank-account-token-for-tests-only";
+    assert_eq!(
+        std::env::var("PAYMENT_PROVIDER_MODE").as_deref().ok(),
+        Some("mock")
+    );
+    assert_eq!(
+        std::env::var("PAYMENT_MOCK_PROVIDER").as_deref().ok(),
+        Some("pagseguro")
+    );
+
+    let payment_keys = Arc::new(PaymentKeyRing::from_env().unwrap());
+    let (root, db, schema) = database().await.unwrap();
+    Migrator::up(&db, None).await.unwrap();
+    fixtures(&db).await.unwrap();
+    let credentials = TenantCredentialsPayload::PagSeguro(PagSeguroCredentials {
+        token: TOKEN.into(),
+        public_key: None,
+        environment: Some("sandbox".into()),
+    });
+    let (key_version, encrypted) = payment_keys.encrypt_payload(1, &credentials).unwrap();
+    db.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "INSERT INTO tenant_payment_settings (tenant_id, provider, credentials, key_version) VALUES ($1, 'pagseguro', $2, $3)",
+        [1_i64.into(), encrypted.into(), key_version.into()],
+    ))
+    .await
+    .unwrap();
+    let mut app_state = state(db.clone());
+    app_state.payment_keys = payment_keys;
+    let app = router(app_state);
+
+    cart_fixture(&db, Some(1), 1, &[1]).await.unwrap();
+    let purchase_id = create_purchase_from_quote(app.clone(), "tc10-pagbank-mock", &[1])
+        .await
+        .unwrap();
+    let (status, submitted) = request(
+        app.clone(),
+        Method::POST,
+        &format!("/purchases/{purchase_id}/payments/submit"),
+        Some(json!({
+            "token":"mock:pending",
+            "paymentMethodId":"visa",
+            "installments":1
+        })),
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(status, StatusCode::OK, "{submitted}");
+    assert_eq!(submitted["status"], "pending");
+
+    let payment = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT attempt_key, amount_cents FROM payment WHERE purchase_id=$1",
+            [purchase_id.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap();
+    let attempt_key: String = payment.try_get("", "attempt_key").unwrap();
+    let amount_cents: i64 = payment.try_get("", "amount_cents").unwrap();
+    let external_reference = format!("torg-{purchase_id}-{attempt_key}");
+    let notification = json!({
+        "reference_id": external_reference,
+        "status": "PAID"
+    })
+    .to_string();
+    let authorization = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let response = Arc::new(std::sync::Mutex::new(json!({
+        "reference_id": external_reference,
+        "status": "PAID",
+        "amount": {"value": amount_cents, "currency": "BRL"},
+        "payment_method": {"type": "CREDIT_CARD"}
+    })));
+    let reference_override = Arc::new(std::sync::Mutex::new(None));
+    let double = Router::new()
+        .route("/charges/{reference}", get(pagbank_webhook_status_double))
+        .with_state(PagBankWebhookDoubleState {
+            authorization: authorization.clone(),
+            response: response.clone(),
+            reference_override: reference_override.clone(),
+        });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, double).await.unwrap() });
+    let provider_base_url = format!("http://{address}");
+    let signature = pagbank_signature(TOKEN, notification.as_bytes());
+
+    let captured = webhook_request_with_provider_base(
+        app.clone(),
+        notification.as_bytes(),
+        &signature,
+        Some(&provider_base_url),
+    )
+    .await
+    .unwrap();
+    assert_eq!(captured, StatusCode::OK);
+    let captured_status: String = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT status FROM payment WHERE purchase_id=$1",
+            [purchase_id.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "status")
+        .unwrap();
+    assert_eq!(captured_status, "captured");
+    let stock = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT quantity,reserved FROM sku_stock WHERE tenant_id=1 AND sku_id=1",
+            [],
+        ))
+        .await
+        .unwrap()
+        .unwrap();
+    let quantity: i32 = stock.try_get("", "quantity").unwrap();
+    let reserved: i32 = stock.try_get("", "reserved").unwrap();
+    assert_eq!((quantity, reserved), (9, 0));
+
+    for provider_status in ["PAID", "PENDING"] {
+        response.lock().unwrap()["status"] = json!(provider_status);
+        let repeated = webhook_request_with_provider_base(
+            app.clone(),
+            notification.as_bytes(),
+            &signature,
+            Some(&provider_base_url),
+        )
+        .await
+        .unwrap();
+        assert_eq!(repeated, StatusCode::OK, "after {provider_status}");
+        let payment_status: String = db
+            .query_one_raw(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT status FROM payment WHERE purchase_id=$1",
+                [purchase_id.into()],
+            ))
+            .await
+            .unwrap()
+            .unwrap()
+            .try_get("", "status")
+            .unwrap();
+        assert_eq!(payment_status, "captured", "after {provider_status}");
+        let stock = db
+            .query_one_raw(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT quantity,reserved FROM sku_stock WHERE tenant_id=1 AND sku_id=1",
+                [],
+            ))
+            .await
+            .unwrap()
+            .unwrap();
+        let quantity: i32 = stock.try_get("", "quantity").unwrap();
+        let reserved: i32 = stock.try_get("", "reserved").unwrap();
+        assert_eq!((quantity, reserved), (9, 0), "after {provider_status}");
+    }
+
+    *reference_override.lock().unwrap() = Some("different-gateway-reference".into());
+    let divergent = webhook_request_with_provider_base(
+        app.clone(),
+        notification.as_bytes(),
+        &signature,
+        Some(&provider_base_url),
+    )
+    .await
+    .unwrap();
+    assert_eq!(divergent, StatusCode::CONFLICT);
     server.abort();
     cleanup(root, db, schema).await.unwrap();
 }
