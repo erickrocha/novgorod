@@ -228,3 +228,55 @@ fn test_with_credentials_validation() {
         PagSeguro::with_credentials("sample_token".into(), Some("production")).unwrap();
     assert_eq!(ps_prod.base_url, "https://api.pagseguro.com");
 }
+
+#[tokio::test]
+#[ignore]
+async fn live_sandbox_pagseguro_charge_and_status() {
+    let token = std::env::var("PAGSEGURO_TOKEN").expect("PAGSEGURO_TOKEN env variable required");
+    let provider =
+        PagSeguro::with_credentials(token, Some("sandbox")).expect("valid sandbox credentials");
+
+    let card_json = json!({
+        "number": "4539620659922097",
+        "exp_month": "12",
+        "exp_year": "2028",
+        "security_code": "123",
+        "holder": { "name": "PAGSEGURO TESTE" }
+    })
+    .to_string();
+
+    let attempt_uuid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
+    let external_ref = format!("torg-999-{attempt_uuid}");
+
+    let result = provider
+        .charge(ChargeRequest {
+            payment_id: 999,
+            amount_cents: 2500,
+            currency: "BRL".into(),
+            idempotency_key: format!("live-idemp-{}", &attempt_uuid[..8]),
+            provider_token: card_json,
+            external_reference: external_ref.clone(),
+            payer_email: "erick.teste@novgorod.com".into(),
+            payer_tax_id: "12345678909".into(),
+            payment_method_id: "visa".into(),
+            issuer_id: None,
+            installments: 1,
+        })
+        .await
+        .expect("charge against PagSeguro sandbox should succeed");
+
+    println!("Live Sandbox Charge Success: ID={}", result.reference);
+    assert_eq!(result.status, ProviderStatus::Captured);
+    assert_eq!(result.amount_cents, 2500);
+    assert_eq!(result.currency, "BRL");
+
+    // Status / Re-fetch
+    let fetched = provider
+        .status(&result.reference)
+        .await
+        .expect("status lookup should succeed");
+    println!("Live Sandbox Status Success: Status={:?}", fetched.status);
+    assert_eq!(fetched.status, ProviderStatus::Captured);
+    assert_eq!(fetched.reference, result.reference);
+}
+
