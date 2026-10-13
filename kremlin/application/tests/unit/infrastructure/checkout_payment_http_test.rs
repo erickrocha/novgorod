@@ -1075,7 +1075,7 @@ async fn pagseguro_webhook_authenticates_then_refreshes_through_mock_provider() 
 
 #[tokio::test]
 #[ignore = "requires isolated PostgreSQL, test keyring, and PAYMENT_PROVIDER_MODE=mock"]
-async fn mercado_pago_webhook_uses_tenant_secret_and_token_with_local_double() {
+async fn mercado_pago_webhook_uses_tenant_secret_and_handles_repeated_ids() {
     const TENANT_TOKEN: &str = "tenant-mp-token-for-tests-only";
     const TENANT_SECRET: &str = "tenant-mp-secret-for-tests-only";
     const OTHER_TENANT_SECRET: &str = "other-tenant-mp-secret";
@@ -1208,6 +1208,23 @@ async fn mercado_pago_webhook_uses_tenant_secret_and_token_with_local_double() {
         authorization.lock().unwrap().as_slice(),
         &[format!("Bearer {TENANT_TOKEN}")]
     );
+
+    for index in 0..10_000 {
+        let data_id = (1_000_000_000_i64 + index).to_string();
+        let request_id = format!("tc22-request-{index}");
+        let body = format!(r#"{{"data":{{"id":{data_id}}}}}"#);
+        let signature = mercado_pago_signature(TENANT_SECRET, TIMESTAMP, &request_id, &data_id);
+        let response = mercado_pago_webhook_request(
+            app.clone(),
+            body.as_bytes(),
+            &request_id,
+            &signature,
+        )
+        .await
+        .unwrap();
+        assert_eq!(response, StatusCode::OK, "notification {index}");
+    }
+    assert_eq!(authorization.lock().unwrap().len(), 1);
 
     let secretless = TenantCredentialsPayload::MercadoPago(MercadoPagoCredentials {
         access_token: TENANT_TOKEN.into(),
