@@ -1,6 +1,67 @@
 use super::*;
 use serde_json::json;
 
+async fn provider_error_response() -> (axum::http::StatusCode, axum::Json<serde_json::Value>) {
+    (
+        axum::http::StatusCode::BAD_GATEWAY,
+        axum::Json(json!({
+            "message": "token=token-marker tax_id=tax-marker card=card-marker"
+        })),
+    )
+}
+
+#[tokio::test]
+async fn provider_error_bodies_are_not_exposed_by_charge_or_status() {
+    let app = axum::Router::new()
+        .route("/v1/payments", axum::routing::post(provider_error_response))
+        .route(
+            "/v1/payments/{reference}",
+            axum::routing::get(provider_error_response),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let provider = MercadoPago {
+        client: reqwest::Client::new(),
+        access_token: "tenant-token-marker".into(),
+        collector_id: 7,
+        base_url: format!("http://{address}"),
+    };
+
+    let charge_error = provider
+        .charge(ChargeRequest {
+            payment_id: 1,
+            amount_cents: 5000,
+            currency: "BRL".into(),
+            idempotency_key: "attempt-marker".into(),
+            provider_token: "card-token-marker".into(),
+            external_reference: "purchase-marker".into(),
+            payer_email: "buyer@example.test".into(),
+            payer_tax_id: "tax-id-marker".into(),
+            payment_method_id: "visa".into(),
+            issuer_id: None,
+            installments: 1,
+        })
+        .await
+        .err()
+        .expect("charge should return provider error")
+        .0;
+    let status_error = provider
+        .status("123456789")
+        .await
+        .err()
+        .expect("status should return provider error")
+        .0;
+
+    for error in [charge_error, status_error] {
+        assert!(error.contains("502"));
+        for marker in ["token-marker", "tax-marker", "card-marker", "tax-id-marker"] {
+            assert!(!error.contains(marker), "{error}");
+        }
+    }
+    server.abort();
+}
+
 /// Parses a provider payload the way the production search and charge paths do.
 fn parse_payment_json(json: serde_json::Value) -> Result<ProviderResult, ProviderError> {
     let response: PaymentResponse =

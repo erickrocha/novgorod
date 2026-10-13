@@ -1,7 +1,72 @@
 use super::*;
-use axum::{Json, Router, extract::State, http::HeaderMap, routing::get};
+use axum::{
+    Json, Router,
+    extract::State,
+    http::{HeaderMap, StatusCode},
+    routing::{get, post},
+};
 use serde_json::json;
 use std::sync::{Arc, Mutex};
+
+async fn provider_error_response() -> (StatusCode, Json<serde_json::Value>) {
+    (
+        StatusCode::BAD_GATEWAY,
+        Json(json!({
+            "error_messages": [{
+                "code": "50099",
+                "description": "token=token-marker tax_id=tax-marker card=card-marker"
+            }]
+        })),
+    )
+}
+
+#[tokio::test]
+async fn provider_error_bodies_are_not_exposed_by_charge_or_status() {
+    let app = Router::new()
+        .route("/charges", post(provider_error_response))
+        .route("/charges/{reference}", get(provider_error_response));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let provider = PagSeguro::with_base_url_for_test(
+        "tenant-token-marker".into(),
+        format!("http://{address}"),
+    )
+    .unwrap();
+
+    let charge_error = provider
+        .charge(ChargeRequest {
+            payment_id: 1,
+            amount_cents: 5000,
+            currency: "BRL".into(),
+            idempotency_key: "attempt-marker".into(),
+            provider_token: "card-token-marker".into(),
+            external_reference: "purchase-marker".into(),
+            payer_email: "buyer@example.test".into(),
+            payer_tax_id: "tax-id-marker".into(),
+            payment_method_id: "visa".into(),
+            issuer_id: None,
+            installments: 1,
+        })
+        .await
+        .err()
+        .expect("charge should return provider error")
+        .0;
+    let status_error = provider
+        .status("CHAR_LOCAL_DOUBLE")
+        .await
+        .err()
+        .expect("status should return provider error")
+        .0;
+
+    assert!(charge_error.contains("50099"));
+    for error in [charge_error, status_error] {
+        for marker in ["token-marker", "tax-marker", "card-marker", "tax-id-marker"] {
+            assert!(!error.contains(marker), "{error}");
+        }
+    }
+    server.abort();
+}
 
 async fn status_double(
     State(authorization): State<Arc<Mutex<Option<String>>>>,
