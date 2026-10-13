@@ -26,7 +26,7 @@ use axum::{
 };
 use business::{
     domain::{enums::Role, user::User},
-    sea_orm::{ConnectOptions, ConnectionTrait, Database, DbBackend, DbConn, Statement},
+    sea_orm::{ConnectOptions, ConnectionTrait, Database, DbBackend, DbConn, Statement, TransactionTrait},
 };
 use migration::{Migrator, MigratorTrait};
 use serde_json::{Value, json};
@@ -1455,6 +1455,11 @@ async fn marketplace_quote_selection_and_purchase_per_seller() {
 #[ignore = "requires isolated PostgreSQL and PAYMENT_PROVIDER_MODE=mock"]
 async fn reconciliation_backs_off_and_cancels_payments_past_the_window() {
     // NOV-5 TC-11/23/24: SR-PAY-021, SR-PAY-023
+    let _environment_restore =
+        EnvironmentRestore::capture(&["PAYMENT_RECONCILIATION_WINDOW_HOURS"]);
+    unsafe {
+        std::env::set_var("PAYMENT_RECONCILIATION_WINDOW_HOURS", "3");
+    }
     let (root, db, schema) = database().await.unwrap();
     Migrator::up(&db, None).await.unwrap();
     fixtures(&db).await.unwrap();
@@ -1476,16 +1481,183 @@ async fn reconciliation_backs_off_and_cancels_payments_past_the_window() {
     .unwrap();
     assert_eq!(status, StatusCode::OK, "{submitted}");
     assert_eq!(submitted["status"], "pending");
+    let payment_id: i64 = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT id FROM payment WHERE purchase_id=$1",
+            [purchase_id.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "id")
+        .unwrap();
 
-    // Fresh payment: backoff keeps it out of the claim.
+    // Fresh payment and a payment inside the two-minute age band are not due yet.
     let claimed = crate::endpoints::checkout_payment_endpoint::reconcile_unresolved(&state)
         .await
         .unwrap();
     assert_eq!(claimed, 0);
+    db.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "UPDATE payment SET created_at=now()-interval '10 minutes', updated_at=now()-interval '60 seconds' WHERE purchase_id=$1",
+        [purchase_id.into()],
+    ))
+    .await
+    .unwrap();
+    assert_eq!(
+        crate::endpoints::checkout_payment_endpoint::reconcile_unresolved(&state)
+            .await
+            .unwrap(),
+        0
+    );
+    db.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "UPDATE payment SET updated_at=now()-interval '3 minutes' WHERE purchase_id=$1",
+        [purchase_id.into()],
+    ))
+    .await
+    .unwrap();
+    assert_eq!(
+        crate::endpoints::checkout_payment_endpoint::reconcile_unresolved(&state)
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        crate::endpoints::checkout_payment_endpoint::reconcile_unresolved(&state)
+            .await
+            .unwrap(),
+        0
+    );
+
+    // The oldest age band waits ten minutes between polls.
+    db.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "UPDATE payment SET created_at=now()-interval '1 hour', updated_at=now()-interval '5 minutes' WHERE purchase_id=$1",
+        [purchase_id.into()],
+    ))
+    .await
+    .unwrap();
+    assert_eq!(
+        crate::endpoints::checkout_payment_endpoint::reconcile_unresolved(&state)
+            .await
+            .unwrap(),
+        0
+    );
+    db.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "UPDATE payment SET updated_at=now()-interval '11 minutes' WHERE purchase_id=$1",
+        [purchase_id.into()],
+    ))
+    .await
+    .unwrap();
+    assert_eq!(
+        crate::endpoints::checkout_payment_endpoint::reconcile_unresolved(&state)
+            .await
+            .unwrap(),
+        1
+    );
+
+    // A four-hour-old payment is polled, not cancelled, with a six-hour override.
+    unsafe {
+        std::env::set_var("PAYMENT_RECONCILIATION_WINDOW_HOURS", "6");
+    }
+    db.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "UPDATE payment SET created_at=now()-interval '4 hours', updated_at=now()-interval '11 minutes' WHERE purchase_id=$1",
+        [purchase_id.into()],
+    ))
+    .await
+    .unwrap();
+    assert_eq!(
+        crate::endpoints::checkout_payment_endpoint::reconcile_unresolved(&state)
+            .await
+            .unwrap(),
+        1
+    );
+    let pending_status: String = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT status FROM payment WHERE purchase_id=$1",
+            [purchase_id.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "status")
+        .unwrap();
+    assert_eq!(pending_status, "pending");
+    unsafe {
+        std::env::set_var("PAYMENT_RECONCILIATION_WINDOW_HOURS", "3");
+    }
+
+    // A concurrent row lock is skipped rather than polled twice or blocked on.
+    db.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "UPDATE payment SET created_at=now()-interval '20 minutes', updated_at=now()-interval '11 minutes' WHERE purchase_id=$1",
+        [purchase_id.into()],
+    ))
+    .await
+    .unwrap();
+    let lock = db.begin().await.unwrap();
+    lock.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "UPDATE payment SET updated_at=updated_at WHERE id=$1",
+        [payment_id.into()],
+    ))
+    .await
+    .unwrap();
+    assert_eq!(
+        crate::endpoints::checkout_payment_endpoint::reconcile_unresolved(&state)
+            .await
+            .unwrap(),
+        0
+    );
+    lock.commit().await.unwrap();
+    assert_eq!(
+        crate::endpoints::checkout_payment_endpoint::reconcile_unresolved(&state)
+            .await
+            .unwrap(),
+        1
+    );
+
+    // Provider errors are warned and leave the payment pending.
+    crate::test_log_capture::install();
+    crate::test_log_capture::clear();
+    db.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "UPDATE payment SET gateway_reference=replace(gateway_reference, ':pending:', ':error:'), created_at=now()-interval '1 hour', updated_at=now()-interval '11 minutes' WHERE purchase_id=$1",
+        [purchase_id.into()],
+    ))
+    .await
+    .unwrap();
+    assert_eq!(
+        crate::endpoints::checkout_payment_endpoint::reconcile_unresolved(&state)
+            .await
+            .unwrap(),
+        0
+    );
+    let captured_logs = crate::test_log_capture::contents();
+    assert!(captured_logs.contains(&format!(
+        "WARN reconciliation: payment {payment_id} provider error: mock provider error requested"
+    )));
+    let pending_status: String = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT status FROM payment WHERE purchase_id=$1",
+            [purchase_id.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "status")
+        .unwrap();
+    assert_eq!(pending_status, "pending");
 
     // Past the 3h window: cancelled at the provider, purchase fails, no refund.
     db.execute_unprepared(
-        "UPDATE payment SET created_at = now() - interval '4 hours', updated_at = now() - interval '4 hours'",
+        "UPDATE payment SET gateway_reference=replace(gateway_reference, ':error:', ':pending:'), created_at = now() - interval '4 hours', updated_at = now() - interval '11 minutes'",
     )
     .await
     .unwrap();
