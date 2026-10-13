@@ -324,11 +324,29 @@ async fn mercado_pago_webhook_request(
     request_id: &str,
     signature: &str,
 ) -> anyhow::Result<StatusCode> {
-    let request = Request::builder()
+    mercado_pago_webhook_request_with_optional_id(
+        app,
+        body,
+        Some(request_id),
+        signature,
+    )
+    .await
+}
+
+async fn mercado_pago_webhook_request_with_optional_id(
+    app: Router,
+    body: &[u8],
+    request_id: Option<&str>,
+    signature: &str,
+) -> anyhow::Result<StatusCode> {
+    let mut builder = Request::builder()
         .method(Method::POST)
         .uri("/webhooks/mercadopago")
-        .header("content-type", "application/json")
-        .header("x-request-id", request_id)
+        .header("content-type", "application/json");
+    if let Some(request_id) = request_id {
+        builder = builder.header("x-request-id", request_id);
+    }
+    let request = builder
         .header("x-signature", signature)
         .body(Body::from(body.to_vec()))?;
     Ok(app.oneshot(request).await?.status())
@@ -412,6 +430,29 @@ struct MercadoPagoDoubleState {
     external_reference: String,
     collector_id: i64,
     status: String,
+}
+
+#[derive(Clone)]
+struct Tc08MercadoPagoDoubleState {
+    authorization: Arc<std::sync::Mutex<Vec<String>>>,
+    response: Arc<std::sync::Mutex<Value>>,
+}
+
+async fn tc08_mercado_pago_status_double(
+    axum::extract::State(state): axum::extract::State<Tc08MercadoPagoDoubleState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> axum::Json<Value> {
+    state.authorization.lock().unwrap().push(
+        headers
+            .get("authorization")
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .to_owned(),
+    );
+    let mut response = state.response.lock().unwrap().clone();
+    response["id"] = Value::String(id);
+    axum::Json(response)
 }
 
 async fn mercado_pago_status_double(
@@ -3295,6 +3336,185 @@ async fn tc03_persists_only_accepted_card_metadata() {
         .unwrap();
     assert_eq!(forbidden_columns, 0);
 
+    cleanup(root, db, schema).await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires isolated PostgreSQL, payment test keyring, and local Mercado Pago double"]
+async fn tc08_mercado_pago_webhook_checks_signature_replay_and_provider_data() {
+    const TENANT_TOKEN: &str = "tc08-tenant-mp-token";
+    const TENANT_SECRET: &str = "tc08-tenant-mp-secret";
+    const PLATFORM_SECRET: &str = "tc08-platform-mp-secret";
+    const PAYMENT_ID: &str = "987650008";
+    const REQUEST_ID: &str = "tc08-request-id";
+    const TIMESTAMP: &str = "1727280000";
+
+    let _environment_restore = EnvironmentRestore::capture(&[
+        "PAYMENT_PROVIDER_MODE",
+        "PAYMENT_MOCK_PROVIDER",
+        "MP_API_BASE_URL",
+        "MP_WEBHOOK_SECRET",
+    ]);
+    unsafe {
+        std::env::set_var("PAYMENT_PROVIDER_MODE", "mock");
+        std::env::set_var("PAYMENT_MOCK_PROVIDER", "mercado_pago");
+    }
+    let payment_keys = Arc::new(PaymentKeyRing::from_env().unwrap());
+    let (root, db, schema) = database().await.unwrap();
+    Migrator::up(&db, None).await.unwrap();
+    fixtures(&db).await.unwrap();
+    let credentials = TenantCredentialsPayload::MercadoPago(MercadoPagoCredentials {
+        access_token: TENANT_TOKEN.into(),
+        public_key: Some("tc08-tenant-public-key".into()),
+        collector_id: Some(4567),
+        webhook_secret: Some(TENANT_SECRET.into()),
+    });
+    let (key_version, encrypted) = payment_keys.encrypt_payload(1, &credentials).unwrap();
+    db.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "INSERT INTO tenant_payment_settings (tenant_id,provider,credentials,key_version) VALUES (1,'mercado_pago',$1,$2)",
+        [encrypted.into(), key_version.into()],
+    ))
+    .await
+    .unwrap();
+    let mut app_state = state(db.clone());
+    app_state.payment_keys = payment_keys;
+    let app = router(app_state);
+    cart_fixture(&db, Some(1), 1, &[1]).await.unwrap();
+    let purchase_id = create_purchase_from_quote(app.clone(), "tc08-webhook", &[1])
+        .await
+        .unwrap();
+    let (submit_status, submitted) = request(
+        app.clone(),
+        Method::POST,
+        &format!("/purchases/{purchase_id}/payments/submit"),
+        Some(json!({"token":"mock:pending","paymentMethodId":"visa","installments":1})),
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(submit_status, StatusCode::OK, "{submitted}");
+    let payment = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT id,amount_cents,attempt_key FROM payment WHERE purchase_id=$1",
+            [purchase_id.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap();
+    let payment_id: i64 = payment.try_get("", "id").unwrap();
+    let amount_cents: i64 = payment.try_get("", "amount_cents").unwrap();
+    let attempt_key: String = payment.try_get("", "attempt_key").unwrap();
+    let external_reference = format!("torg-{purchase_id}-{attempt_key}");
+    db.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "UPDATE payment SET gateway_provider='mercado_pago',gateway_reference=$1 WHERE id=$2",
+        [PAYMENT_ID.into(), payment_id.into()],
+    ))
+    .await
+    .unwrap();
+
+    let authorization = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let provider_response = Arc::new(std::sync::Mutex::new(json!({
+        "status":"in_process",
+        "transaction_amount":amount_cents as f64 / 100.0,
+        "currency_id":"BRL",
+        "external_reference":external_reference,
+        "collector_id":4567,
+        "payment_type_id":"credit_card",
+        "payment_method_id":"visa"
+    })));
+    let double = Router::new()
+        .route("/v1/payments/{id}", get(tc08_mercado_pago_status_double))
+        .with_state(Tc08MercadoPagoDoubleState {
+            authorization: authorization.clone(),
+            response: provider_response.clone(),
+        });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, double).await.unwrap() });
+    unsafe {
+        std::env::set_var("MP_API_BASE_URL", format!("http://{address}"));
+        std::env::set_var("MP_WEBHOOK_SECRET", PLATFORM_SECRET);
+    }
+
+    let body = format!(r#"{{"data":{{"id":"{PAYMENT_ID}"}}}}"#);
+    let valid_signature = mercado_pago_signature(TENANT_SECRET, TIMESTAMP, REQUEST_ID, PAYMENT_ID);
+    let invalid_requests = [
+        (
+            Some(REQUEST_ID),
+            mercado_pago_signature(TENANT_SECRET, TIMESTAMP, REQUEST_ID, "987650000"),
+        ),
+        (
+            Some(REQUEST_ID),
+            valid_signature.replace(TIMESTAMP, "1727280001"),
+        ),
+        (Some(REQUEST_ID), "malformed-signature".to_owned()),
+        (None, valid_signature.clone()),
+    ];
+    for (request_id, signature) in invalid_requests {
+        let response = mercado_pago_webhook_request_with_optional_id(
+            app.clone(),
+            body.as_bytes(),
+            request_id,
+            &signature,
+        )
+        .await
+        .unwrap();
+        assert_eq!(response, StatusCode::UNAUTHORIZED);
+    }
+    assert!(authorization.lock().unwrap().is_empty());
+
+    // The signed timestamp is from 2024; replay remains accepted because there is no freshness check.
+    for _ in 0..2 {
+        assert_eq!(
+            mercado_pago_webhook_request(
+                app.clone(),
+                body.as_bytes(),
+                REQUEST_ID,
+                &valid_signature,
+            )
+            .await
+            .unwrap(),
+            StatusCode::OK
+        );
+    }
+    assert_eq!(authorization.lock().unwrap().len(), 2);
+
+    for (field, mismatch) in [
+        ("external_reference", json!("different-purchase")),
+        ("transaction_amount", json!(amount_cents as f64 / 100.0 + 1.0)),
+        ("currency_id", json!("USD")),
+        ("collector_id", json!(9999)),
+    ] {
+        let mut response = provider_response.lock().unwrap();
+        response[field] = mismatch;
+        drop(response);
+        let response = mercado_pago_webhook_request(
+            app.clone(),
+            body.as_bytes(),
+            REQUEST_ID,
+            &valid_signature,
+        )
+        .await
+        .unwrap();
+        assert_eq!(response, StatusCode::BAD_GATEWAY, "mismatch {field}");
+        let current_status: String = db
+            .query_one_raw(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT status FROM payment WHERE id=$1",
+                [payment_id.into()],
+            ))
+            .await
+            .unwrap()
+            .unwrap()
+            .try_get("", "status")
+            .unwrap();
+        assert_eq!(current_status, "pending");
+    }
+
+    server.abort();
     cleanup(root, db, schema).await.unwrap();
 }
 
