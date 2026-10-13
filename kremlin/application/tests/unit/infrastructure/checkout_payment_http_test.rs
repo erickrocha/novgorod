@@ -2,7 +2,7 @@ use crate::{
     AppState,
     commons::{i18n::Locale, tenant_context::TenantContext},
     endpoints::{
-        checkout_payment_endpoint::{pagseguro_webhook, status, submit, webhook},
+        checkout_payment_endpoint::{config as payment_config, pagseguro_webhook, status, submit, webhook},
         checkout_quote_endpoint::{quote, select_shipping},
         payment_settings_endpoint::{get as get_payment_settings, put as put_payment_settings},
         orders_endpoint::{
@@ -236,6 +236,7 @@ fn router(state: AppState) -> Router {
         .route("/purchases/{id}/payments", get(payments))
         .route("/purchases/{id}/payments/submit", post(submit))
         .route("/purchases/{id}/payments/status", get(status))
+        .route("/checkout/payment-config", get(payment_config))
         .route("/webhooks/pagseguro", post(pagseguro_webhook))
         .route("/webhooks/mercadopago", post(webhook))
         .route("/orders/{id}", get(get_by_id))
@@ -1677,6 +1678,65 @@ async fn tc13_payment_settings_authorize_roles_redact_secrets_and_bind_ciphertex
         .decrypt_payload(2, &key_version, &encrypted)
         .is_err());
 
+    cleanup(root, db, schema).await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires isolated PostgreSQL, test keyring, and PAYMENT_PROVIDER_MODE=mock"]
+async fn tc14_missing_payment_configuration_returns_unavailable_without_charge() {
+    let _environment_restore =
+        EnvironmentRestore::capture(&["PAYMENT_PROVIDER_MODE", "PAYMENT_MOCK_PROVIDER"]);
+    unsafe {
+        std::env::set_var("PAYMENT_PROVIDER_MODE", "real");
+        std::env::remove_var("PAYMENT_MOCK_PROVIDER");
+    }
+
+    let (root, db, schema) = database().await.unwrap();
+    Migrator::up(&db, None).await.unwrap();
+    fixtures(&db).await.unwrap();
+    let app = router(state(db.clone()));
+    cart_fixture(&db, Some(1), 1, &[1]).await.unwrap();
+    let purchase_id = create_purchase_from_quote(app.clone(), "tc14-no-payment-settings", &[1])
+        .await
+        .unwrap();
+
+    let (submit_status, submit_body) = request(
+        app.clone(),
+        Method::POST,
+        &format!("/purchases/{purchase_id}/payments/submit"),
+        Some(json!({
+            "token":"unused-test-token",
+            "paymentMethodId":"visa",
+            "installments":1
+        })),
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(submit_status, StatusCode::SERVICE_UNAVAILABLE, "{submit_body}");
+    let transaction_count: i64 = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT count(*) AS count FROM payment_transaction WHERE payment_id=(SELECT id FROM payment WHERE purchase_id=$1)",
+            [purchase_id.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "count")
+        .unwrap();
+    assert_eq!(transaction_count, 0);
+
+    let (config_status, config_body) = request(
+        app,
+        Method::GET,
+        "/checkout/payment-config?tenantId=1",
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(config_status, StatusCode::SERVICE_UNAVAILABLE, "{config_body}");
     cleanup(root, db, schema).await.unwrap();
 }
 
