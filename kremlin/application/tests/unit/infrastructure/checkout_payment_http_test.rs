@@ -1896,6 +1896,73 @@ async fn tc15_invalid_or_missing_tenant_credentials_never_fall_back_to_platform(
 }
 
 #[tokio::test]
+#[ignore = "requires isolated PostgreSQL"]
+async fn tc16_payment_config_is_tenant_scoped_and_never_falls_back() {
+    let (root, db, schema) = database().await.unwrap();
+    Migrator::up(&db, None).await.unwrap();
+    fixtures(&db).await.unwrap();
+    for (tenant_id, provider, public_key) in [
+        (1_i64, "mercado_pago", "tc16-tenant-a-public-key"),
+        (2_i64, "pagseguro", "tc16-tenant-b-public-key"),
+    ] {
+        db.execute_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "INSERT INTO tenant_payment_settings (tenant_id,provider,configuration) VALUES ($1,$2,$3)",
+            [
+                tenant_id.into(),
+                provider.into(),
+                json!({"publicKey":public_key}).into(),
+            ],
+        ))
+        .await
+        .unwrap();
+    }
+    let app = router(state(db.clone()));
+
+    let (tenant_a_status, tenant_a) = request(
+        app.clone(),
+        Method::GET,
+        "/checkout/payment-config?tenantId=1",
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(tenant_a_status, StatusCode::OK, "{tenant_a}");
+    assert_eq!(tenant_a["provider"], "mercado_pago");
+    assert_eq!(tenant_a["publicKey"], "tc16-tenant-a-public-key");
+    assert!(!tenant_a.to_string().contains("tc16-tenant-b-public-key"));
+
+    let (tenant_b_status, tenant_b) = request(
+        app.clone(),
+        Method::GET,
+        "/checkout/payment-config?tenantId=2",
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(tenant_b_status, StatusCode::OK, "{tenant_b}");
+    assert_eq!(tenant_b["provider"], "pagseguro");
+    assert_eq!(tenant_b["publicKey"], "tc16-tenant-b-public-key");
+    assert!(!tenant_b.to_string().contains("tc16-tenant-a-public-key"));
+
+    for uri in [
+        "/checkout/payment-config",
+        "/checkout/payment-config?tenantId=999",
+    ] {
+        let (status, body) = request(app.clone(), Method::GET, uri, None, None)
+            .await
+            .unwrap();
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{uri}: {body}");
+        assert!(!body.to_string().contains("tc16-tenant-a-public-key"));
+        assert!(!body.to_string().contains("tc16-tenant-b-public-key"));
+    }
+
+    cleanup(root, db, schema).await.unwrap();
+}
+
+#[tokio::test]
 #[ignore = "requires isolated PostgreSQL, test keyring, and PAYMENT_PROVIDER_MODE=mock"]
 async fn mercado_pago_webhook_uses_tenant_secret_and_handles_repeated_ids() {
     const TENANT_TOKEN: &str = "tenant-mp-token-for-tests-only";
