@@ -2330,6 +2330,77 @@ async fn tc01_card_submit_rejects_invalid_input_and_non_card_provider() {
     cleanup(root, db, schema).await.unwrap();
 }
 
+#[tokio::test]
+#[ignore = "requires isolated PostgreSQL and PAYMENT_PROVIDER_MODE=mock"]
+async fn tc03_persists_only_accepted_card_metadata() {
+    let _environment_restore = EnvironmentRestore::capture(&[
+        "PAYMENT_PROVIDER_MODE",
+        "PAYMENT_MOCK_PROVIDER",
+    ]);
+    unsafe {
+        std::env::set_var("PAYMENT_PROVIDER_MODE", "mock");
+        std::env::set_var("PAYMENT_MOCK_PROVIDER", "mercado_pago");
+    }
+    let (root, db, schema) = database().await.unwrap();
+    Migrator::up(&db, None).await.unwrap();
+    fixtures(&db).await.unwrap();
+    let app = router(state(db.clone()));
+    cart_fixture(&db, Some(1), 1, &[1]).await.unwrap();
+    let purchase_id = create_purchase_from_quote(app.clone(), "tc03-card-metadata", &[1])
+        .await
+        .unwrap();
+    let (status, submitted) = request(
+        app,
+        Method::POST,
+        &format!("/purchases/{purchase_id}/payments/submit"),
+        Some(json!({
+            "token":"mock:approved",
+            "paymentMethodId":"visa",
+            "installments":1
+        })),
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(status, StatusCode::OK, "{submitted}");
+    assert_eq!(submitted["status"], "captured");
+
+    let metadata = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT cardholder_name,brand,last_four_digits,expiration_month,expiration_year FROM credit_card_details WHERE payment_id=(SELECT id FROM payment WHERE purchase_id=$1)",
+            [purchase_id.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap();
+    let holder: String = metadata.try_get("", "cardholder_name").unwrap();
+    let brand: String = metadata.try_get("", "brand").unwrap();
+    let last_four: String = metadata.try_get("", "last_four_digits").unwrap();
+    let expiration_month: i32 = metadata.try_get("", "expiration_month").unwrap();
+    let expiration_year: i32 = metadata.try_get("", "expiration_year").unwrap();
+    assert_eq!(holder, "Mock Test Card");
+    assert_eq!(brand, "visa");
+    assert_eq!(last_four, "4242");
+    assert_eq!(expiration_month, 12);
+    assert_eq!(expiration_year, 2030);
+
+    let forbidden_columns: i64 = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT count(*) AS count FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='credit_card_details' AND column_name IN ('card_number','pan','cvv','cvc','token')",
+            [],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "count")
+        .unwrap();
+    assert_eq!(forbidden_columns, 0);
+
+    cleanup(root, db, schema).await.unwrap();
+}
+
 async fn request_in(
     app: Router,
     method: Method,
