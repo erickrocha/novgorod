@@ -1740,6 +1740,161 @@ async fn tc14_missing_payment_configuration_returns_unavailable_without_charge()
     cleanup(root, db, schema).await.unwrap();
 }
 
+async fn tc15_platform_mercado_pago_double(
+    axum::extract::State(calls): axum::extract::State<Arc<std::sync::atomic::AtomicUsize>>,
+    axum::Json(request): axum::Json<Value>,
+) -> axum::Json<Value> {
+    calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    axum::Json(json!({
+        "id":"tc15-platform-mp-charge",
+        "status":"approved",
+        "transaction_amount":request["transaction_amount"],
+        "currency_id":"BRL",
+        "external_reference":request["external_reference"],
+        "collector_id":9999,
+        "payment_type_id":"credit_card",
+        "payment_method_id":"visa"
+    }))
+}
+
+async fn tc15_platform_pagbank_double(
+    axum::extract::State(calls): axum::extract::State<Arc<std::sync::atomic::AtomicUsize>>,
+    axum::Json(request): axum::Json<Value>,
+) -> axum::Json<Value> {
+    calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    axum::Json(json!({
+        "id":"tc15-platform-pagbank-charge",
+        "reference_id":request["reference_id"],
+        "status":"PAID",
+        "amount":request["amount"],
+        "payment_method":{"type":"CREDIT_CARD"}
+    }))
+}
+
+#[tokio::test]
+#[ignore = "requires isolated PostgreSQL and payment test keyring"]
+async fn tc15_invalid_or_missing_tenant_credentials_never_fall_back_to_platform() {
+    let _environment_restore = EnvironmentRestore::capture(&[
+        "PAYMENT_PROVIDER_MODE",
+        "MP_ACCESS_TOKEN",
+        "MP_COLLECTOR_ID",
+        "MP_API_BASE_URL",
+        "PAGSEGURO_TOKEN",
+        "PAGSEGURO_API_BASE_URL",
+    ]);
+    unsafe {
+        std::env::set_var("PAYMENT_PROVIDER_MODE", "real");
+        std::env::set_var("MP_ACCESS_TOKEN", "tc15-platform-mp-token");
+        std::env::set_var("MP_COLLECTOR_ID", "9999");
+        std::env::set_var("PAGSEGURO_TOKEN", "tc15-platform-pagbank-token");
+    }
+
+    let payment_keys = Arc::new(PaymentKeyRing::from_env().unwrap());
+    let (root, db, schema) = database().await.unwrap();
+    Migrator::up(&db, None).await.unwrap();
+    fixtures(&db).await.unwrap();
+    let mut app_state = state(db.clone());
+    app_state.payment_keys = payment_keys.clone();
+    let app = router(app_state);
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let double = Router::new()
+        .route("/v1/payments", post(tc15_platform_mercado_pago_double))
+        .route("/charges", post(tc15_platform_pagbank_double))
+        .with_state(calls.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, double).await.unwrap() });
+    let base_url = format!("http://{address}");
+    unsafe {
+        std::env::set_var("MP_API_BASE_URL", &base_url);
+        std::env::set_var("PAGSEGURO_API_BASE_URL", &base_url);
+    }
+
+    for provider in ["mercado_pago", "pagseguro"] {
+        let credentials = if provider == "mercado_pago" {
+            TenantCredentialsPayload::MercadoPago(MercadoPagoCredentials {
+                access_token: "tc15-tenant-mp-token".into(),
+                public_key: Some("tc15-tenant-mp-public".into()),
+                collector_id: Some(4567),
+                webhook_secret: Some("tc15-tenant-mp-secret".into()),
+            })
+        } else {
+            TenantCredentialsPayload::PagSeguro(PagSeguroCredentials {
+                token: "tc15-tenant-pagbank-token".into(),
+                public_key: None,
+                environment: Some("sandbox".into()),
+            })
+        };
+        let (key_version, encrypted) = payment_keys.encrypt_payload(1, &credentials).unwrap();
+        db.execute_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "INSERT INTO tenant_payment_settings (tenant_id,provider,credentials,key_version) VALUES (1,$1,$2,$3) ON CONFLICT (tenant_id) DO UPDATE SET provider=EXCLUDED.provider,credentials=EXCLUDED.credentials,key_version=EXCLUDED.key_version",
+            [provider.into(), encrypted.into(), key_version.into()],
+        ))
+        .await
+        .unwrap();
+
+        for corrupt_credentials in [true, false] {
+            if corrupt_credentials {
+                db.execute_raw(Statement::from_sql_and_values(
+                    DbBackend::Postgres,
+                    "UPDATE tenant_payment_settings SET credentials=$1 WHERE tenant_id=1",
+                    [vec![0_u8; 32].into()],
+                ))
+                .await
+                .unwrap();
+            } else {
+                db.execute_raw(Statement::from_sql_and_values(
+                    DbBackend::Postgres,
+                    "DELETE FROM tenant_payment_settings WHERE tenant_id=1",
+                    [],
+                ))
+                .await
+                .unwrap();
+            }
+
+            cart_fixture(&db, Some(1), 1, &[1]).await.unwrap();
+            let purchase_id = create_purchase_from_quote(
+                app.clone(),
+                &format!("tc15-{provider}-corrupt-{corrupt_credentials}"),
+                &[1],
+            )
+            .await
+            .unwrap();
+            let (submit_status, submit_body) = request(
+                app.clone(),
+                Method::POST,
+                &format!("/purchases/{purchase_id}/payments/submit"),
+                Some(json!({
+                    "token":"tc15-card-token",
+                    "paymentMethodId":"visa",
+                    "installments":1
+                })),
+                None,
+            )
+            .await
+            .unwrap();
+            assert_eq!(submit_status, StatusCode::SERVICE_UNAVAILABLE, "{submit_body}");
+            assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+            let transaction_count: i64 = db
+                .query_one_raw(Statement::from_sql_and_values(
+                    DbBackend::Postgres,
+                    "SELECT count(*) AS count FROM payment_transaction WHERE payment_id=(SELECT id FROM payment WHERE purchase_id=$1)",
+                    [purchase_id.into()],
+                ))
+                .await
+                .unwrap()
+                .unwrap()
+                .try_get("", "count")
+                .unwrap();
+            assert_eq!(transaction_count, 0);
+        }
+    }
+
+    server.abort();
+    cleanup(root, db, schema).await.unwrap();
+}
+
 #[tokio::test]
 #[ignore = "requires isolated PostgreSQL, test keyring, and PAYMENT_PROVIDER_MODE=mock"]
 async fn mercado_pago_webhook_uses_tenant_secret_and_handles_repeated_ids() {
@@ -2970,6 +3125,7 @@ async fn tc04_charge_double(
 struct Tc05BlockingChargeState {
     requests: Arc<std::sync::Mutex<Vec<Value>>>,
     idempotency_keys: Arc<std::sync::Mutex<Vec<String>>>,
+    authorization: Arc<std::sync::Mutex<Vec<String>>>,
     entered: Arc<tokio::sync::Notify>,
     release: Arc<tokio::sync::Notify>,
 }
@@ -2980,6 +3136,13 @@ async fn tc05_mercado_pago_charge_double(
     axum::Json(request): axum::Json<Value>,
 ) -> axum::Json<Value> {
     state.requests.lock().unwrap().push(request.clone());
+    state.authorization.lock().unwrap().push(
+        headers
+            .get("authorization")
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .to_owned(),
+    );
     state.idempotency_keys.lock().unwrap().push(
         headers
             .get("x-idempotency-key")
@@ -3008,6 +3171,13 @@ async fn tc05_pagbank_charge_double(
     axum::Json(request): axum::Json<Value>,
 ) -> axum::Json<Value> {
     state.requests.lock().unwrap().push(request.clone());
+    state.authorization.lock().unwrap().push(
+        headers
+            .get("authorization")
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .to_owned(),
+    );
     state.idempotency_keys.lock().unwrap().push(
         headers
             .get("x-idempotency-key")
@@ -3236,10 +3406,16 @@ async fn tc05_persists_attempt_before_provider_and_reuses_it_for_both_providers(
     let _environment_restore = EnvironmentRestore::capture(&[
         "PAYMENT_PROVIDER_MODE",
         "MP_API_BASE_URL",
+        "MP_ACCESS_TOKEN",
+        "MP_COLLECTOR_ID",
         "PAGSEGURO_API_BASE_URL",
+        "PAGSEGURO_TOKEN",
     ]);
     unsafe {
         std::env::set_var("PAYMENT_PROVIDER_MODE", "real");
+        std::env::set_var("MP_ACCESS_TOKEN", "tc05-platform-mp-token");
+        std::env::set_var("MP_COLLECTOR_ID", "9999");
+        std::env::set_var("PAGSEGURO_TOKEN", "tc05-platform-pagbank-token");
     }
     let payment_keys = Arc::new(PaymentKeyRing::from_env().unwrap());
     let (root, db, schema) = database().await.unwrap();
@@ -3339,6 +3515,15 @@ async fn tc05_persists_attempt_before_provider_and_reuses_it_for_both_providers(
         assert!(!attempt_key.is_empty());
         assert_eq!(transaction_key, attempt_key);
         assert_eq!(charge_state.requests.lock().unwrap().len(), 1);
+        let expected_token = if provider_name == "mercado_pago" {
+            "tc05-tenant-mp-token"
+        } else {
+            "tc05-tenant-pagbank-token"
+        };
+        assert_eq!(
+            charge_state.authorization.lock().unwrap().as_slice(),
+            &[format!("Bearer {expected_token}")]
+        );
         assert_eq!(
             charge_state.idempotency_keys.lock().unwrap().as_slice(),
             &[attempt_key.clone()]
