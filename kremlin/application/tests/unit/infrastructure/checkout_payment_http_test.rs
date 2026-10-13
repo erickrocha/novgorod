@@ -405,6 +405,29 @@ struct PagBankDoubleState {
     amount_cents: i64,
 }
 
+#[derive(Clone)]
+struct Tc09PagBankDoubleState {
+    authorization: Arc<std::sync::Mutex<Vec<String>>>,
+    response: Arc<std::sync::Mutex<Value>>,
+}
+
+async fn tc09_pagbank_status_double(
+    axum::extract::State(state): axum::extract::State<Tc09PagBankDoubleState>,
+    Path(reference): Path<String>,
+    headers: HeaderMap,
+) -> axum::Json<Value> {
+    state.authorization.lock().unwrap().push(
+        headers
+            .get("authorization")
+            .and_then(|header| header.to_str().ok())
+            .unwrap_or_default()
+            .to_owned(),
+    );
+    let mut response = state.response.lock().unwrap().clone();
+    response["id"] = Value::String(reference);
+    axum::Json(response)
+}
+
 async fn pagbank_status_double(
     axum::extract::State(state): axum::extract::State<PagBankDoubleState>,
     Path(reference): Path<String>,
@@ -1170,6 +1193,168 @@ async fn pagseguro_webhook_authenticates_then_refreshes_through_mock_provider() 
         .try_get("", "status")
         .unwrap();
     assert_eq!(unchanged_status, "failed");
+    cleanup(root, db, schema).await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires isolated PostgreSQL, PagBank test keyring, and PAYMENT_PROVIDER_MODE=mock"]
+async fn tc09_pagseguro_webhook_rejects_invalid_notifications_and_provider_mismatches() {
+    const TOKEN: &str = "tc09-pagbank-account-token-for-tests-only";
+    assert_eq!(
+        std::env::var("PAYMENT_PROVIDER_MODE").as_deref().ok(),
+        Some("mock")
+    );
+    assert_eq!(
+        std::env::var("PAYMENT_MOCK_PROVIDER").as_deref().ok(),
+        Some("pagseguro")
+    );
+
+    let payment_keys = Arc::new(PaymentKeyRing::from_env().unwrap());
+    let (root, db, schema) = database().await.unwrap();
+    Migrator::up(&db, None).await.unwrap();
+    fixtures(&db).await.unwrap();
+    let credentials = TenantCredentialsPayload::PagSeguro(PagSeguroCredentials {
+        token: TOKEN.into(),
+        public_key: None,
+        environment: Some("sandbox".into()),
+    });
+    let (key_version, encrypted) = payment_keys.encrypt_payload(1, &credentials).unwrap();
+    db.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "INSERT INTO tenant_payment_settings (tenant_id, provider, credentials, key_version) VALUES ($1, 'pagseguro', $2, $3)",
+        [1_i64.into(), encrypted.into(), key_version.into()],
+    ))
+    .await
+    .unwrap();
+    let mut app_state = state(db.clone());
+    app_state.payment_keys = payment_keys;
+    let app = router(app_state);
+
+    cart_fixture(&db, Some(1), 1, &[1]).await.unwrap();
+    let purchase_id = create_purchase_from_quote(app.clone(), "tc09-pagbank-mock", &[1])
+        .await
+        .unwrap();
+    let (status, submitted) = request(
+        app.clone(),
+        Method::POST,
+        &format!("/purchases/{purchase_id}/payments/submit"),
+        Some(json!({
+            "token":"mock:pending",
+            "paymentMethodId":"visa",
+            "installments":1
+        })),
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(status, StatusCode::OK, "{submitted}");
+    assert_eq!(submitted["status"], "pending");
+
+    let payment = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT attempt_key, amount_cents FROM payment WHERE purchase_id=$1",
+            [purchase_id.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap();
+    let attempt_key: String = payment.try_get("", "attempt_key").unwrap();
+    let amount_cents: i64 = payment.try_get("", "amount_cents").unwrap();
+    let external_reference = format!("torg-{purchase_id}-{attempt_key}");
+    let notification = json!({
+        "reference_id": external_reference,
+        "status": "PAID"
+    })
+    .to_string();
+    let authorization = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let response = Arc::new(std::sync::Mutex::new(json!({
+        "reference_id": external_reference,
+        "status": "PAID",
+        "amount": {"value": amount_cents, "currency": "BRL"},
+        "payment_method": {"type": "CREDIT_CARD"}
+    })));
+    let double = Router::new()
+        .route("/charges/{reference}", get(tc09_pagbank_status_double))
+        .with_state(Tc09PagBankDoubleState {
+            authorization: authorization.clone(),
+            response: response.clone(),
+        });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, double).await.unwrap() });
+    let provider_base_url = format!("http://{address}");
+
+    let rejected = webhook_request_with_headers(
+        app.clone(),
+        notification.as_bytes(),
+        &[],
+        Some(&provider_base_url),
+    )
+    .await
+    .unwrap();
+    assert_eq!(rejected, StatusCode::UNAUTHORIZED);
+
+    for invalid_body in [b"".as_slice(), b"{invalid".as_slice()] {
+        let signature = pagbank_signature(TOKEN, invalid_body);
+        let ignored = webhook_request_with_provider_base(
+            app.clone(),
+            invalid_body,
+            &signature,
+            Some(&provider_base_url),
+        )
+        .await
+        .unwrap();
+        assert_eq!(ignored, StatusCode::OK);
+    }
+    assert!(authorization.lock().unwrap().is_empty());
+
+    let mut wrong_reference = response.lock().unwrap().clone();
+    wrong_reference["reference_id"] = json!("torg-other-purchase-other-attempt");
+    let mut wrong_amount = response.lock().unwrap().clone();
+    wrong_amount["amount"]["value"] = json!(amount_cents + 1);
+    let mut wrong_currency = response.lock().unwrap().clone();
+    wrong_currency["amount"]["currency"] = json!("USD");
+    let mut wrong_payment_type = response.lock().unwrap().clone();
+    wrong_payment_type["payment_method"]["type"] = json!("PIX");
+    let mismatches = [
+        ("reference", wrong_reference),
+        ("amount", wrong_amount),
+        ("currency", wrong_currency),
+        ("payment type", wrong_payment_type),
+    ];
+
+    for (field, provider_response) in mismatches {
+        *response.lock().unwrap() = provider_response;
+        let signature = pagbank_signature(TOKEN, notification.as_bytes());
+        let rejected = webhook_request_with_provider_base(
+            app.clone(),
+            notification.as_bytes(),
+            &signature,
+            Some(&provider_base_url),
+        )
+        .await
+        .unwrap();
+        assert_eq!(rejected, StatusCode::BAD_GATEWAY, "mismatched {field}");
+        let payment_status: String = db
+            .query_one_raw(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT status FROM payment WHERE purchase_id=$1",
+                [purchase_id.into()],
+            ))
+            .await
+            .unwrap()
+            .unwrap()
+            .try_get("", "status")
+            .unwrap();
+        assert_eq!(payment_status, "pending", "mismatched {field} was applied");
+    }
+
+    assert_eq!(
+        authorization.lock().unwrap().as_slice(),
+        ["Bearer tc09-pagbank-account-token-for-tests-only"; 4]
+    );
+    server.abort();
     cleanup(root, db, schema).await.unwrap();
 }
 
