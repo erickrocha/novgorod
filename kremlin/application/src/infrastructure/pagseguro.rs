@@ -84,6 +84,8 @@ impl PagSeguro {
             Some("sandbox") => "https://sandbox.api.pagseguro.com".to_string(),
             _ => return Err(ProviderError("Ambiente do PagSeguro inválido".into())),
         };
+        #[cfg(test)]
+        let base_url = std::env::var("PAGSEGURO_API_BASE_URL").unwrap_or(base_url);
         Self::with_base_url(token, base_url)
     }
 

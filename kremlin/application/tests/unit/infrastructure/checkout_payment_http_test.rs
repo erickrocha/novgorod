@@ -437,6 +437,15 @@ async fn mercado_pago_cancel_double(
     }))
 }
 
+async fn tc28_provider_error_response() -> (StatusCode, axum::Json<Value>) {
+    (
+        StatusCode::BAD_GATEWAY,
+        axum::Json(json!({
+            "message": "token=tc28-token-body-marker tax_id=tc28-tax-body-marker card=tc28-card-body-marker"
+        })),
+    )
+}
+
 async fn create_purchase_from_quote(
     app: Router,
     idempotency_key: &str,
@@ -1818,6 +1827,328 @@ async fn expired_payment_cancel_uses_tenant_mercado_pago_credentials() {
         .try_get("", "status")
         .unwrap();
     assert_eq!(coupon_status, "released");
+    server.abort();
+    cleanup(root, db, schema).await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires isolated PostgreSQL, payment test keyring, and local provider double"]
+async fn mercado_pago_provider_error_logs_redact_bodies_across_payment_flows() {
+    const TENANT_TOKEN: &str = "tc28-tenant-mp-token";
+    const TENANT_SECRET: &str = "tc28-tenant-mp-secret";
+    const PROVIDER_ID: &str = "987650028";
+    const REQUEST_ID: &str = "tc28-request-id";
+    const TIMESTAMP: &str = "1727280000";
+    let markers = [
+        "tc28-token-body-marker",
+        "tc28-tax-body-marker",
+        "tc28-card-body-marker",
+    ];
+
+    let _environment_restore = EnvironmentRestore::capture(&[
+        "PAYMENT_PROVIDER_MODE",
+        "MP_API_BASE_URL",
+        "PAYMENT_RECONCILIATION_WINDOW_HOURS",
+    ]);
+    unsafe {
+        std::env::set_var("PAYMENT_PROVIDER_MODE", "real");
+        std::env::set_var("PAYMENT_RECONCILIATION_WINDOW_HOURS", "3");
+    }
+    let payment_keys = Arc::new(PaymentKeyRing::from_env().unwrap());
+    let (root, db, schema) = database().await.unwrap();
+    Migrator::up(&db, None).await.unwrap();
+    fixtures(&db).await.unwrap();
+    let credentials = TenantCredentialsPayload::MercadoPago(MercadoPagoCredentials {
+        access_token: TENANT_TOKEN.into(),
+        public_key: Some("tc28-tenant-public-key".into()),
+        collector_id: Some(4567),
+        webhook_secret: Some(TENANT_SECRET.into()),
+    });
+    let (key_version, encrypted) = payment_keys.encrypt_payload(1, &credentials).unwrap();
+    db.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "INSERT INTO tenant_payment_settings (tenant_id,provider,credentials,key_version) VALUES (1,'mercado_pago',$1,$2)",
+        [encrypted.into(), key_version.into()],
+    ))
+    .await
+    .unwrap();
+    let mut app_state = state(db.clone());
+    app_state.payment_keys = payment_keys.clone();
+    let app = router(app_state);
+
+    let double = Router::new()
+        .route("/v1/payments", post(tc28_provider_error_response))
+        .route("/v1/payments/search", get(tc28_provider_error_response))
+        .route("/v1/payments/{id}", get(tc28_provider_error_response));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, double).await.unwrap() });
+    unsafe {
+        std::env::set_var("MP_API_BASE_URL", format!("http://{address}"));
+    }
+    crate::test_log_capture::install();
+
+    cart_fixture(&db, Some(1), 1, &[1]).await.unwrap();
+    let purchase_id = create_purchase_from_quote(app.clone(), "tc28-redaction", &[1])
+        .await
+        .unwrap();
+    crate::test_log_capture::clear();
+    let (submit_status, submitted) = request(
+        app.clone(),
+        Method::POST,
+        &format!("/purchases/{purchase_id}/payments/submit"),
+        Some(json!({
+            "token":"tc28-input-card-token-marker",
+            "paymentMethodId":"visa",
+            "installments":1
+        })),
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(submit_status, StatusCode::OK, "{submitted}");
+    let submit_logs = crate::test_log_capture::contents();
+    for marker in markers.iter().chain(["tc28-input-card-token-marker"].iter()) {
+        assert!(!submit_logs.contains(marker), "{submit_logs}");
+    }
+
+    let payment_id: i64 = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT id FROM payment WHERE purchase_id=$1",
+            [purchase_id.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "id")
+        .unwrap();
+    crate::test_log_capture::clear();
+    let (status_code, _) = request(
+        app.clone(),
+        Method::GET,
+        &format!("/purchases/{purchase_id}/payments/status"),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(status_code, StatusCode::SERVICE_UNAVAILABLE);
+    let status_logs = crate::test_log_capture::contents();
+    for marker in markers {
+        assert!(!status_logs.contains(marker), "{status_logs}");
+    }
+
+    db.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "UPDATE payment SET gateway_provider='mercado_pago',gateway_reference=$1 WHERE id=$2",
+        [PROVIDER_ID.into(), payment_id.into()],
+    ))
+    .await
+    .unwrap();
+    let body = format!(r#"{{"data":{{"id":"{PROVIDER_ID}"}}}}"#);
+    let signature = mercado_pago_signature(
+        TENANT_SECRET,
+        TIMESTAMP,
+        REQUEST_ID,
+        PROVIDER_ID,
+    );
+    crate::test_log_capture::clear();
+    let webhook_status = mercado_pago_webhook_request(
+        app.clone(),
+        body.as_bytes(),
+        REQUEST_ID,
+        &signature,
+    )
+    .await
+    .unwrap();
+    assert_eq!(webhook_status, StatusCode::SERVICE_UNAVAILABLE);
+    let webhook_logs = crate::test_log_capture::contents();
+    for marker in markers {
+        assert!(!webhook_logs.contains(marker), "{webhook_logs}");
+    }
+
+    db.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "UPDATE payment SET created_at=now()-interval '1 hour',updated_at=now()-interval '11 minutes' WHERE id=$1",
+        [payment_id.into()],
+    ))
+    .await
+    .unwrap();
+    crate::test_log_capture::clear();
+    let mut reconciliation_state = state(db.clone());
+    reconciliation_state.payment_keys = payment_keys;
+    assert_eq!(
+        crate::endpoints::checkout_payment_endpoint::reconcile_unresolved(&reconciliation_state)
+            .await
+            .unwrap(),
+        0
+    );
+    let reconciliation_logs = crate::test_log_capture::contents();
+    assert!(reconciliation_logs.contains("WARN reconciliation: payment"));
+    for marker in markers {
+        assert!(!reconciliation_logs.contains(marker), "{reconciliation_logs}");
+    }
+
+    server.abort();
+    cleanup(root, db, schema).await.unwrap();
+}
+
+async fn tc28_pagbank_error_response() -> (StatusCode, axum::Json<Value>) {
+    (
+        StatusCode::BAD_GATEWAY,
+        axum::Json(json!({
+            "error_messages": [{
+                "code": "50099",
+                "description": "token=tc28-pagbank-token-marker tax_id=tc28-pagbank-tax-marker card=tc28-pagbank-card-marker"
+            }]
+        })),
+    )
+}
+
+#[tokio::test]
+#[ignore = "requires isolated PostgreSQL, payment test keyring, and local PagBank double"]
+async fn pagbank_provider_error_logs_redact_bodies_across_payment_flows() {
+    const TENANT_TOKEN: &str = "tc28-pagbank-tenant-token";
+    const MARKERS: [&str; 3] = [
+        "tc28-pagbank-token-marker",
+        "tc28-pagbank-tax-marker",
+        "tc28-pagbank-card-marker",
+    ];
+    let _environment_restore = EnvironmentRestore::capture(&[
+        "PAYMENT_PROVIDER_MODE",
+        "PAGSEGURO_API_BASE_URL",
+        "PAYMENT_RECONCILIATION_WINDOW_HOURS",
+    ]);
+    unsafe {
+        std::env::set_var("PAYMENT_PROVIDER_MODE", "real");
+        std::env::set_var("PAYMENT_RECONCILIATION_WINDOW_HOURS", "3");
+    }
+    let payment_keys = Arc::new(PaymentKeyRing::from_env().unwrap());
+    let (root, db, schema) = database().await.unwrap();
+    Migrator::up(&db, None).await.unwrap();
+    fixtures(&db).await.unwrap();
+    let credentials = TenantCredentialsPayload::PagSeguro(PagSeguroCredentials {
+        token: TENANT_TOKEN.into(),
+        public_key: None,
+        environment: Some("sandbox".into()),
+    });
+    let (key_version, encrypted) = payment_keys.encrypt_payload(1, &credentials).unwrap();
+    db.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "INSERT INTO tenant_payment_settings (tenant_id,provider,credentials,key_version) VALUES (1,'pagseguro',$1,$2)",
+        [encrypted.into(), key_version.into()],
+    ))
+    .await
+    .unwrap();
+    let mut app_state = state(db.clone());
+    app_state.payment_keys = payment_keys.clone();
+    let app = router(app_state);
+
+    let double = Router::new()
+        .route("/charges", post(tc28_pagbank_error_response).get(tc28_pagbank_error_response))
+        .route("/charges/{reference}", get(tc28_pagbank_error_response));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let base_url = format!("http://{address}");
+    let server = tokio::spawn(async move { axum::serve(listener, double).await.unwrap() });
+    unsafe {
+        std::env::set_var("PAGSEGURO_API_BASE_URL", &base_url);
+    }
+    crate::test_log_capture::install();
+
+    cart_fixture(&db, Some(1), 1, &[1]).await.unwrap();
+    let purchase_id = create_purchase_from_quote(app.clone(), "tc28-pagbank-redaction", &[1])
+        .await
+        .unwrap();
+    crate::test_log_capture::clear();
+    let (submit_status, submitted) = request(
+        app.clone(),
+        Method::POST,
+        &format!("/purchases/{purchase_id}/payments/submit"),
+        Some(json!({
+            "token":"tc28-input-pagbank-card-token-marker",
+            "paymentMethodId":"visa",
+            "installments":1
+        })),
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(submit_status, StatusCode::OK, "{submitted}");
+    let submit_logs = crate::test_log_capture::contents();
+    for marker in MARKERS.iter().chain(["tc28-input-pagbank-card-token-marker"].iter()) {
+        assert!(!submit_logs.contains(marker), "{submit_logs}");
+    }
+
+    let payment = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT id,attempt_key FROM payment WHERE purchase_id=$1",
+            [purchase_id.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap();
+    let payment_id: i64 = payment.try_get("", "id").unwrap();
+    let attempt_key: String = payment.try_get("", "attempt_key").unwrap();
+    crate::test_log_capture::clear();
+    let (status_code, _) = request(
+        app.clone(),
+        Method::GET,
+        &format!("/purchases/{purchase_id}/payments/status"),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(status_code, StatusCode::SERVICE_UNAVAILABLE);
+    let status_logs = crate::test_log_capture::contents();
+    for marker in MARKERS {
+        assert!(!status_logs.contains(marker), "{status_logs}");
+    }
+
+    let body = format!(
+        r#"{{"reference_id":"torg-{purchase_id}-{attempt_key}","status":"PAID"}}"#
+    );
+    let signature = pagbank_signature(TENANT_TOKEN, body.as_bytes());
+    crate::test_log_capture::clear();
+    let webhook_status = webhook_request_with_provider_base(
+        app.clone(),
+        body.as_bytes(),
+        &signature,
+        Some(&base_url),
+    )
+    .await
+    .unwrap();
+    assert_eq!(webhook_status, StatusCode::SERVICE_UNAVAILABLE);
+    let webhook_logs = crate::test_log_capture::contents();
+    for marker in MARKERS {
+        assert!(!webhook_logs.contains(marker), "{webhook_logs}");
+    }
+
+    db.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "UPDATE payment SET created_at=now()-interval '1 hour',updated_at=now()-interval '11 minutes' WHERE id=$1",
+        [payment_id.into()],
+    ))
+    .await
+    .unwrap();
+    crate::test_log_capture::clear();
+    let mut reconciliation_state = state(db.clone());
+    reconciliation_state.payment_keys = payment_keys;
+    assert_eq!(
+        crate::endpoints::checkout_payment_endpoint::reconcile_unresolved(&reconciliation_state)
+            .await
+            .unwrap(),
+        0
+    );
+    let reconciliation_logs = crate::test_log_capture::contents();
+    assert!(reconciliation_logs.contains("WARN reconciliation: payment"));
+    for marker in MARKERS {
+        assert!(!reconciliation_logs.contains(marker), "{reconciliation_logs}");
+    }
+
     server.abort();
     cleanup(root, db, schema).await.unwrap();
 }
