@@ -4,6 +4,7 @@ use crate::{
     endpoints::{
         checkout_payment_endpoint::{pagseguro_webhook, status, submit, webhook},
         checkout_quote_endpoint::{quote, select_shipping},
+        payment_settings_endpoint::{get as get_payment_settings, put as put_payment_settings},
         orders_endpoint::{
             create_purchase, get_by_id, get_purchase, history, payments, transactions,
         },
@@ -279,6 +280,26 @@ async fn request_as(
     let bytes = to_bytes(response.into_body(), usize::MAX).await?;
     let body = serde_json::from_slice(&bytes)?;
     Ok((status, body))
+}
+
+async fn request_status_as(
+    app: Router,
+    method: Method,
+    uri: &str,
+    body: Option<Value>,
+    actor: User,
+) -> anyhow::Result<StatusCode> {
+    let mut builder = Request::builder().method(method).uri(uri);
+    if body.is_some() {
+        builder = builder.header("content-type", "application/json");
+    }
+    let mut request = builder.body(Body::from(
+        body.map(|value| value.to_string()).unwrap_or_default(),
+    ))?;
+    request.extensions_mut().insert(actor);
+    request.extensions_mut().insert(Locale::En);
+    request.extensions_mut().insert(TenantContext::Marketplace);
+    Ok(app.oneshot(request).await?.status())
 }
 
 async fn webhook_request(
@@ -1541,6 +1562,121 @@ async fn tc10_pagseguro_webhook_preserves_terminal_state_and_rejects_divergent_r
     .unwrap();
     assert_eq!(divergent, StatusCode::CONFLICT);
     server.abort();
+    cleanup(root, db, schema).await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires isolated PostgreSQL and payment test keyring"]
+async fn tc13_payment_settings_authorize_roles_redact_secrets_and_bind_ciphertext_to_tenant() {
+    const ACCESS_TOKEN: &str = "tc13-access-token-secret-marker";
+    const WEBHOOK_SECRET: &str = "tc13-webhook-secret-marker";
+    let payment_keys = Arc::new(PaymentKeyRing::from_env().unwrap());
+    let (root, db, schema) = database().await.unwrap();
+    Migrator::up(&db, None).await.unwrap();
+    fixtures(&db).await.unwrap();
+    let app = Router::new()
+        .route(
+            "/tenants/{id}/payment-settings",
+            get(get_payment_settings).put(put_payment_settings),
+        )
+        .with_state({
+            let mut app_state = state(db.clone());
+            app_state.payment_keys = payment_keys.clone();
+            app_state
+        });
+    let settings_uri = "/tenants/1/payment-settings";
+    let update = || {
+        json!({
+            "provider":"mercado_pago",
+            "credentials":{
+                "mercadoPago":{
+                    "accessToken":ACCESS_TOKEN,
+                    "publicKey":"tc13-public-key",
+                    "collectorId":1234,
+                    "webhookSecret":WEBHOOK_SECRET
+                }
+            }
+        })
+    };
+
+    for actor in [
+        user_with_role(9, Role::SysAdmin, None),
+        user_with_role(10, Role::TenantOwner, Some(1)),
+    ] {
+        let status = request_status_as(
+            app.clone(),
+            Method::PUT,
+            settings_uri,
+            Some(update()),
+            actor,
+        )
+        .await
+        .unwrap();
+        assert_eq!(status, StatusCode::NO_CONTENT);
+    }
+    for actor in [
+        user_with_role(11, Role::TenantOwner, Some(2)),
+        user_with_role(12, Role::TenantUser, Some(1)),
+        user_with_role(13, Role::Customer, None),
+    ] {
+        let status = request_status_as(
+            app.clone(),
+            Method::PUT,
+            settings_uri,
+            Some(update()),
+            actor,
+        )
+        .await
+        .unwrap();
+        assert_eq!(status, StatusCode::FORBIDDEN);
+    }
+
+    let (status, response) = request_as(
+        app,
+        Method::GET,
+        settings_uri,
+        None,
+        None,
+        user_with_role(10, Role::TenantOwner, Some(1)),
+    )
+    .await
+    .unwrap();
+    assert_eq!(status, StatusCode::OK, "{response}");
+    assert_eq!(response["provider"], "mercado_pago");
+    assert_eq!(response["credentialsConfigured"], true);
+    assert_eq!(response["publicKey"], "tc13-public-key");
+    let response_text = response.to_string();
+    assert!(!response_text.contains(ACCESS_TOKEN));
+    assert!(!response_text.contains(WEBHOOK_SECRET));
+    assert!(response.get("credentials").is_none());
+    assert!(response.get("accessToken").is_none());
+    assert!(response.get("webhookSecret").is_none());
+
+    let stored = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT credentials, key_version FROM tenant_payment_settings WHERE tenant_id=1",
+            [],
+        ))
+        .await
+        .unwrap()
+        .unwrap();
+    let encrypted: Vec<u8> = stored.try_get("", "credentials").unwrap();
+    let key_version: String = stored.try_get("", "key_version").unwrap();
+    assert!(!encrypted
+        .windows(ACCESS_TOKEN.len())
+        .any(|window| window == ACCESS_TOKEN.as_bytes()));
+    assert!(!encrypted
+        .windows(WEBHOOK_SECRET.len())
+        .any(|window| window == WEBHOOK_SECRET.as_bytes()));
+    assert!(matches!(
+        payment_keys.decrypt_payload(1, &key_version, &encrypted),
+        Ok(TenantCredentialsPayload::MercadoPago(_))
+    ));
+    assert!(payment_keys
+        .decrypt_payload(2, &key_version, &encrypted)
+        .is_err());
+
     cleanup(root, db, schema).await.unwrap();
 }
 
