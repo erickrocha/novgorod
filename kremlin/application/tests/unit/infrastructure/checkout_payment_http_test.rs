@@ -2740,6 +2740,310 @@ async fn tc05_persists_attempt_before_provider_and_reuses_it_for_both_providers(
 
 #[tokio::test]
 #[ignore = "requires isolated PostgreSQL and PAYMENT_PROVIDER_MODE=mock"]
+async fn tc06_maps_provider_results_and_rolls_back_atomic_failure() {
+    let _environment_restore = EnvironmentRestore::capture(&[
+        "PAYMENT_PROVIDER_MODE",
+        "PAYMENT_MOCK_PROVIDER",
+    ]);
+    unsafe {
+        std::env::set_var("PAYMENT_PROVIDER_MODE", "mock");
+    }
+    let (root, db, schema) = database().await.unwrap();
+    Migrator::up(&db, None).await.unwrap();
+    fixtures(&db).await.unwrap();
+    let app = router(state(db.clone()));
+
+    for provider_name in ["mercado_pago", "pagseguro"] {
+        unsafe {
+            std::env::set_var("PAYMENT_MOCK_PROVIDER", provider_name);
+        }
+        for (outcome, expected_payment, expected_terminal, expected_coupon) in [
+            ("approved", "captured", Some("paid"), "redeemed"),
+            ("authorized", "authorized", None, "reserved"),
+            ("declined", "failed", Some("payment_failed"), "released"),
+            ("pending", "pending", None, "reserved"),
+        ] {
+            cart_fixture(&db, Some(1), 1, &[1]).await.unwrap();
+            let purchase_id = create_purchase_from_quote(
+                app.clone(),
+                &format!("tc06-{provider_name}-{outcome}"),
+                &[1],
+            )
+            .await
+            .unwrap();
+            let order = db
+                .query_one_raw(Statement::from_sql_and_values(
+                    DbBackend::Postgres,
+                    "SELECT id,status FROM orders WHERE purchase_id=$1",
+                    [purchase_id.into()],
+                ))
+                .await
+                .unwrap()
+                .unwrap();
+            let order_id: i64 = order.try_get("", "id").unwrap();
+            let initial_order_status: String = order.try_get("", "status").unwrap();
+            let initial_purchase_status: String = db
+                .query_one_raw(Statement::from_sql_and_values(
+                    DbBackend::Postgres,
+                    "SELECT status FROM purchase WHERE id=$1",
+                    [purchase_id.into()],
+                ))
+                .await
+                .unwrap()
+                .unwrap()
+                .try_get("", "status")
+                .unwrap();
+            let coupon_code = format!("TC06-{provider_name}-{outcome}");
+            let coupon = db
+                .query_one_raw(Statement::from_sql_and_values(
+                    DbBackend::Postgres,
+                    "INSERT INTO coupon (uuid,tenant_id,code,coupon_type,value,created_at,updated_at) VALUES (gen_random_uuid(),1,$1,'PERCENTAGE',10,now(),now()) RETURNING id",
+                    [coupon_code.clone().into()],
+                ))
+                .await
+                .unwrap()
+                .unwrap();
+            let coupon_id: i64 = coupon.try_get("", "id").unwrap();
+            db.execute_raw(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "UPDATE orders SET coupon_id=$1,coupon_code=$2 WHERE id=$3",
+                [coupon_id.into(), coupon_code.into(), order_id.into()],
+            ))
+            .await
+            .unwrap();
+            db.execute_raw(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "INSERT INTO checkout_coupon_reservation (coupon_id,customer_id,purchase_id,order_id,status,expires_at) VALUES ($1,1,$2,$3,'reserved',now()+interval '1 hour')",
+                [coupon_id.into(), purchase_id.into(), order_id.into()],
+            ))
+            .await
+            .unwrap();
+
+            let (status, response) = request(
+                app.clone(),
+                Method::POST,
+                &format!("/purchases/{purchase_id}/payments/submit"),
+                Some(json!({
+                    "token":format!("mock:{outcome}"),
+                    "paymentMethodId":"visa",
+                    "installments":1
+                })),
+                None,
+            )
+            .await
+            .unwrap();
+            assert_eq!(status, StatusCode::OK, "{provider_name}/{outcome}: {response}");
+            assert_eq!(response["status"], expected_payment);
+
+            let payment = db
+                .query_one_raw(Statement::from_sql_and_values(
+                    DbBackend::Postgres,
+                    "SELECT id,status,gateway_provider FROM payment WHERE purchase_id=$1",
+                    [purchase_id.into()],
+                ))
+                .await
+                .unwrap()
+                .unwrap();
+            let payment_id: i64 = payment.try_get("", "id").unwrap();
+            let transaction_status: String = db
+                .query_one_raw(Statement::from_sql_and_values(
+                    DbBackend::Postgres,
+                    "SELECT status FROM payment_transaction WHERE payment_id=$1 AND operation='charge'",
+                    [payment_id.into()],
+                ))
+                .await
+                .unwrap()
+                .unwrap()
+                .try_get("", "status")
+                .unwrap();
+            assert_eq!(transaction_status, expected_payment);
+            let coupon_status: String = db
+                .query_one_raw(Statement::from_sql_and_values(
+                    DbBackend::Postgres,
+                    "SELECT status FROM checkout_coupon_reservation WHERE purchase_id=$1",
+                    [purchase_id.into()],
+                ))
+                .await
+                .unwrap()
+                .unwrap()
+                .try_get("", "status")
+                .unwrap();
+            assert_eq!(coupon_status, expected_coupon);
+            let purchase_status: String = db
+                .query_one_raw(Statement::from_sql_and_values(
+                    DbBackend::Postgres,
+                    "SELECT status FROM purchase WHERE id=$1",
+                    [purchase_id.into()],
+                ))
+                .await
+                .unwrap()
+                .unwrap()
+                .try_get("", "status")
+                .unwrap();
+            let order_status: String = db
+                .query_one_raw(Statement::from_sql_and_values(
+                    DbBackend::Postgres,
+                    "SELECT status FROM orders WHERE id=$1",
+                    [order_id.into()],
+                ))
+                .await
+                .unwrap()
+                .unwrap()
+                .try_get("", "status")
+                .unwrap();
+            if let Some(expected_terminal) = expected_terminal {
+                assert_eq!(purchase_status, expected_terminal);
+                assert_eq!(order_status, expected_terminal);
+            } else {
+                assert_eq!(purchase_status, initial_purchase_status);
+                assert_eq!(order_status, initial_order_status);
+            }
+            let recorded_provider: String = payment.try_get("", "gateway_provider").unwrap();
+            assert_eq!(recorded_provider, provider_name);
+        }
+    }
+
+    unsafe {
+        std::env::set_var("PAYMENT_MOCK_PROVIDER", "mercado_pago");
+    }
+    cart_fixture(&db, Some(1), 1, &[1]).await.unwrap();
+    let rollback_purchase_id = create_purchase_from_quote(app.clone(), "tc06-rollback", &[1])
+        .await
+        .unwrap();
+    let rollback_order_id: i64 = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT id FROM orders WHERE purchase_id=$1",
+            [rollback_purchase_id.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "id")
+        .unwrap();
+    let rollback_coupon = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "INSERT INTO coupon (uuid,tenant_id,code,coupon_type,value,created_at,updated_at) VALUES (gen_random_uuid(),1,'TC06-ROLLBACK','PERCENTAGE',10,now(),now()) RETURNING id",
+            [],
+        ))
+        .await
+        .unwrap()
+        .unwrap();
+    let rollback_coupon_id: i64 = rollback_coupon.try_get("", "id").unwrap();
+    db.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "UPDATE orders SET coupon_id=$1,coupon_code='TC06-ROLLBACK' WHERE id=$2",
+        [rollback_coupon_id.into(), rollback_order_id.into()],
+    ))
+    .await
+    .unwrap();
+    db.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "INSERT INTO checkout_coupon_reservation (coupon_id,customer_id,purchase_id,order_id,status,expires_at) VALUES ($1,1,$2,$3,'reserved',now()+interval '1 hour')",
+        [rollback_coupon_id.into(), rollback_purchase_id.into(), rollback_order_id.into()],
+    ))
+    .await
+    .unwrap();
+    db.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "UPDATE sku_stock SET reserved=0 WHERE tenant_id=1 AND sku_id=1",
+        [],
+    ))
+    .await
+    .unwrap();
+    let rollback_status = request_in(
+        app.clone(),
+        Method::POST,
+        &format!("/purchases/{rollback_purchase_id}/payments/submit"),
+        Some(json!({
+            "token":"mock:approved",
+            "paymentMethodId":"visa",
+            "installments":1
+        })),
+        TenantContext::Marketplace,
+    )
+    .await
+    .unwrap();
+    assert_eq!(rollback_status, StatusCode::SERVICE_UNAVAILABLE);
+    let payment = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT id,status FROM payment WHERE purchase_id=$1",
+            [rollback_purchase_id.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap();
+    let rollback_payment_id: i64 = payment.try_get("", "id").unwrap();
+    let rollback_payment_status: String = payment.try_get("", "status").unwrap();
+    assert_eq!(rollback_payment_status, "pending");
+    let rollback_transaction_status: String = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT status FROM payment_transaction WHERE payment_id=$1 AND operation='charge'",
+            [rollback_payment_id.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "status")
+        .unwrap();
+    assert_eq!(rollback_transaction_status, "pending");
+    let rollback_purchase_status: String = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT status FROM purchase WHERE id=$1",
+            [rollback_purchase_id.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "status")
+        .unwrap();
+    assert_eq!(rollback_purchase_status, "pending_payment");
+    let rollback_order_status: String = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT status FROM orders WHERE id=$1",
+            [rollback_order_id.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "status")
+        .unwrap();
+    assert_eq!(rollback_order_status, "pending_payment");
+    let rollback_coupon_status: String = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT status FROM checkout_coupon_reservation WHERE purchase_id=$1",
+            [rollback_purchase_id.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "status")
+        .unwrap();
+    assert_eq!(rollback_coupon_status, "reserved");
+    let rollback_card_rows: i64 = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT count(*) AS count FROM credit_card_details WHERE payment_id=$1",
+            [rollback_payment_id.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "count")
+        .unwrap();
+    assert_eq!(rollback_card_rows, 0);
+
+    cleanup(root, db, schema).await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires isolated PostgreSQL and PAYMENT_PROVIDER_MODE=mock"]
 async fn tc03_persists_only_accepted_card_metadata() {
     let _environment_restore = EnvironmentRestore::capture(&[
         "PAYMENT_PROVIDER_MODE",
