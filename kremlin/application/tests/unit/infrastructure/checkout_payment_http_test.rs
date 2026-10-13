@@ -1229,6 +1229,12 @@ async fn pagseguro_webhook_authenticates_then_refreshes_through_mock_provider() 
 #[ignore = "requires isolated PostgreSQL, PagBank test keyring, and PAYMENT_PROVIDER_MODE=mock"]
 async fn tc09_pagseguro_webhook_rejects_invalid_notifications_and_provider_mismatches() {
     const TOKEN: &str = "tc09-pagbank-account-token-for-tests-only";
+    let _environment_restore =
+        EnvironmentRestore::capture(&["PAYMENT_PROVIDER_MODE", "PAYMENT_MOCK_PROVIDER"]);
+    unsafe {
+        std::env::set_var("PAYMENT_PROVIDER_MODE", "mock");
+        std::env::set_var("PAYMENT_MOCK_PROVIDER", "pagseguro");
+    }
     assert_eq!(
         std::env::var("PAYMENT_PROVIDER_MODE").as_deref().ok(),
         Some("mock")
@@ -1393,6 +1399,12 @@ async fn tc09_pagseguro_webhook_rejects_invalid_notifications_and_provider_misma
 #[ignore = "requires isolated PostgreSQL, PagBank test keyring, and PAYMENT_PROVIDER_MODE=mock"]
 async fn tc10_pagseguro_webhook_preserves_terminal_state_and_rejects_divergent_reference() {
     const TOKEN: &str = "tc10-pagbank-account-token-for-tests-only";
+    let _environment_restore =
+        EnvironmentRestore::capture(&["PAYMENT_PROVIDER_MODE", "PAYMENT_MOCK_PROVIDER"]);
+    unsafe {
+        std::env::set_var("PAYMENT_PROVIDER_MODE", "mock");
+        std::env::set_var("PAYMENT_MOCK_PROVIDER", "pagseguro");
+    }
     assert_eq!(
         std::env::var("PAYMENT_PROVIDER_MODE").as_deref().ok(),
         Some("mock")
