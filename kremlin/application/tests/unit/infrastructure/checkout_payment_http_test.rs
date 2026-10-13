@@ -2006,6 +2006,21 @@ async fn tc28_pagbank_error_response() -> (StatusCode, axum::Json<Value>) {
     )
 }
 
+async fn tc01_non_card_charge_response(
+    axum::Json(request): axum::Json<Value>,
+) -> axum::Json<Value> {
+    axum::Json(json!({
+        "id": "123456789",
+        "status": "approved",
+        "transaction_amount": request.get("transaction_amount").cloned().unwrap_or(Value::Null),
+        "currency_id": "BRL",
+        "external_reference": request.get("external_reference").cloned().unwrap_or(Value::Null),
+        "collector_id": 4567,
+        "payment_type_id": "debit_card",
+        "payment_method_id": "visa"
+    }))
+}
+
 #[tokio::test]
 #[ignore = "requires isolated PostgreSQL, payment test keyring, and local PagBank double"]
 async fn pagbank_provider_error_logs_redact_bodies_across_payment_flows() {
@@ -2148,6 +2163,123 @@ async fn pagbank_provider_error_logs_redact_bodies_across_payment_flows() {
     for marker in MARKERS {
         assert!(!reconciliation_logs.contains(marker), "{reconciliation_logs}");
     }
+
+    server.abort();
+    cleanup(root, db, schema).await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires isolated PostgreSQL and payment test keyring"]
+async fn tc01_card_submit_rejects_invalid_input_and_non_card_provider() {
+    let _environment_restore =
+        EnvironmentRestore::capture(&["PAYMENT_PROVIDER_MODE", "MP_API_BASE_URL"]);
+    unsafe {
+        std::env::set_var("PAYMENT_PROVIDER_MODE", "real");
+    }
+    let payment_keys = Arc::new(PaymentKeyRing::from_env().unwrap());
+    let (root, db, schema) = database().await.unwrap();
+    Migrator::up(&db, None).await.unwrap();
+    fixtures(&db).await.unwrap();
+    let credentials = TenantCredentialsPayload::MercadoPago(MercadoPagoCredentials {
+        access_token: "tc01-tenant-mp-token".into(),
+        public_key: Some("tc01-tenant-public-key".into()),
+        collector_id: Some(4567),
+        webhook_secret: Some("tc01-tenant-mp-secret".into()),
+    });
+    let (key_version, encrypted) = payment_keys.encrypt_payload(1, &credentials).unwrap();
+    db.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "INSERT INTO tenant_payment_settings (tenant_id,provider,credentials,key_version) VALUES (1,'mercado_pago',$1,$2)",
+        [encrypted.into(), key_version.into()],
+    ))
+    .await
+    .unwrap();
+    let mut app_state = state(db.clone());
+    app_state.payment_keys = payment_keys;
+    let app = router(app_state);
+    cart_fixture(&db, Some(1), 1, &[1]).await.unwrap();
+    let purchase_id = create_purchase_from_quote(app.clone(), "tc01-card-limits", &[1])
+        .await
+        .unwrap();
+    let submit_uri = format!("/purchases/{purchase_id}/payments/submit");
+
+    for invalid in [
+        json!({
+            "token":"card-token",
+            "paymentMethodId":"visa",
+            "installments":1,
+            "cardNumber":"4111111111111111"
+        }),
+        json!({"token":"card-token","paymentMethodId":"visa","installments":0}),
+        json!({"token":"card-token","paymentMethodId":"visa","installments":25}),
+        json!({"token":"x".repeat(1025),"paymentMethodId":"visa","installments":1}),
+    ] {
+        let status = request_in(
+            app.clone(),
+            Method::POST,
+            &submit_uri,
+            Some(invalid),
+            TenantContext::Marketplace,
+        )
+        .await
+        .unwrap();
+        assert!(status.is_client_error(), "{status}");
+    }
+    let attempts: i64 = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT count(*) AS count FROM payment_transaction WHERE payment_id=(SELECT id FROM payment WHERE purchase_id=$1)",
+            [purchase_id.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "count")
+        .unwrap();
+    assert_eq!(attempts, 0);
+
+    let double = Router::new()
+        .route("/v1/payments", post(tc01_non_card_charge_response));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, double).await.unwrap() });
+    unsafe {
+        std::env::set_var("MP_API_BASE_URL", format!("http://{address}"));
+    }
+    let status = request_in(
+        app,
+        Method::POST,
+        &submit_uri,
+        Some(json!({"token":"valid-token","paymentMethodId":"visa","installments":1})),
+        TenantContext::Marketplace,
+    )
+    .await
+    .unwrap();
+    assert_eq!(status, StatusCode::BAD_GATEWAY);
+    let payment_status: String = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT status FROM payment WHERE purchase_id=$1",
+            [purchase_id.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "status")
+        .unwrap();
+    assert_eq!(payment_status, "pending");
+    let attempts: i64 = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT count(*) AS count FROM payment_transaction WHERE payment_id=(SELECT id FROM payment WHERE purchase_id=$1)",
+            [purchase_id.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "count")
+        .unwrap();
+    assert_eq!(attempts, 1);
 
     server.abort();
     cleanup(root, db, schema).await.unwrap();
