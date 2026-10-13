@@ -147,6 +147,31 @@ async fn cart_counts(db: &DbConn, cart_id: i64) -> anyhow::Result<(i64, i64)> {
     Ok((cart_count, item_count))
 }
 
+async fn assert_payment_markers_absent(db: &DbConn, markers: &[&str]) {
+    for table in [
+        "payment",
+        "payment_transaction",
+        "credit_card_details",
+        "payment_allocation",
+    ] {
+        for marker in markers {
+            let row = db
+                .query_one_raw(Statement::from_sql_and_values(
+                    DbBackend::Postgres,
+                    format!(
+                        "SELECT count(*) AS count FROM {table} WHERE CAST({table} AS TEXT) ILIKE $1"
+                    ),
+                    [format!("%{marker}%").into()],
+                ))
+                .await
+                .unwrap()
+                .unwrap();
+            let count: i64 = row.try_get("", "count").unwrap();
+            assert_eq!(count, 0, "marker {marker} found in {table}");
+        }
+    }
+}
+
 fn user() -> User {
     User {
         id: Some(1),
@@ -1989,6 +2014,16 @@ async fn mercado_pago_provider_error_logs_redact_bodies_across_payment_flows() {
     for marker in markers {
         assert!(!reconciliation_logs.contains(marker), "{reconciliation_logs}");
     }
+    assert_payment_markers_absent(
+        &db,
+        &[
+            "tc28-token-body-marker",
+            "tc28-tax-body-marker",
+            "tc28-card-body-marker",
+            "tc28-input-card-token-marker",
+        ],
+    )
+    .await;
 
     server.abort();
     cleanup(root, db, schema).await.unwrap();
@@ -2163,6 +2198,16 @@ async fn pagbank_provider_error_logs_redact_bodies_across_payment_flows() {
     for marker in MARKERS {
         assert!(!reconciliation_logs.contains(marker), "{reconciliation_logs}");
     }
+    assert_payment_markers_absent(
+        &db,
+        &[
+            "tc28-pagbank-token-marker",
+            "tc28-pagbank-tax-marker",
+            "tc28-pagbank-card-marker",
+            "tc28-input-pagbank-card-token-marker",
+        ],
+    )
+    .await;
 
     server.abort();
     cleanup(root, db, schema).await.unwrap();
