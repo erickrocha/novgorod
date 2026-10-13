@@ -1453,7 +1453,7 @@ async fn marketplace_quote_selection_and_purchase_per_seller() {
 
 #[tokio::test]
 #[ignore = "requires isolated PostgreSQL and PAYMENT_PROVIDER_MODE=mock"]
-async fn reconciliation_backs_off_and_cancels_payments_past_the_window() {
+async fn reconciliation_covers_pending_authorized_backoff_locking_and_cancellation() {
     // NOV-5 TC-11/23/24: SR-PAY-021, SR-PAY-023
     let _environment_restore =
         EnvironmentRestore::capture(&["PAYMENT_RECONCILIATION_WINDOW_HOURS"]);
@@ -1492,6 +1492,46 @@ async fn reconciliation_backs_off_and_cancels_payments_past_the_window() {
         .unwrap()
         .try_get("", "id")
         .unwrap();
+
+    cart_fixture(&db, Some(1), 1, &[1]).await.unwrap();
+    let captured_purchase_id = create_purchase_from_quote(app.clone(), "recon-captured", &[1])
+        .await
+        .unwrap();
+    let (captured_status, captured_submit) = request(
+        app.clone(),
+        Method::POST,
+        &format!("/purchases/{captured_purchase_id}/payments/submit"),
+        Some(json!({"token":"mock:pending","paymentMethodId":"visa","installments":1})),
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(captured_status, StatusCode::OK, "{captured_submit}");
+    db.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "UPDATE payment SET gateway_reference=replace(gateway_reference, ':pending:', ':captured:'), created_at=now()-interval '1 hour', updated_at=now()-interval '11 minutes' WHERE purchase_id=$1",
+        [captured_purchase_id.into()],
+    ))
+    .await
+    .unwrap();
+    assert_eq!(
+        crate::endpoints::checkout_payment_endpoint::reconcile_unresolved(&state)
+            .await
+            .unwrap(),
+        1
+    );
+    let reconciled_status: String = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT status FROM payment WHERE purchase_id=$1",
+            [captured_purchase_id.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "status")
+        .unwrap();
+    assert_eq!(reconciled_status, "captured");
 
     // Fresh payment and a payment inside the two-minute age band are not due yet.
     let claimed = crate::endpoints::checkout_payment_endpoint::reconcile_unresolved(&state)
@@ -1615,11 +1655,16 @@ async fn reconciliation_backs_off_and_cancels_payments_past_the_window() {
         0
     );
     lock.commit().await.unwrap();
+    let (first_worker, second_worker) = tokio::join!(
+        crate::endpoints::checkout_payment_endpoint::reconcile_unresolved(&state),
+        crate::endpoints::checkout_payment_endpoint::reconcile_unresolved(&state),
+    );
+    assert_eq!(first_worker.unwrap() + second_worker.unwrap(), 1);
     assert_eq!(
         crate::endpoints::checkout_payment_endpoint::reconcile_unresolved(&state)
             .await
             .unwrap(),
-        1
+        0
     );
 
     // Provider errors are warned and leave the payment pending.
@@ -1655,10 +1700,57 @@ async fn reconciliation_backs_off_and_cancels_payments_past_the_window() {
         .unwrap();
     assert_eq!(pending_status, "pending");
 
+    crate::test_log_capture::clear();
+    db.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "UPDATE payment SET status='authorized', created_at=now()-interval '1 hour', updated_at=now()-interval '11 minutes' WHERE purchase_id=$1",
+        [purchase_id.into()],
+    ))
+    .await
+    .unwrap();
+    db.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "UPDATE payment_transaction SET status='authorized' WHERE payment_id=$1",
+        [payment_id.into()],
+    ))
+    .await
+    .unwrap();
+    assert_eq!(
+        crate::endpoints::checkout_payment_endpoint::reconcile_unresolved(&state)
+            .await
+            .unwrap(),
+        0
+    );
+    let authorized_logs = crate::test_log_capture::contents();
+    assert!(!authorized_logs.contains(&format!(
+        "WARN reconciliation: payment {payment_id} provider error"
+    )));
+    let authorized_status: String = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT status FROM payment WHERE purchase_id=$1",
+            [purchase_id.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "status")
+        .unwrap();
+    assert_eq!(authorized_status, "authorized");
+
     // Past the 3h window: cancelled at the provider, purchase fails, no refund.
-    db.execute_unprepared(
-        "UPDATE payment SET gateway_reference=replace(gateway_reference, ':error:', ':pending:'), created_at = now() - interval '4 hours', updated_at = now() - interval '11 minutes'",
-    )
+    db.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "UPDATE payment SET status='pending', gateway_reference=replace(gateway_reference, ':error:', ':pending:'), created_at=now()-interval '4 hours', updated_at=now()-interval '11 minutes' WHERE purchase_id=$1",
+        [purchase_id.into()],
+    ))
+    .await
+    .unwrap();
+    db.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "UPDATE payment_transaction SET status='pending' WHERE payment_id=$1",
+        [payment_id.into()],
+    ))
     .await
     .unwrap();
     let handled = crate::endpoints::checkout_payment_endpoint::reconcile_unresolved(&state)
@@ -1677,6 +1769,31 @@ async fn reconciliation_backs_off_and_cancels_payments_past_the_window() {
     assert_eq!(status, StatusCode::OK, "{purchase}");
     assert_eq!(purchase["payments"][0]["status"], "failed", "{purchase}");
     assert_eq!(purchase["status"], "payment_failed", "{purchase}");
+    let transaction = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT operation,status FROM payment_transaction WHERE payment_id=$1",
+            [payment_id.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap();
+    let operation: String = transaction.try_get("", "operation").unwrap();
+    let transaction_status: String = transaction.try_get("", "status").unwrap();
+    assert_eq!(operation, "charge");
+    assert_eq!(transaction_status, "failed");
+    let refund_count: i64 = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT count(*) AS count FROM payment_transaction WHERE payment_id=$1 AND operation='refund'",
+            [payment_id.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "count")
+        .unwrap();
+    assert_eq!(refund_count, 0);
 
     // Resolved payments are not claimed again.
     assert_eq!(
