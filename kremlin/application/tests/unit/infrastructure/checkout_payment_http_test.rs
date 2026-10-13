@@ -2240,7 +2240,7 @@ async fn tc01_card_submit_rejects_invalid_input_and_non_card_provider() {
     .await
     .unwrap();
     let mut app_state = state(db.clone());
-    app_state.payment_keys = payment_keys;
+    app_state.payment_keys = payment_keys.clone();
     let app = router(app_state);
     cart_fixture(&db, Some(1), 1, &[1]).await.unwrap();
     let purchase_id = create_purchase_from_quote(app.clone(), "tc01-card-limits", &[1])
@@ -2418,6 +2418,47 @@ async fn tc05_pagbank_charge_double(
             "type": "CREDIT_CARD",
             "card": {"brand":"visa","last_digits":"4242","exp_month":12,"exp_year":2030}
         }
+    }))
+}
+
+#[derive(Clone, Default)]
+struct Tc07TimeoutDoubleState {
+    charge_request: Arc<std::sync::Mutex<Option<Value>>>,
+    idempotency_key: Arc<std::sync::Mutex<Option<String>>>,
+    search_calls: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+async fn tc07_charge_never_responds(
+    axum::extract::State(state): axum::extract::State<Tc07TimeoutDoubleState>,
+    headers: HeaderMap,
+    axum::Json(request): axum::Json<Value>,
+) -> axum::response::Response {
+    *state.charge_request.lock().unwrap() = Some(request);
+    *state.idempotency_key.lock().unwrap() = headers
+        .get("x-idempotency-key")
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned);
+    std::future::pending().await
+}
+
+async fn tc07_search_finds_approved_payment(
+    axum::extract::State(state): axum::extract::State<Tc07TimeoutDoubleState>,
+) -> axum::Json<Value> {
+    state
+        .search_calls
+        .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let request = state.charge_request.lock().unwrap().clone().unwrap();
+    axum::Json(json!({
+        "results": [{
+            "id": "987650700",
+            "status": "approved",
+            "transaction_amount": request["transaction_amount"],
+            "currency_id": "BRL",
+            "external_reference": request["external_reference"],
+            "collector_id": 4567,
+            "payment_type_id": "credit_card",
+            "payment_method_id": "visa"
+        }]
     }))
 }
 
@@ -3039,6 +3080,150 @@ async fn tc06_maps_provider_results_and_rolls_back_atomic_failure() {
         .unwrap();
     assert_eq!(rollback_card_rows, 0);
 
+    cleanup(root, db, schema).await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires isolated PostgreSQL, payment test keyring, and local timeout double"]
+async fn tc07_provider_timeout_keeps_attempt_pending_then_reconciles() {
+    let _environment_restore =
+        EnvironmentRestore::capture(&["PAYMENT_PROVIDER_MODE", "MP_API_BASE_URL"]);
+    unsafe {
+        std::env::set_var("PAYMENT_PROVIDER_MODE", "real");
+    }
+    let payment_keys = Arc::new(PaymentKeyRing::from_env().unwrap());
+    let (root, db, schema) = database().await.unwrap();
+    Migrator::up(&db, None).await.unwrap();
+    fixtures(&db).await.unwrap();
+    let credentials = TenantCredentialsPayload::MercadoPago(MercadoPagoCredentials {
+        access_token: "tc07-tenant-mp-token".into(),
+        public_key: Some("tc07-tenant-public-key".into()),
+        collector_id: Some(4567),
+        webhook_secret: Some("tc07-tenant-mp-secret".into()),
+    });
+    let (key_version, encrypted) = payment_keys.encrypt_payload(1, &credentials).unwrap();
+    db.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "INSERT INTO tenant_payment_settings (tenant_id,provider,credentials,key_version) VALUES (1,'mercado_pago',$1,$2)",
+        [encrypted.into(), key_version.into()],
+    ))
+    .await
+    .unwrap();
+    let mut app_state = state(db.clone());
+    app_state.payment_keys = payment_keys.clone();
+    let app = router(app_state);
+    let double_state = Tc07TimeoutDoubleState::default();
+    let double = Router::new()
+        .route("/v1/payments", post(tc07_charge_never_responds))
+        .route("/v1/payments/search", get(tc07_search_finds_approved_payment))
+        .with_state(double_state.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, double).await.unwrap() });
+    unsafe {
+        std::env::set_var("MP_API_BASE_URL", format!("http://{address}"));
+    }
+
+    cart_fixture(&db, Some(1), 1, &[1]).await.unwrap();
+    let purchase_id = create_purchase_from_quote(app.clone(), "tc07-timeout", &[1])
+        .await
+        .unwrap();
+    let (submit_status, submitted) = request(
+        app.clone(),
+        Method::POST,
+        &format!("/purchases/{purchase_id}/payments/submit"),
+        Some(json!({
+            "token":"tc07-card-token",
+            "paymentMethodId":"visa",
+            "installments":1
+        })),
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(submit_status, StatusCode::OK, "{submitted}");
+    assert_eq!(submitted["status"], "pending");
+
+    let payment = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT id,status,attempt_key FROM payment WHERE purchase_id=$1",
+            [purchase_id.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap();
+    let payment_id: i64 = payment.try_get("", "id").unwrap();
+    let payment_status: String = payment.try_get("", "status").unwrap();
+    let attempt_key: String = payment.try_get("", "attempt_key").unwrap();
+    assert_eq!(payment_status, "pending");
+    assert!(!attempt_key.is_empty());
+    assert!(double_state
+        .idempotency_key
+        .lock()
+        .unwrap()
+        .as_deref()
+        .is_some_and(|key| key == attempt_key));
+    let transaction = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT status,idempotency_key FROM payment_transaction WHERE payment_id=$1 AND operation='charge'",
+            [payment_id.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap();
+    let transaction_status: String = transaction.try_get("", "status").unwrap();
+    let transaction_key: String = transaction.try_get("", "idempotency_key").unwrap();
+    assert_eq!(transaction_status, "pending");
+    assert_eq!(transaction_key, attempt_key);
+    let purchase_status: String = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT status FROM purchase WHERE id=$1",
+            [purchase_id.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "status")
+        .unwrap();
+    assert_eq!(purchase_status, "pending_payment");
+
+    db.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "UPDATE payment SET updated_at=now()-interval '1 minute' WHERE id=$1",
+        [payment_id.into()],
+    ))
+    .await
+    .unwrap();
+    let mut reconciliation_state = state(db.clone());
+    reconciliation_state.payment_keys = payment_keys;
+    assert_eq!(
+        crate::endpoints::checkout_payment_endpoint::reconcile_unresolved(&reconciliation_state)
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        double_state
+            .search_calls
+            .load(std::sync::atomic::Ordering::SeqCst),
+        1
+    );
+    let resolved_status: String = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT status FROM payment WHERE id=$1",
+            [payment_id.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "status")
+        .unwrap();
+    assert_eq!(resolved_status, "captured");
+    server.abort();
     cleanup(root, db, schema).await.unwrap();
 }
 
