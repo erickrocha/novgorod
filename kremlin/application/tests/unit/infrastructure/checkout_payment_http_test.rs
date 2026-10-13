@@ -386,6 +386,7 @@ struct MercadoPagoDoubleState {
     amount_cents: i64,
     external_reference: String,
     collector_id: i64,
+    status: String,
 }
 
 async fn mercado_pago_status_double(
@@ -402,7 +403,31 @@ async fn mercado_pago_status_double(
     );
     axum::Json(json!({
         "id": id,
-        "status": "rejected",
+        "status": state.status,
+        "transaction_amount": state.amount_cents as f64 / 100.0,
+        "currency_id": "BRL",
+        "external_reference": state.external_reference,
+        "collector_id": state.collector_id,
+        "payment_type_id": "credit_card",
+        "payment_method_id": "visa"
+    }))
+}
+
+async fn mercado_pago_cancel_double(
+    axum::extract::State(state): axum::extract::State<MercadoPagoDoubleState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> axum::Json<Value> {
+    state.authorization.lock().unwrap().push(
+        headers
+            .get("authorization")
+            .and_then(|header| header.to_str().ok())
+            .unwrap_or_default()
+            .to_owned(),
+    );
+    axum::Json(json!({
+        "id": id,
+        "status": "cancelled",
         "transaction_amount": state.amount_cents as f64 / 100.0,
         "currency_id": "BRL",
         "external_reference": state.external_reference,
@@ -902,7 +927,7 @@ async fn pagseguro_webhook_authenticates_then_refreshes_through_mock_provider() 
     .await
     .unwrap();
     let mut app_state = state(db.clone());
-    app_state.payment_keys = payment_keys;
+    app_state.payment_keys = payment_keys.clone();
     let app = router(app_state);
 
     cart_fixture(&db, Some(1), 1, &[1]).await.unwrap();
@@ -1158,6 +1183,7 @@ async fn mercado_pago_webhook_uses_tenant_secret_and_handles_repeated_ids() {
             amount_cents,
             external_reference,
             collector_id: 4567,
+            status: "rejected".into(),
         });
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
@@ -1263,6 +1289,535 @@ async fn mercado_pago_webhook_uses_tenant_secret_and_handles_repeated_ids() {
         .unwrap();
     assert_eq!(unchanged_status, "failed");
 
+    server.abort();
+    cleanup(root, db, schema).await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires isolated PostgreSQL, payment test keyring, and PAYMENT_PROVIDER_MODE=mock"]
+async fn late_captured_webhook_reconsumes_available_stock_or_logs_manual_followup() {
+    const TENANT_TOKEN: &str = "tc27-tenant-mp-token";
+    const TENANT_SECRET: &str = "tc27-tenant-mp-secret";
+    const PLATFORM_SECRET: &str = "tc27-platform-mp-secret";
+    const TIMESTAMP: &str = "1727280000";
+
+    assert_eq!(
+        std::env::var("PAYMENT_PROVIDER_MODE").as_deref().ok(),
+        Some("mock")
+    );
+    let _environment_restore = EnvironmentRestore::capture(&["MP_API_BASE_URL", "MP_WEBHOOK_SECRET"]);
+    let payment_keys = Arc::new(PaymentKeyRing::from_env().unwrap());
+    let (root, db, schema) = database().await.unwrap();
+    Migrator::up(&db, None).await.unwrap();
+    fixtures(&db).await.unwrap();
+    let credentials = TenantCredentialsPayload::MercadoPago(MercadoPagoCredentials {
+        access_token: TENANT_TOKEN.into(),
+        public_key: Some("tc27-tenant-public-key".into()),
+        collector_id: Some(4567),
+        webhook_secret: Some(TENANT_SECRET.into()),
+    });
+    let (key_version, encrypted) = payment_keys.encrypt_payload(1, &credentials).unwrap();
+    db.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "INSERT INTO tenant_payment_settings (tenant_id,provider,credentials,key_version) VALUES (1,'mercado_pago',$1,$2)",
+        [encrypted.into(), key_version.into()],
+    ))
+    .await
+    .unwrap();
+    let mut app_state = state(db.clone());
+    app_state.payment_keys = payment_keys.clone();
+    let app = router(app_state);
+    unsafe {
+        std::env::set_var("MP_WEBHOOK_SECRET", PLATFORM_SECRET);
+    }
+    crate::test_log_capture::install();
+
+    for (index, stock_available) in [true, false].into_iter().enumerate() {
+        cart_fixture(&db, Some(1), 1, &[1]).await.unwrap();
+        let purchase_id = create_purchase_from_quote(
+            app.clone(),
+            &format!("tc27-late-capture-{index}"),
+            &[1],
+        )
+        .await
+        .unwrap();
+        let (submit_status, submitted) = request(
+            app.clone(),
+            Method::POST,
+            &format!("/purchases/{purchase_id}/payments/submit"),
+            Some(json!({
+                "token":"mock:pending",
+                "paymentMethodId":"visa",
+                "installments":1
+            })),
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(submit_status, StatusCode::OK, "{submitted}");
+        assert_eq!(submitted["status"], "pending");
+        let payment = db
+            .query_one_raw(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT id,amount_cents,attempt_key FROM payment WHERE purchase_id=$1",
+                [purchase_id.into()],
+            ))
+            .await
+            .unwrap()
+            .unwrap();
+        let payment_id: i64 = payment.try_get("", "id").unwrap();
+        let amount_cents: i64 = payment.try_get("", "amount_cents").unwrap();
+        let attempt_key: String = payment.try_get("", "attempt_key").unwrap();
+        let order_id: i64 = db
+            .query_one_raw(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT id FROM orders WHERE purchase_id=$1",
+                [purchase_id.into()],
+            ))
+            .await
+            .unwrap()
+            .unwrap()
+            .try_get("", "id")
+            .unwrap();
+        let provider_id = format!("98765432{index}");
+        let external_reference = format!("torg-{purchase_id}-{attempt_key}");
+        db.execute_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "UPDATE payment SET gateway_provider='mercado_pago',gateway_reference=$1 WHERE id=$2",
+            [provider_id.clone().into(), payment_id.into()],
+        ))
+        .await
+        .unwrap();
+        db.execute_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "UPDATE purchase SET status='cancelled' WHERE id=$1",
+            [purchase_id.into()],
+        ))
+        .await
+        .unwrap();
+        db.execute_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "UPDATE orders SET status='cancelled',payment_status='failed' WHERE purchase_id=$1",
+            [purchase_id.into()],
+        ))
+        .await
+        .unwrap();
+        db.execute_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "UPDATE checkout_stock_reservation SET status='released' WHERE purchase_id=$1",
+            [purchase_id.into()],
+        ))
+        .await
+        .unwrap();
+        db.execute_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "UPDATE sku_stock SET quantity=$1,reserved=0 WHERE tenant_id=1 AND sku_id=1",
+            [if stock_available { 10_i32 } else { 0_i32 }.into()],
+        ))
+        .await
+        .unwrap();
+        let coupon_code = format!("TC27-LATE-{index}");
+        let coupon = db
+            .query_one_raw(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "INSERT INTO coupon (uuid,tenant_id,code,coupon_type,value,created_at,updated_at) VALUES (gen_random_uuid(),1,$1,'PERCENTAGE',10,now(),now()) RETURNING id",
+                [coupon_code.clone().into()],
+            ))
+            .await
+            .unwrap()
+            .unwrap();
+        let coupon_id: i64 = coupon.try_get("", "id").unwrap();
+        db.execute_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "UPDATE orders SET coupon_id=$1,coupon_code=$2 WHERE id=$3",
+            [coupon_id.into(), coupon_code.into(), order_id.into()],
+        ))
+        .await
+        .unwrap();
+        db.execute_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "INSERT INTO checkout_coupon_reservation (coupon_id,customer_id,purchase_id,order_id,status,expires_at) VALUES ($1,1,$2,$3,'released',now()-interval '1 hour')",
+            [coupon_id.into(), purchase_id.into(), order_id.into()],
+        ))
+        .await
+        .unwrap();
+
+        let authorization = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let double = Router::new()
+            .route("/v1/payments/{id}", get(mercado_pago_status_double))
+            .with_state(MercadoPagoDoubleState {
+                authorization: authorization.clone(),
+                amount_cents,
+                external_reference,
+                collector_id: 4567,
+                status: "approved".into(),
+            });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, double).await.unwrap() });
+        unsafe {
+            std::env::set_var("MP_API_BASE_URL", format!("http://{address}"));
+        }
+
+        let body = format!(r#"{{"data":{{"id":{provider_id}}}}}"#);
+        let request_id = format!("tc27-request-{index}");
+        let signature = mercado_pago_signature(
+            TENANT_SECRET,
+            TIMESTAMP,
+            &request_id,
+            &provider_id,
+        );
+        crate::test_log_capture::install();
+        crate::test_log_capture::clear();
+        let response = mercado_pago_webhook_request(
+            app.clone(),
+            body.as_bytes(),
+            &request_id,
+            &signature,
+        )
+        .await
+        .unwrap();
+        if response != StatusCode::OK {
+            panic!(
+                "late capture webhook returned {response}; authorization={:?}; logs={}",
+                authorization.lock().unwrap(),
+                crate::test_log_capture::contents()
+            );
+        }
+        assert_eq!(
+            authorization.lock().unwrap().as_slice(),
+            &[format!("Bearer {TENANT_TOKEN}")]
+        );
+
+        let payment_status: String = db
+            .query_one_raw(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT status FROM payment WHERE id=$1",
+                [payment_id.into()],
+            ))
+            .await
+            .unwrap()
+            .unwrap()
+            .try_get("", "status")
+            .unwrap();
+        let purchase_status: String = db
+            .query_one_raw(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT status FROM purchase WHERE id=$1",
+                [purchase_id.into()],
+            ))
+            .await
+            .unwrap()
+            .unwrap()
+            .try_get("", "status")
+            .unwrap();
+        let order_status: String = db
+            .query_one_raw(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT status FROM orders WHERE purchase_id=$1",
+                [purchase_id.into()],
+            ))
+            .await
+            .unwrap()
+            .unwrap()
+            .try_get("", "status")
+            .unwrap();
+        assert_eq!(payment_status, "captured");
+        assert_eq!(purchase_status, "paid");
+        assert_eq!(order_status, "paid");
+        let reservation_status: String = db
+            .query_one_raw(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT status FROM checkout_stock_reservation WHERE purchase_id=$1",
+                [purchase_id.into()],
+            ))
+            .await
+            .unwrap()
+            .unwrap()
+            .try_get("", "status")
+            .unwrap();
+        let coupon_status: String = db
+            .query_one_raw(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT status FROM checkout_coupon_reservation WHERE purchase_id=$1",
+                [purchase_id.into()],
+            ))
+            .await
+            .unwrap()
+            .unwrap()
+            .try_get("", "status")
+            .unwrap();
+        assert_eq!(coupon_status, "redeemed");
+        let stock = db
+            .query_one_raw(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT quantity,reserved FROM sku_stock WHERE tenant_id=1 AND sku_id=1",
+                [],
+            ))
+            .await
+            .unwrap()
+            .unwrap();
+        let quantity: i32 = stock.try_get("", "quantity").unwrap();
+        let reserved: i32 = stock.try_get("", "reserved").unwrap();
+        assert_eq!(reserved, 0);
+
+        if stock_available {
+            assert_eq!(reservation_status, "consumed");
+            assert_eq!(quantity, 9);
+            let replay = mercado_pago_webhook_request(
+                app.clone(),
+                body.as_bytes(),
+                &request_id,
+                &signature,
+            )
+            .await
+            .unwrap();
+            assert_eq!(replay, StatusCode::OK);
+            let replay_quantity: i32 = db
+                .query_one_raw(Statement::from_sql_and_values(
+                    DbBackend::Postgres,
+                    "SELECT quantity FROM sku_stock WHERE tenant_id=1 AND sku_id=1",
+                    [],
+                ))
+                .await
+                .unwrap()
+                .unwrap()
+                .try_get("", "quantity")
+                .unwrap();
+            assert_eq!(replay_quantity, 9);
+        } else {
+            assert_eq!(reservation_status, "released");
+            assert_eq!(quantity, 0);
+            assert!(crate::test_log_capture::contents().contains(&format!(
+                "ERROR late_capture_unfulfillable: stock unavailable, no refund attempted, manual follow-up, purchase_id={purchase_id}"
+            )));
+        }
+        server.abort();
+        let refund_count: i64 = db
+            .query_one_raw(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT count(*) AS count FROM payment_transaction WHERE payment_id=$1 AND operation='refund'",
+                [payment_id.into()],
+            ))
+            .await
+            .unwrap()
+            .unwrap()
+            .try_get("", "count")
+            .unwrap();
+        assert_eq!(refund_count, 0);
+    }
+
+    cleanup(root, db, schema).await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires isolated PostgreSQL, payment test keyring, and mock setup for initial submit"]
+async fn expired_payment_cancel_uses_tenant_mercado_pago_credentials() {
+    const TENANT_TOKEN: &str = "tc27-cancel-tenant-token";
+    const TENANT_SECRET: &str = "tc27-cancel-tenant-secret";
+
+    let _environment_restore = EnvironmentRestore::capture(&[
+        "PAYMENT_PROVIDER_MODE",
+        "MP_API_BASE_URL",
+        "PAYMENT_RECONCILIATION_WINDOW_HOURS",
+    ]);
+    unsafe {
+        std::env::set_var("PAYMENT_PROVIDER_MODE", "mock");
+        std::env::set_var("PAYMENT_RECONCILIATION_WINDOW_HOURS", "3");
+    }
+    let payment_keys = Arc::new(PaymentKeyRing::from_env().unwrap());
+    let (root, db, schema) = database().await.unwrap();
+    Migrator::up(&db, None).await.unwrap();
+    fixtures(&db).await.unwrap();
+    let credentials = TenantCredentialsPayload::MercadoPago(MercadoPagoCredentials {
+        access_token: TENANT_TOKEN.into(),
+        public_key: Some("tc27-cancel-public-key".into()),
+        collector_id: Some(4567),
+        webhook_secret: Some(TENANT_SECRET.into()),
+    });
+    let (key_version, encrypted) = payment_keys.encrypt_payload(1, &credentials).unwrap();
+    db.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "INSERT INTO tenant_payment_settings (tenant_id,provider,credentials,key_version) VALUES (1,'mercado_pago',$1,$2)",
+        [encrypted.into(), key_version.into()],
+    ))
+    .await
+    .unwrap();
+    let mut app_state = state(db.clone());
+    app_state.payment_keys = payment_keys.clone();
+    let app = router(app_state);
+
+    cart_fixture(&db, Some(1), 1, &[1]).await.unwrap();
+    let purchase_id = create_purchase_from_quote(app.clone(), "tc27-tenant-cancel", &[1])
+        .await
+        .unwrap();
+    let (submit_status, submitted) = request(
+        app.clone(),
+        Method::POST,
+        &format!("/purchases/{purchase_id}/payments/submit"),
+        Some(json!({
+            "token":"mock:pending",
+            "paymentMethodId":"visa",
+            "installments":1
+        })),
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(submit_status, StatusCode::OK, "{submitted}");
+    let payment = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT id,amount_cents,attempt_key FROM payment WHERE purchase_id=$1",
+            [purchase_id.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap();
+    let payment_id: i64 = payment.try_get("", "id").unwrap();
+    let amount_cents: i64 = payment.try_get("", "amount_cents").unwrap();
+    let attempt_key: String = payment.try_get("", "attempt_key").unwrap();
+    let order_id: i64 = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT id FROM orders WHERE purchase_id=$1",
+            [purchase_id.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "id")
+        .unwrap();
+    let coupon = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "INSERT INTO coupon (uuid,tenant_id,code,coupon_type,value,created_at,updated_at) VALUES (gen_random_uuid(),1,'TC27-CANCEL-CREDS','PERCENTAGE',10,now(),now()) RETURNING id",
+            [],
+        ))
+        .await
+        .unwrap()
+        .unwrap();
+    let coupon_id: i64 = coupon.try_get("", "id").unwrap();
+    db.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "UPDATE orders SET coupon_id=$1,coupon_code='TC27-CANCEL-CREDS' WHERE id=$2",
+        [coupon_id.into(), order_id.into()],
+    ))
+    .await
+    .unwrap();
+    db.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "INSERT INTO checkout_coupon_reservation (coupon_id,customer_id,purchase_id,order_id,status,expires_at) VALUES ($1,1,$2,$3,'reserved',now()+interval '1 hour')",
+        [coupon_id.into(), purchase_id.into(), order_id.into()],
+    ))
+    .await
+    .unwrap();
+    let provider_id = "987650001";
+    let external_reference = format!("torg-{purchase_id}-{attempt_key}");
+    db.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "UPDATE payment SET gateway_provider='mercado_pago',gateway_reference=$1,created_at=now()-interval '4 hours',updated_at=now()-interval '11 minutes' WHERE id=$2",
+        [provider_id.into(), payment_id.into()],
+    ))
+    .await
+    .unwrap();
+
+    let authorization = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let double = Router::new()
+        .route(
+            "/v1/payments/{id}",
+            get(mercado_pago_status_double).put(mercado_pago_cancel_double),
+        )
+        .with_state(MercadoPagoDoubleState {
+            authorization: authorization.clone(),
+            amount_cents,
+            external_reference,
+            collector_id: 4567,
+            status: "pending".into(),
+        });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, double).await.unwrap() });
+    unsafe {
+        std::env::set_var("MP_API_BASE_URL", format!("http://{address}"));
+        std::env::set_var("PAYMENT_PROVIDER_MODE", "real");
+    }
+
+    let mut reconciliation_state = state(db.clone());
+    reconciliation_state.payment_keys = payment_keys;
+    let handled = crate::endpoints::checkout_payment_endpoint::reconcile_unresolved(
+        &reconciliation_state,
+    )
+    .await
+    .unwrap();
+    assert_eq!(handled, 1);
+    assert_eq!(
+        authorization.lock().unwrap().as_slice(),
+        &[
+            format!("Bearer {TENANT_TOKEN}"),
+            format!("Bearer {TENANT_TOKEN}")
+        ]
+    );
+    let payment_status: String = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT status FROM payment WHERE id=$1",
+            [payment_id.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "status")
+        .unwrap();
+    assert_eq!(payment_status, "failed");
+    let purchase_status: String = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT status FROM purchase WHERE id=$1",
+            [purchase_id.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "status")
+        .unwrap();
+    assert_eq!(purchase_status, "payment_failed");
+    let order_status: String = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT status FROM orders WHERE purchase_id=$1",
+            [purchase_id.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "status")
+        .unwrap();
+    assert_eq!(order_status, "payment_failed");
+    let stock_reservation_status: String = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT status FROM checkout_stock_reservation WHERE purchase_id=$1",
+            [purchase_id.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "status")
+        .unwrap();
+    assert_eq!(stock_reservation_status, "released");
+    let coupon_status: String = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT status FROM checkout_coupon_reservation WHERE purchase_id=$1",
+            [purchase_id.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "status")
+        .unwrap();
+    assert_eq!(coupon_status, "released");
     server.abort();
     cleanup(root, db, schema).await.unwrap();
 }
@@ -1492,6 +2047,34 @@ async fn reconciliation_covers_pending_authorized_backoff_locking_and_cancellati
         .unwrap()
         .try_get("", "id")
         .unwrap();
+    let coupon_row = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "INSERT INTO coupon (uuid,tenant_id,code,coupon_type,value,created_at,updated_at) VALUES (gen_random_uuid(),1,'TC27-RELEASE','PERCENTAGE',10,now(),now()) RETURNING id",
+            [],
+        ))
+        .await
+        .unwrap()
+        .unwrap();
+    let coupon_id: i64 = coupon_row.try_get("", "id").unwrap();
+    let order_id: i64 = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT id FROM orders WHERE purchase_id=$1",
+            [purchase_id.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "id")
+        .unwrap();
+    db.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "INSERT INTO checkout_coupon_reservation (coupon_id,customer_id,purchase_id,order_id,status,expires_at) VALUES ($1,1,$2,$3,'reserved',now()+interval '1 hour')",
+        [coupon_id.into(), purchase_id.into(), order_id.into()],
+    ))
+    .await
+    .unwrap();
 
     cart_fixture(&db, Some(1), 1, &[1]).await.unwrap();
     let captured_purchase_id = create_purchase_from_quote(app.clone(), "recon-captured", &[1])
@@ -1794,6 +2377,30 @@ async fn reconciliation_covers_pending_authorized_backoff_locking_and_cancellati
         .try_get("", "count")
         .unwrap();
     assert_eq!(refund_count, 0);
+    let released_stock: String = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT status FROM checkout_stock_reservation WHERE purchase_id=$1",
+            [purchase_id.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "status")
+        .unwrap();
+    assert_eq!(released_stock, "released");
+    let released_coupon: String = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT status FROM checkout_coupon_reservation WHERE purchase_id=$1",
+            [purchase_id.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "status")
+        .unwrap();
+    assert_eq!(released_coupon, "released");
 
     // Resolved payments are not claimed again.
     assert_eq!(
@@ -1802,5 +2409,78 @@ async fn reconciliation_covers_pending_authorized_backoff_locking_and_cancellati
             .unwrap(),
         0
     );
+    let reserved_stock: i32 = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT reserved FROM sku_stock WHERE tenant_id=1 AND sku_id=1",
+            [],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "reserved")
+        .unwrap();
+    assert_eq!(reserved_stock, 0);
+
+    // A provider-reported late capture cannot be cancelled or refunded.
+    let payment_row = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT attempt_key,amount_cents FROM payment WHERE id=$1",
+            [payment_id.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap();
+    let attempt_key: String = payment_row.try_get("", "attempt_key").unwrap();
+    let payment_amount_cents: i64 = payment_row.try_get("", "amount_cents").unwrap();
+    let captured_reference = format!(
+        "mock:mercado_pago:captured:{payment_amount_cents}:BRL:torg-{purchase_id}-{attempt_key}"
+    );
+    db.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "UPDATE payment SET status='pending',gateway_reference=$1,created_at=now()-interval '4 hours',updated_at=now()-interval '11 minutes' WHERE id=$2",
+        [captured_reference.into(), payment_id.into()],
+    ))
+    .await
+    .unwrap();
+    db.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "UPDATE payment_transaction SET status='pending' WHERE payment_id=$1",
+        [payment_id.into()],
+    ))
+    .await
+    .unwrap();
+    db.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "UPDATE sku_stock SET quantity=0,reserved=0 WHERE tenant_id=1 AND sku_id=1",
+        [],
+    ))
+    .await
+    .unwrap();
+    crate::test_log_capture::clear();
+    let handled = crate::endpoints::checkout_payment_endpoint::reconcile_unresolved(&state)
+        .await
+        .unwrap();
+    let captured_logs = crate::test_log_capture::contents();
+    assert_eq!(handled, 1, "{captured_logs}");
+    assert!(captured_logs.contains(&format!(
+        "WARN payment {payment_id} captured after the window; no refund attempted, manual follow-up"
+    )));
+    assert!(captured_logs.contains(&format!(
+        "ERROR late_capture_unfulfillable: stock unavailable, no refund attempted, manual follow-up, purchase_id={purchase_id}"
+    )));
+    let refund_count: i64 = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT count(*) AS count FROM payment_transaction WHERE payment_id=$1 AND operation='refund'",
+            [payment_id.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "count")
+        .unwrap();
+    assert_eq!(refund_count, 0);
     cleanup(root, db, schema).await.unwrap();
 }
