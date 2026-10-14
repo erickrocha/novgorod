@@ -7,6 +7,7 @@ kremlin reaches it through PAGSEGURO_API_BASE_URL (honored only with PAYMENT_MOC
   GET  /charges/{id}                    status
   GET  /charges?reference_id=...        search  -> {"charges": [...]}
   POST /charges/{id}/cancel             cancel  -> charge JSON (status CANCELED)
+  GET  /charges/fees/calculate          installment plans: interest-free up to max_installments_no_interest, then 0.35% per extra installment
 Control endpoints (not part of PagSeguro):
   GET    /_psd/calls                    every call received, oldest first (method, path, query, body, idempotency key)
   DELETE /_psd/calls                    reset calls, charges, config (charge ids keep counting)
@@ -92,6 +93,17 @@ class H(BaseHTTPRequestHandler):
                 if key:
                     STATE["keys"][key] = p["id"]
                 return self.reply(201, charge_json(p))
+            if method == "GET" and path == "/charges/fees/calculate":
+                value = int((q.get("value") or ["0"])[0])
+                free = int((q.get("max_installments_no_interest") or ["0"])[0])
+                top = int((q.get("max_installments") or ["12"])[0])
+                rows = []
+                for n in range(1, top + 1):
+                    total = value if n <= free else value + value * (n - free) * 35 // 10000
+                    rows.append({"installments": n, "installment_value": total // n, "interest_free": n <= free,
+                                 "amount": {"value": total, "currency": "BRL"}})
+                brand = "elo" if q.get("credit_card_bin") else "visa"
+                return self.reply(200, {"payment_methods": {"credit_card": {brand: {"installment_plans": rows}}}})
             if method == "GET" and path == "/charges":
                 ref = (q.get("reference_id") or [""])[0]
                 return self.reply(200, {"charges": [charge_json(p) for p in STATE["payments"].values() if p["reference_id"] == ref]})

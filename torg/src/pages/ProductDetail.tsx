@@ -1,3 +1,4 @@
+import ProductImage from '../components/product/ProductImage';
 import React, { useEffect, useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
@@ -26,7 +27,7 @@ export const ProductDetail: React.FC = () => {
   const dispatch = useAppDispatch();
   const navigate = useNavigate();
 
-  const { selectedProduct, featuredProducts, isLoadingProduct } = useAppSelector(
+  const { selectedProduct, featuredProducts, featuredError, isLoadingProduct, error } = useAppSelector(
     (state) => state.catalog
   );
 
@@ -67,6 +68,16 @@ export const ProductDetail: React.FC = () => {
     );
   }
 
+  if (!selectedProduct && error) {
+    return (
+      <div role="alert" className="max-w-7xl mx-auto px-4 py-20 text-center">
+        <h2 className="text-2xl font-bold text-slate-800">Não foi possível carregar o produto</h2>
+        <p className="text-slate-500 mt-2 mb-6">{error}</p>
+        <Button variant="primary" onClick={() => slug && dispatch(fetchProductBySlug(slug))}>Tentar novamente</Button>
+      </div>
+    );
+  }
+
   if (!selectedProduct) {
     return (
       <div className="max-w-7xl mx-auto px-4 py-20 text-center">
@@ -87,7 +98,7 @@ export const ProductDetail: React.FC = () => {
   const activeSku = selectedProduct.skus?.[selectedVariantIndex];
   const activePrice = currentVariant ? currentVariant.price : selectedProduct.price;
   const activeOriginalPrice = currentVariant?.originalPrice ?? selectedProduct.originalPrice;
-  const activeStock = activeSku ? activeSku.stock : (currentVariant?.stock ?? selectedProduct.stock);
+  const activeStock = activeSku ? activeSku.stock : (currentVariant?.stock ?? selectedProduct.stock ?? 0);
   const isOutOfStock = activeStock <= 0;
 
   // Resolve technical specifications from product and active SKU attributes
@@ -143,8 +154,7 @@ export const ProductDetail: React.FC = () => {
       {/* Breadcrumb Navigation */}
       <Breadcrumb
         items={[
-          { label: 'Catálogo', href: '/' },
-          { label: selectedProduct.category, href: `/?cat=${selectedProduct.categorySlug}` },
+          ...(selectedProduct.category ? [{ label: selectedProduct.category, href: `/?cat=${selectedProduct.categorySlug}` }] : []),
           { label: selectedProduct.name },
         ]}
       />
@@ -154,7 +164,7 @@ export const ProductDetail: React.FC = () => {
         {/* Left Column: Multi-Image Gallery */}
         <div className="lg:col-span-6 space-y-4">
           <div className="relative aspect-square w-full bg-slate-100 rounded-3xl overflow-hidden border border-slate-200/80 shadow-sm group">
-            <img
+            <ProductImage
               src={selectedProduct.images[activeImageIndex] || selectedProduct.thumbnail}
               alt={selectedProduct.name}
               className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
@@ -193,27 +203,24 @@ export const ProductDetail: React.FC = () => {
         <div className="lg:col-span-6 space-y-6">
           <div>
             <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-amber-700 mb-2">
-              <span>{selectedProduct.category}</span>
-              {selectedProduct.attributes?.brand && (
-                <>
-                  <span>•</span>
-                  <span>{selectedProduct.attributes.brand}</span>
-                </>
-              )}
+              {selectedProduct.category && <span>{selectedProduct.category}</span>}
+              {selectedProduct.category && selectedProduct.attributes?.brand && <span>•</span>}
+              {selectedProduct.attributes?.brand && <span>{selectedProduct.attributes.brand}</span>}
             </div>
 
             <h1 className="text-3xl sm:text-4xl font-black text-slate-950 tracking-tight leading-tight">
               {selectedProduct.name}
             </h1>
 
-            {/* Rating and Reviews */}
+            {/* Rating and Reviews: only when the backend provides a rating */}
+            {selectedProduct.rating != null && (
             <div className="flex items-center gap-3 mt-4">
               <div className="flex items-center text-amber-500">
                 {Array.from({ length: 5 }).map((_, i) => (
                   <Star
                     key={i}
                     className={`w-4 h-4 ${
-                      i < Math.floor(selectedProduct.rating)
+                      i < Math.floor(selectedProduct.rating ?? 0)
                         ? 'fill-amber-400 text-amber-400'
                         : 'text-slate-300'
                     }`}
@@ -223,13 +230,17 @@ export const ProductDetail: React.FC = () => {
               <span className="text-sm font-bold text-slate-800">
                 {selectedProduct.rating} / 5.0
               </span>
-              <span className="text-xs text-slate-400">
-                ({selectedProduct.reviewCount} avaliações de clientes verificados)
-              </span>
+              {selectedProduct.reviewCount != null && (
+                <span className="text-xs text-slate-400">
+                  ({selectedProduct.reviewCount} avaliações)
+                </span>
+              )}
             </div>
+            )}
           </div>
 
-          {/* Prominent Seller / Tenant Card */}
+          {/* Seller card: only when the product has a seller; no invented name or claims */}
+          {seller && (
           <div className="p-4 bg-gradient-to-r from-amber-50/60 to-orange-50/40 rounded-2xl border border-amber-200/80 flex items-center justify-between gap-4">
             <div className="flex items-center gap-3.5">
               <div className="w-12 h-12 rounded-xl bg-amber-600 text-white flex items-center justify-center shrink-0 shadow-xs">
@@ -243,7 +254,7 @@ export const ProductDetail: React.FC = () => {
                   <CheckCircle2 className="w-4 h-4 text-emerald-600" />
                 </div>
                 <h2 className="text-base font-bold text-slate-900 leading-tight">
-                  {seller ? seller.businessName : 'Novgorod Vinhos & Adega'}
+                  {seller.businessName}
                 </h2>
                 {sellerLocation && (
                   <div className="flex items-center gap-1 text-xs text-slate-500 mt-0.5">
@@ -253,14 +264,8 @@ export const ProductDetail: React.FC = () => {
                 )}
               </div>
             </div>
-
-            <div className="hidden sm:flex flex-col items-end text-right">
-              <Badge variant="emerald" size="sm">
-                Vendedor Verificado
-              </Badge>
-              <span className="text-[11px] text-slate-400 mt-1">Envio direto da vinícola</span>
-            </div>
           </div>
+          )}
 
           {/* Pricing & Stock Card */}
           <div className="p-6 bg-slate-50 rounded-2xl border border-slate-200/80 flex items-baseline gap-4">
@@ -429,6 +434,7 @@ export const ProductDetail: React.FC = () => {
             Ver todo o catálogo →
           </Link>
         </div>
+        {featuredError && <p role="alert" className="text-sm text-rose-600 mb-4">Não foi possível carregar as sugestões: {featuredError}</p>}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
           {featuredProducts
             .filter((p) => p.id !== selectedProduct.id)

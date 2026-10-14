@@ -52,6 +52,10 @@ async fn catalog_filters_prices_sellers_and_pagination() {
     assert_eq!(first[0].price_cents, Some(200));
     assert_eq!(first[0].category_slugs, ["wine"]);
     assert_eq!(first[0].seller.as_ref().unwrap().business_name, "Seller 1");
+    // there is no review system: neither view invents a rating or a review count
+    assert_eq!((first[0].rating, first[0].review_count), (None, None));
+    let detail = gateway.find_webstore_product_detail("product-2", None).await.unwrap().unwrap();
+    assert_eq!((detail.rating, detail.review_count), (None, None));
 
     let (page1, cursor, total) = gateway.find_webstore_products(None, ProductSearchQuery {
         sort_by: Some("price-desc".into()), limit: Some(2), ..Default::default()

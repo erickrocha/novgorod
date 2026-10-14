@@ -20,6 +20,7 @@ pub fn order_routes(state: AppState) -> Router<AppState> {
         )
         .route("/checkout/quotes", post(quote_ep::quote))
         .route("/checkout/payment-config", get(pay_ep::config))
+        .route("/checkout/installments", get(pay_ep::installments))
         .route("/purchases/{id}/payments/submit", post(pay_ep::submit))
         .route("/purchases/{id}/payments/status", get(pay_ep::status))
         .route("/purchases/paged", get(ep::purchases_paged))

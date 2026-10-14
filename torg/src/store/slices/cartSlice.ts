@@ -1,14 +1,11 @@
 import { createSlice, createAsyncThunk, type PayloadAction } from '@reduxjs/toolkit';
-import type { CartItem, Product, ProductVariant, Coupon, ShippingQuote } from '../../types';
+import type { CartItem, Product, ProductVariant, ShippingQuote } from '../../types';
 import catalogService from '../../services/catalogService';
 import cartService from '../../services/cartService';
 
 export interface CartState {
   items: CartItem[];
   isOpen: boolean;
-  appliedCoupon: Coupon | null;
-  couponLoading: boolean;
-  couponError: string | null;
   shippingAmount: number;
   shippingCep: string;
   shippingLoading: boolean;
@@ -40,9 +37,6 @@ const saveCart = (items: CartItem[]) => {
 const initialState: CartState = {
   items: loadSavedCart(),
   isOpen: false,
-  appliedCoupon: null,
-  couponLoading: false,
-  couponError: null,
   shippingAmount: 0,
   shippingCep: '',
   shippingLoading: false,
@@ -51,19 +45,6 @@ const initialState: CartState = {
   sellerLookupPendingIds: [],
   sellerLookupFailedIds: [],
 };
-
-export const validateAndApplyCoupon = createAsyncThunk(
-  'cart/validateAndApplyCoupon',
-  async (code: string, { rejectWithValue }) => {
-    try {
-      const coupon = await catalogService.validateCoupon(code.trim());
-      return coupon;
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Cupom inválido ou expirado';
-      return rejectWithValue(message);
-    }
-  }
-);
 
 export const estimateShipping = createAsyncThunk(
   'cart/estimateShipping',
@@ -152,7 +133,6 @@ export const cartSlice = createSlice({
 
     clearCart: (state) => {
       state.items = [];
-      state.appliedCoupon = null;
       state.shippingAmount = 0;
       state.shippingCep = '';
       state.shippingDetails = null;
@@ -173,15 +153,6 @@ export const cartSlice = createSlice({
       state.isOpen = !state.isOpen;
     },
 
-    applyCoupon: (state, action: PayloadAction<Coupon>) => {
-      state.appliedCoupon = action.payload;
-      state.couponError = null;
-    },
-
-    removeCoupon: (state) => {
-      state.appliedCoupon = null;
-      state.couponError = null;
-    },
 
     setShipping: (
       state,
@@ -211,20 +182,6 @@ export const cartSlice = createSlice({
       state.sellerLookupPendingIds = state.sellerLookupPendingIds.filter(value => value !== id);
       if (!state.sellerLookupFailedIds.includes(id)) state.sellerLookupFailedIds.push(id);
     });
-    // Coupon
-    builder.addCase(validateAndApplyCoupon.pending, (state) => {
-      state.couponLoading = true;
-      state.couponError = null;
-    });
-    builder.addCase(validateAndApplyCoupon.fulfilled, (state, action) => {
-      state.couponLoading = false;
-      state.appliedCoupon = action.payload;
-      state.couponError = null;
-    });
-    builder.addCase(validateAndApplyCoupon.rejected, (state, action) => {
-      state.couponLoading = false;
-      state.couponError = action.payload as string;
-    });
 
     // Shipping
     builder.addCase(estimateShipping.pending, (state) => {
@@ -253,8 +210,6 @@ export const {
   openCart,
   closeCart,
   toggleCart,
-  applyCoupon,
-  removeCoupon,
   setShipping,
 } = cartSlice.actions;
 

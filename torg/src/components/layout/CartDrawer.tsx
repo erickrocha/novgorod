@@ -1,3 +1,4 @@
+import ProductImage from '../product/ProductImage';
 import React from 'react';
 import { Link } from 'react-router-dom';
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
@@ -73,7 +74,7 @@ export const CartDrawer: React.FC = () => {
                 <CartTenantHeading name={group.name} subtotal={group.subtotal} unresolved={group.unresolved} items={group.items} />
                 {group.items.map((item) => (
                 <div key={item.id} className="py-4 first:pt-0 last:pb-0 flex gap-4">
-                  <img
+                  <ProductImage
                     src={item.product.thumbnail}
                     alt={item.product.name}
                     className="w-20 h-20 object-cover rounded-xl border border-slate-100 shrink-0"
@@ -152,12 +153,6 @@ export const CartDrawer: React.FC = () => {
                     R$ {summary.subtotal.toFixed(2).replace('.', ',')}
                   </span>
                 </div>
-                {summary.discountAmount > 0 && (
-                  <div className="flex justify-between text-emerald-600 font-medium">
-                    <span>Desconto ({summary.coupon?.code})</span>
-                    <span>- R$ {summary.discountAmount.toFixed(2).replace('.', ',')}</span>
-                  </div>
-                )}
                 <div className="border-t border-slate-200 pt-2 flex justify-between text-base font-bold text-slate-900">
                   <span>Total Previsto</span>
                   <span className="text-amber-700">

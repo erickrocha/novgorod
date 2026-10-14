@@ -84,10 +84,13 @@ export interface Product {
   category: string;
   categorySlug: string;
   images: string[];
-  thumbnail: string;
-  rating: number;
-  reviewCount: number;
-  stock: number;
+  /** Absent when the product has no image: the UI shows a placeholder, never a stock photo. */
+  thumbnail?: string;
+  /** Only when kremlin sends them; the storefront never invents a rating or review count. */
+  rating?: number;
+  reviewCount?: number;
+  /** Only on the detail view (sum of the SKUs); the summary view has no stock. */
+  stock?: number;
   isFeatured?: boolean;
   isNew?: boolean;
   tags?: string[];

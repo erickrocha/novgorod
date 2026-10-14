@@ -9,14 +9,6 @@ export interface CartItem {
   totalPrice: number;
 }
 
-export interface Coupon {
-  code: string;
-  discountType: 'percentage' | 'fixed';
-  discountValue: number;
-  description?: string;
-  minimumAmount?: number;
-}
-
 export interface ShippingQuote {
   cost: number;
   deliveryDays: number | null;
@@ -27,11 +19,9 @@ export interface ShippingQuote {
 
 export interface CartSummary {
   subtotal: number;
-  discountAmount: number;
   shippingAmount: number;
   taxAmount: number;
   total: number;
   totalItems: number;
-  appliedCoupon?: Coupon | null;
 }
 

@@ -265,16 +265,22 @@ pub async fn add(
         ));
     }
 
+    let (user_id, tenant_id) = (payload.user_id, payload.tenant_id);
     let customer = CustomerMapper::domain(payload);
     let use_case = CustomerUseCase::new(CustomerGateway::new(state.conn.as_ref().clone()));
     let saved = use_case.create(customer).await;
 
     match saved {
         Some(domain) => Ok((StatusCode::CREATED, Json(CustomerMapper::json(domain)))),
-        None => Err(ExceptionResponse::BadRequest(
-            locale,
-            ErrorKey::InvalidParameterValue,
-        )),
+        None => {
+            // a concurrent request may have linked the user between the check above and the insert (unique
+            // violation): the same condition must answer 409, not 400
+            validate_customer_user_link(&state, locale, user_id, tenant_id, None).await?;
+            Err(ExceptionResponse::BadRequest(
+                locale,
+                ErrorKey::InvalidParameterValue,
+            ))
+        }
     }
 }
 

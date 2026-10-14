@@ -1,3 +1,4 @@
+import ProductImage from './ProductImage';
 import React from 'react';
 import { Link } from 'react-router-dom';
 import type { Product } from '../../types';
@@ -39,11 +40,10 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
       {/* Product Image Frame */}
       <div className="relative aspect-4/3 w-full bg-slate-100 overflow-hidden">
         <Link to={`/produto/${product.slug}`} className="block w-full h-full">
-          <img
+          <ProductImage
             src={product.thumbnail}
             alt={product.name}
             className="w-full h-full object-cover object-center group-hover:scale-105 transition-transform duration-500 ease-out"
-            loading="lazy"
           />
         </Link>
 
@@ -82,7 +82,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
       <div className="p-5 flex-1 flex flex-col justify-between">
         <div>
           <div className="flex items-center justify-between text-xs text-slate-400 font-medium mb-1">
-            <span>{product.category}</span>
+            {product.category ? <span>{product.category}</span> : <span />}
             {product.attributes?.weight && (
               <span className="text-slate-500 font-medium">{product.attributes.weight}</span>
             )}
@@ -101,14 +101,16 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
             </p>
           )}
 
-          {/* Rating */}
-          <div className="flex items-center gap-1.5 mt-2.5">
-            <div className="flex items-center text-amber-500">
-              <Star className="w-3.5 h-3.5 fill-amber-400" />
+          {/* Rating: only when the backend provides one */}
+          {product.rating != null && (
+            <div className="flex items-center gap-1.5 mt-2.5">
+              <div className="flex items-center text-amber-500">
+                <Star className="w-3.5 h-3.5 fill-amber-400" />
+              </div>
+              <span className="text-xs font-bold text-slate-700">{product.rating}</span>
+              {product.reviewCount != null && <span className="text-[11px] text-slate-400">({product.reviewCount})</span>}
             </div>
-            <span className="text-xs font-bold text-slate-700">{product.rating}</span>
-            <span className="text-[11px] text-slate-400">({product.reviewCount})</span>
-          </div>
+          )}
         </div>
 
         {/* Price & Add to Cart button */}

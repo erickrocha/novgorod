@@ -2,7 +2,8 @@ use crate::{
     AppState,
     commons::{i18n::Locale, tenant_context::TenantContext},
     endpoints::{
-        checkout_payment_endpoint::{config as payment_config, pagseguro_webhook, status, submit},
+        checkout_payment_endpoint::{config as payment_config,
+        installments, pagseguro_webhook, status, submit},
         checkout_quote_endpoint::{estimate, quote, select_shipping},
         payment_settings_endpoint::{get as get_payment_settings, put as put_payment_settings},
         orders_endpoint::{
@@ -20,7 +21,7 @@ use crate::{
 use axum::{
     Router,
     body::{Body, to_bytes},
-    extract::Path,
+    extract::{Path, Query},
     http::{HeaderMap, Method, Request, StatusCode},
     routing::{get, post},
 };
@@ -236,6 +237,7 @@ fn router(state: AppState) -> Router {
         .route("/purchases/{id}/payments/submit", post(submit))
         .route("/purchases/{id}/payments/status", get(status))
         .route("/checkout/payment-config", get(payment_config))
+        .route("/checkout/installments", get(installments))
         .route("/api/public/shipping/estimate", post(estimate))
         .route("/webhooks/pagseguro", post(pagseguro_webhook))
         .route("/orders/{id}", get(get_by_id))
@@ -2583,6 +2585,8 @@ async fn tc01_card_submit_rejects_invalid_input_and_non_card_provider() {
         }),
         json!({"token":"card-token","paymentMethodId":"visa","installments":0}),
         json!({"token":"card-token","paymentMethodId":"visa","installments":25}),
+        // above the interest-free limit (default 3): the charge would no longer equal the purchase total
+        json!({"token":"card-token","paymentMethodId":"visa","installments":4}),
         json!({"token":"x".repeat(1025),"paymentMethodId":"visa","installments":1}),
         // SR-PAY-030: card fields are refused in any form, before an attempt exists
         json!({"token":r#"{"number":"4111111111111111","exp_month":"12","exp_year":"2030","security_code":"123"}"#,
@@ -2593,12 +2597,16 @@ async fn tc01_card_submit_rejects_invalid_input_and_non_card_provider() {
             app.clone(),
             Method::POST,
             &submit_uri,
-            Some(invalid),
+            Some(invalid.clone()),
             TenantContext::Marketplace,
         )
         .await
         .unwrap();
         assert!(status.is_client_error(), "{status}");
+        // SR-STO-005: above the interest-free limit it is exactly a bad request
+        if invalid["installments"] == 4 {
+            assert_eq!(status, StatusCode::BAD_REQUEST);
+        }
     }
     let attempts: i64 = db
         .query_one_raw(Statement::from_sql_and_values(
@@ -4286,5 +4294,118 @@ async fn public_shipping_estimate_is_rate_limited_per_client() {
     let retry_after: u64 = limited.headers()["retry-after"].to_str().unwrap().parse().unwrap();
     assert!((1..=60).contains(&retry_after));
     assert_ne!(send("203.0.113.11").await.status(), StatusCode::TOO_MANY_REQUESTS, "another client");
+    cleanup(root, db, schema).await.unwrap();
+}
+
+// PagBank `GET /charges/fees/calculate` double: interest-free up to `max_installments_no_interest`, buyer interest after.
+// Without `credit_card_bin` two brands answer and the second one stops at 5 installments.
+async fn fees_double(
+    Query(query): Query<std::collections::HashMap<String, String>>,
+) -> (StatusCode, axum::Json<Value>) {
+    // a BIN the provider does not know answers 400, as the PagBank sandbox does for its own test cards
+    if query.get("credit_card_bin").map(String::as_str) == Some("000000") {
+        return (StatusCode::BAD_REQUEST, axum::Json(json!({"error_messages": [{"error": "credit_card_bin_data_not_found"}]})));
+    }
+    let value: i64 = query["value"].parse().unwrap();
+    let free: i64 = query["max_installments_no_interest"].parse().unwrap();
+    assert_eq!(query["payment_methods"], "CREDIT_CARD");
+    let plan = |up_to: i64| -> Vec<Value> {
+        (1..=up_to)
+            .map(|n| {
+                let total = if n <= free { value } else { value + value * (n - free) * 35 / 1000 };
+                json!({"installments": n, "installment_value": total / n, "interest_free": n <= free,
+                       "amount": {"value": total, "currency": "BRL"}})
+            })
+            .collect()
+    };
+    if query.contains_key("credit_card_bin") {
+        (StatusCode::OK, axum::Json(json!({"payment_methods": {"credit_card": {"elo": {"installment_plans": plan(12)}}}})))
+    } else {
+        (StatusCode::OK, axum::Json(json!({"payment_methods": {"credit_card": {
+            "visa": {"installment_plans": plan(12)}, "mastercard": {"installment_plans": plan(5)}}}})))
+    }
+}
+
+// SR-STO-004, SR-STO-005 (NOV-37): installment options come from the provider and never change the charged total.
+#[tokio::test]
+#[ignore = "requires isolated PostgreSQL"]
+async fn installments_come_from_the_provider_and_keep_the_charge_unchanged() {
+    let _environment_restore = EnvironmentRestore::capture(&["PAYMENT_PROVIDER_MODE", "PAGSEGURO_API_BASE_URL", "PAYMENT_MAX_INTEREST_FREE_INSTALLMENTS"]);
+    unsafe {
+        std::env::set_var("PAYMENT_PROVIDER_MODE", "real");
+        std::env::remove_var("PAYMENT_MAX_INTEREST_FREE_INSTALLMENTS");
+    }
+    let payment_keys = Arc::new(PaymentKeyRing::from_env().unwrap());
+    let (root, db, schema) = database().await.unwrap();
+    Migrator::up(&db, None).await.unwrap();
+    fixtures(&db).await.unwrap();
+    let credentials = TenantCredentialsPayload::PagSeguro(PagSeguroCredentials {
+        token: "inst-token".into(),
+        public_key: Some("inst-public-key".into()),
+        environment: Some("sandbox".into()),
+    });
+    let (key_version, encrypted) = payment_keys.encrypt_payload(1, &credentials).unwrap();
+    db.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "INSERT INTO tenant_payment_settings (tenant_id,provider,credentials,key_version) VALUES (1,'pagseguro',$1,$2)",
+        [encrypted.into(), key_version.into()],
+    ))
+    .await
+    .unwrap();
+    let double = Router::new().route("/charges/fees/calculate", get(fees_double));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, double).await.unwrap() });
+    unsafe {
+        std::env::set_var("PAGSEGURO_API_BASE_URL", format!("http://{address}"));
+    }
+    let mut app_state = state(db.clone());
+    app_state.payment_keys = payment_keys;
+    let app = router(app_state);
+    let counts = |body: &Value| -> Vec<u64> {
+        body["installments"].as_array().unwrap().iter().map(|o| o["installments"].as_u64().unwrap()).collect()
+    };
+
+    // with a BIN: the provider's interest-free options only (1 to 3), each one keeping the total
+    let (status, body) = request(app.clone(), Method::GET, "/checkout/installments?tenantId=1&amountCents=3000&bin=506777", None, None).await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(counts(&body), vec![1, 2, 3]);
+    assert_eq!(body["installments"][2]["installmentCents"], 1000);
+    assert_eq!(body["installments"][2]["totalCents"], 3000);
+    assert_eq!(body["installments"][2]["interestFree"], true);
+    // a BIN the provider does not know: answered as without a BIN
+    let (status, body) = request(app.clone(), Method::GET, "/checkout/installments?tenantId=1&amountCents=3000&bin=000000", None, None).await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(counts(&body), vec![1, 2, 3]);
+    // without a BIN: the options valid for every brand
+    let (status, body) = request(app.clone(), Method::GET, "/checkout/installments?tenantId=1&amountCents=3000", None, None).await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(counts(&body), vec![1, 2, 3]);
+    // the interest-free limit is configurable
+    unsafe { std::env::set_var("PAYMENT_MAX_INTEREST_FREE_INSTALLMENTS", "2"); }
+    let (_, body) = request(app.clone(), Method::GET, "/checkout/installments?tenantId=1&amountCents=3000", None, None).await.unwrap();
+    assert_eq!(counts(&body), vec![1, 2]);
+    unsafe { std::env::remove_var("PAYMENT_MAX_INTEREST_FREE_INSTALLMENTS"); }
+    // invalid input and unconfigured tenants
+    for uri in ["/checkout/installments?tenantId=1&amountCents=0", "/checkout/installments?tenantId=1&amountCents=abc",
+                "/checkout/installments?tenantId=1&amountCents=3000&bin=12", "/checkout/installments?tenantId=1&amountCents=3000&bin=4539x2"] {
+        let (status, _) = request(app.clone(), Method::GET, uri, None, None).await.unwrap();
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{uri}");
+    }
+    let (status, _) = request(app.clone(), Method::GET, "/checkout/installments?tenantId=2&amountCents=3000", None, None).await.unwrap();
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    // a missing or invalid tenant id is a bad request; 503 is only for a tenant without payment configuration
+    for uri in ["/checkout/installments?amountCents=3000", "/checkout/installments?tenantId=x&amountCents=3000"] {
+        let (status, _) = request(app.clone(), Method::GET, uri, None, None).await.unwrap();
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{uri}");
+    }
+    // only a Customer may ask
+    let (status, _) = request_as(app.clone(), Method::GET, "/checkout/installments?tenantId=1&amountCents=3000", None, None, user_with_role(9, Role::SysAdmin, None)).await.unwrap();
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    // the provider failing is a bad gateway
+    unsafe { std::env::set_var("PAGSEGURO_API_BASE_URL", "http://127.0.0.1:1"); }
+    let (status, _) = request(app.clone(), Method::GET, "/checkout/installments?tenantId=1&amountCents=3000", None, None).await.unwrap();
+    assert_eq!(status, StatusCode::BAD_GATEWAY);
+    server.abort();
     cleanup(root, db, schema).await.unwrap();
 }

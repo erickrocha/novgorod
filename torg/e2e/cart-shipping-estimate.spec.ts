@@ -46,6 +46,15 @@ test('an invalid CEP shows an error and no price', async ({ page }) => {
   await expect(page.getByText(/(invalid CEP|CEP inválido)/i).first()).toBeVisible();
 });
 
+test('an unreachable backend shows an error and no price', async ({ page }) => {
+  await addToCart(page, 'product-pro-1');
+  await page.route('**/api/public/shipping/estimate', route => route.abort());
+  await estimate(page, '01001-000');
+  await expect(page.getByText(/Frete calculado/)).toHaveCount(0);
+  await expect(page.getByText(/Entrega Padrão \(em até/)).toHaveCount(0);
+  await expect(page.getByText(/(Network Error|Falha ao calcular frete)/).first()).toBeVisible();
+});
+
 test('the public estimate answers 429 with Retry-After after 10 requests from one client', async ({ request }) => {
   const url = `${process.env.E2E_API_URL ?? 'http://127.0.0.1:8080'}/api/public/shipping/estimate`;
   const headers = { 'x-forwarded-for': `203.0.113.${Math.floor(Math.random() * 200) + 1}`, 'accept-language': 'pt-BR' };
@@ -60,4 +69,3 @@ test('the public estimate answers 429 with Retry-After after 10 requests from on
   const other = await request.post(url, { headers: { ...headers, 'x-forwarded-for': '198.51.100.250' }, data });
   expect(other.status()).toBe(200);
 });
-

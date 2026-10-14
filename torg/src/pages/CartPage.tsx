@@ -1,3 +1,4 @@
+import ProductImage from '../components/product/ProductImage';
 import React from 'react';
 import { Link } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
@@ -7,17 +8,13 @@ import { useAppDispatch, useAppSelector } from '../store/hooks';
 import {
   updateQuantity,
   removeFromCart,
-  removeCoupon,
   clearCart,
-  validateAndApplyCoupon,
   estimateShipping,
 } from '../store/slices/cartSlice';
 import { addToast } from '../store/slices/uiSlice';
 import {
   selectCartItems, selectCartGroups,
   selectCartSummary,
-  selectAppliedCoupon,
-  selectCouponLoading,
   selectShippingLoading,
   selectShippingDetails,
 } from '../store';
@@ -35,17 +32,9 @@ import Button from '../components/common/Button';
 import { Breadcrumb } from '../components/common/Breadcrumb';
 import CartTenantHeading from '../components/layout/CartTenantHeading';
 
-interface CouponFormData {
-  code: string;
-}
-
 interface ShippingFormData {
   cep: string;
 }
-
-const couponSchema = yup.object({
-  code: yup.string().trim().required('Informe o código do cupom'),
-});
 
 const shippingSchema = yup.object({
   cep: yup
@@ -60,19 +49,8 @@ export const CartPage: React.FC = () => {
   const items = useAppSelector(selectCartItems);
   const groups = useAppSelector(selectCartGroups);
   const summary = useAppSelector(selectCartSummary);
-  const appliedCoupon = useAppSelector(selectAppliedCoupon);
-  const couponLoading = useAppSelector(selectCouponLoading);
   const shippingLoading = useAppSelector(selectShippingLoading);
   const shippingDetails = useAppSelector(selectShippingDetails);
-
-  const {
-    register: registerCoupon,
-    handleSubmit: handleSubmitCoupon,
-    reset: resetCoupon,
-    formState: { errors: couponErrors },
-  } = useForm<CouponFormData>({
-    resolver: yupResolver(couponSchema),
-  });
 
   const {
     register: registerShipping,
@@ -81,26 +59,6 @@ export const CartPage: React.FC = () => {
   } = useForm<ShippingFormData>({
     resolver: yupResolver(shippingSchema),
   });
-
-  const onApplyCoupon = async (data: CouponFormData) => {
-    try {
-      const coupon = await dispatch(validateAndApplyCoupon(data.code)).unwrap();
-      dispatch(
-        addToast({
-          type: 'success',
-          message: `Cupom ${coupon.code} aplicado com sucesso!`,
-        })
-      );
-      resetCoupon();
-    } catch {
-      dispatch(
-        addToast({
-          type: 'error',
-          message: 'Cupom inválido ou expirado. Tente TORG10 ou NOVGOROD50',
-        })
-      );
-    }
-  };
 
   const onCalculateShipping = async (data: ShippingFormData) => {
     try {
@@ -177,7 +135,7 @@ export const CartPage: React.FC = () => {
               <CartTenantHeading name={group.name} subtotal={group.subtotal} unresolved={group.unresolved} items={group.items} />
               {group.items.map((item) => (
               <div key={item.id} className="py-5 first:pt-0 last:pb-0 flex flex-col sm:flex-row gap-5 items-center">
-                <img
+                <ProductImage
                   src={item.product.thumbnail}
                   alt={item.product.name}
                   className="w-24 h-24 object-cover rounded-2xl border border-slate-100 shrink-0"
@@ -267,47 +225,11 @@ export const CartPage: React.FC = () => {
               Resumo do Pedido
             </h2>
 
-            {/* Coupon Section */}
-            <form onSubmit={handleSubmitCoupon(onApplyCoupon)} className="space-y-2">
-              <label htmlFor="coupon-code" className="text-xs font-bold uppercase tracking-wider text-slate-500 block">
-                Cupom de Desconto
-              </label>
-              <div className="flex gap-2">
-                <input
-                  id="coupon-code"
-                  type="text"
-                  placeholder="Ex: TORG10"
-                  {...registerCoupon('code')}
-                  className="flex-1 text-xs uppercase p-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-amber-500"
-                />
-                <Button
-                  type="submit"
-                  variant="outline"
-                  size="sm"
-                  isLoading={couponLoading}
-                >
-                  Aplicar
-                </Button>
-              </div>
-              {couponErrors.code && (
-                <p className="text-xs text-rose-600 mt-1">{couponErrors.code.message}</p>
-              )}
-              {appliedCoupon && (
-                <div className="flex items-center justify-between text-xs bg-emerald-50 text-emerald-800 p-2.5 rounded-xl border border-emerald-200">
-                  <div className="flex items-center gap-1.5">
-                    <Tag className="w-3.5 h-3.5" />
-                    <span className="font-bold">{appliedCoupon.code} aplicado</span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => dispatch(removeCoupon())}
-                    className="text-rose-600 hover:underline font-semibold cursor-pointer"
-                  >
-                    Remover
-                  </button>
-                </div>
-              )}
-            </form>
+            {/* Coupons are validated per seller by kremlin at checkout */}
+            <p className="text-xs text-slate-500 flex items-start gap-1.5">
+              <Tag className="w-3.5 h-3.5 mt-0.5 shrink-0 text-amber-600" aria-hidden="true" />
+              <span>Cupons de desconto são aplicados na finalização da compra, por vendedor.</span>
+            </p>
 
             {/* Shipping Estimator */}
             <form onSubmit={handleSubmitShipping(onCalculateShipping)} className="space-y-2 border-t border-slate-100 pt-4">
@@ -353,12 +275,6 @@ export const CartPage: React.FC = () => {
                 </span>
               </div>
 
-              {summary.discountAmount > 0 && (
-                <div className="flex justify-between text-emerald-600 font-semibold">
-                  <span>Desconto Aplicado</span>
-                  <span>- R$ {summary.discountAmount.toFixed(2).replace('.', ',')}</span>
-                </div>
-              )}
 
               <div className="flex justify-between text-slate-600">
                 <span>Frete</span>

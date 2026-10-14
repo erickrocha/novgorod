@@ -5,6 +5,7 @@ import catalogService, { type GetProductsParams } from '../../services/catalogSe
 interface CatalogState {
   products: Product[];
   featuredProducts: Product[];
+  featuredError: string | null;
   categories: ProductCategory[];
   selectedProduct: Product | null;
   totalProducts: number;
@@ -27,6 +28,7 @@ const initialFilters: ProductFilterState = {
 const initialState: CatalogState = {
   products: [],
   featuredProducts: [],
+  featuredError: null,
   categories: [],
   selectedProduct: null,
   totalProducts: 0,
@@ -91,7 +93,7 @@ export const fetchFeaturedProducts = createAsyncThunk(
     try {
       return await catalogService.getFeaturedProducts();
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Falha ao buscar destaques';
+      const message = (err as { message?: string } | null)?.message || 'Falha ao buscar sugestões';
       return rejectWithValue(message);
     }
   }
@@ -102,11 +104,11 @@ export const fetchProductBySlug = createAsyncThunk(
   async (slug: string, { rejectWithValue }) => {
     try {
       const product = await catalogService.getProductBySlug(slug);
-      if (!product) throw new Error('Produto não encontrado');
+      if (!product) return rejectWithValue({ notFound: true, message: 'Produto não encontrado' });
       return product;
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Falha ao carregar produto';
-      return rejectWithValue(message);
+      const message = (err as { message?: string } | null)?.message || 'Falha ao carregar produto';
+      return rejectWithValue({ notFound: false, message });
     }
   }
 );
@@ -180,6 +182,10 @@ export const catalogSlice = createSlice({
     // Featured
     builder.addCase(fetchFeaturedProducts.fulfilled, (state, action) => {
       state.featuredProducts = action.payload;
+      state.featuredError = null;
+    });
+    builder.addCase(fetchFeaturedProducts.rejected, (state, action) => {
+      state.featuredError = action.payload as string;
     });
 
     // Product Detail
@@ -193,7 +199,10 @@ export const catalogSlice = createSlice({
     });
     builder.addCase(fetchProductBySlug.rejected, (state, action) => {
       state.isLoadingProduct = false;
-      state.error = action.payload as string;
+      state.selectedProduct = null;
+      const failure = action.payload as { notFound: boolean; message: string } | undefined;
+      // not found is a normal empty state; any other failure is an error the page shows
+      state.error = failure && !failure.notFound ? failure.message : null;
     });
   },
 });

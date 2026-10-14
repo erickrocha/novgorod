@@ -1,6 +1,14 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import PagSeguroCardForm from '../PagSeguroCardForm';
+import checkoutService from '../../../services/checkoutService';
+
+vi.mock('../../../services/checkoutService');
+
+const PLAN = [
+  { installments: 1, installmentCents: 1000, totalCents: 1000, interestFree: true },
+  { installments: 2, installmentCents: 500, totalCents: 1000, interestFree: true },
+];
 
 const CARD = '4111 1111 1111 1111';
 
@@ -13,12 +21,13 @@ function fill(container: HTMLElement) {
 }
 
 function setup(onPay = vi.fn().mockResolvedValue(undefined)) {
-  const view = render(<PagSeguroCardForm publicKey="PK" amountCents={1000} email="a@b.c" cpf="52998224725" onPay={onPay} />);
+  const view = render(<PagSeguroCardForm publicKey="PK" tenantId={7} amountCents={1000} email="a@b.c" cpf="52998224725" onPay={onPay} />);
   return { ...view, onPay };
 }
 
 describe('PagSeguroCardForm card data', () => {
-  afterEach(() => { delete window.PagSeguro; });
+  beforeEach(() => { vi.mocked(checkoutService.installments).mockResolvedValue(PLAN); });
+  afterEach(() => { delete window.PagSeguro; vi.clearAllMocks(); });
 
   it('sends only the SDK-encrypted card', async () => {
     window.PagSeguro = { encryptCard: vi.fn().mockReturnValue({ encryptedCard: 'ENCRYPTED' }) };
@@ -55,5 +64,25 @@ describe('PagSeguroCardForm card data', () => {
     expect(container.querySelector('#pagseguro-submit')).toBeDisabled();
     expect(onPay).not.toHaveBeenCalled();
     append.mockRestore();
+  });
+
+  it('lists the installment options of the provider, with the card BIN once typed', async () => {
+    window.PagSeguro = { encryptCard: vi.fn() };
+    const { container } = setup();
+    await waitFor(() => expect(container.querySelectorAll('#pagseguro-installments option')).toHaveLength(2));
+    expect(vi.mocked(checkoutService.installments)).toHaveBeenCalledWith({ tenantId: 7, amountCents: 1000, bin: undefined });
+    expect(container.querySelector('#pagseguro-installments')!.textContent).toContain('2x de R$ 5,00 sem juros');
+    fireEvent.change(container.querySelector('#pagseguro-card-number')!, { target: { value: '5067 7667 8388 8311' } });
+    await waitFor(() => expect(vi.mocked(checkoutService.installments)).toHaveBeenCalledWith({ tenantId: 7, amountCents: 1000, bin: '506776' }));
+  });
+
+  it('offers only the single payment and shows the error when the options cannot be loaded', async () => {
+    vi.mocked(checkoutService.installments).mockRejectedValue({ message: 'Não foi possível consultar as parcelas' });
+    window.PagSeguro = { encryptCard: vi.fn() };
+    const { container } = setup();
+    expect(await screen.findByText(/Não foi possível consultar as parcelas/)).toBeInTheDocument();
+    const options = container.querySelectorAll('#pagseguro-installments option');
+    expect(options).toHaveLength(1);
+    expect(options[0].textContent).toContain('à vista');
   });
 });

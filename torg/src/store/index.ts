@@ -33,43 +33,28 @@ export const selectCartGroups = createSelector([selectCartItems], items => {
   return groups;
 });
 export const selectCartIsOpen = (state: RootState) => state.cart.isOpen;
-export const selectAppliedCoupon = (state: RootState) => state.cart.appliedCoupon;
-export const selectCouponLoading = (state: RootState) => state.cart.couponLoading;
-export const selectCouponError = (state: RootState) => state.cart.couponError;
 export const selectShippingAmount = (state: RootState) => state.cart.shippingAmount;
 export const selectShippingCep = (state: RootState) => state.cart.shippingCep;
 export const selectShippingLoading = (state: RootState) => state.cart.shippingLoading;
 export const selectShippingError = (state: RootState) => state.cart.shippingError;
 export const selectShippingDetails = (state: RootState) => state.cart.shippingDetails;
 
+// Discounts are not computed in the cart: coupons are validated per seller by kremlin at checkout.
 export const selectCartSummary = createSelector(
   [
     (state: RootState) => state.cart.items,
-    (state: RootState) => state.cart.appliedCoupon,
     (state: RootState) => state.cart.shippingAmount,
   ],
-  (items, coupon, shippingAmount) => {
+  (items, shippingAmount) => {
     const subtotal = items.reduce((sum, item) => sum + item.totalPrice, 0);
     const totalItems = items.reduce((sum, item) => sum + item.quantity, 0);
-
-    let discountAmount = 0;
-    if (coupon) {
-      if (coupon.discountType === 'percentage') {
-        discountAmount = (subtotal * coupon.discountValue) / 100;
-      } else {
-        discountAmount = Math.min(coupon.discountValue, subtotal);
-      }
-    }
-
-    const total = Math.max(0, subtotal - discountAmount + shippingAmount);
+    const total = Math.max(0, subtotal + shippingAmount);
 
     return {
       subtotal,
-      discountAmount,
       shippingAmount,
       total,
       totalItems,
-      coupon,
     };
   }
 );

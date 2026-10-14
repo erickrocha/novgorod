@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import checkoutService, { type InstallmentOption } from '../../services/checkoutService';
 
 interface CardData {
   token: string;
@@ -54,12 +55,14 @@ function detectBrand(number: string): string {
 
 export default function PagSeguroCardForm({
   publicKey,
+  tenantId,
   amountCents,
   email,
   cpf,
   onPay,
 }: {
   publicKey: string;
+  tenantId: number;
   amountCents: number;
   email: string;
   cpf: string;
@@ -74,6 +77,31 @@ export default function PagSeguroCardForm({
   const [expiry, setExpiry] = useState('');
   const [cvv, setCvv] = useState('');
   const [installments, setInstallments] = useState(1);
+  const [options, setOptions] = useState<InstallmentOption[]>([]);
+  const [optionsError, setOptionsError] = useState('');
+
+  // The options come from the provider for this amount (and the card brand once the BIN is typed).
+  const bin = cardNumber.replace(/\D/g, '').slice(0, 6);
+  const lookupBin = bin.length === 6 ? bin : undefined;
+  useEffect(() => {
+    let active = true;
+    const timer = window.setTimeout(() => {
+      checkoutService.installments({ tenantId, amountCents, bin: lookupBin })
+        .then(found => {
+          if (!active) return;
+          setOptions(found);
+          setOptionsError('');
+          setInstallments(current => (found.some(o => o.installments === current) ? current : 1));
+        })
+        .catch(e => {
+          if (!active) return;
+          setOptions([]);
+          setOptionsError((e as { message?: string })?.message || 'Não foi possível carregar as parcelas.');
+          setInstallments(1);
+        });
+    }, 250);
+    return () => { active = false; window.clearTimeout(timer); };
+  }, [tenantId, amountCents, lookupBin]);
 
   const onPayRef = useRef(onPay);
   onPayRef.current = onPay;
@@ -167,8 +195,6 @@ export default function PagSeguroCardForm({
   const field =
     'min-h-11 w-full rounded-xl border border-slate-200 bg-white p-2.5 text-slate-800 placeholder-slate-400 focus:border-amber-600 focus:outline-none';
 
-  const installmentOptions = [1, 2, 3, 4, 5, 6, 10, 12];
-
   return (
     <form id="form-pagseguro" className="space-y-3" onSubmit={handleSubmit}>
       <div className="flex items-center gap-2 mb-1">
@@ -242,15 +268,15 @@ export default function PagSeguroCardForm({
           onChange={e => setInstallments(Number(e.target.value))}
           className={field}
         >
-          {installmentOptions.map(n => {
-            const installmentAmount = (amountCents / 100 / n).toFixed(2);
-            return (
-              <option key={n} value={n}>
-                {n}x de R$ {installmentAmount.replace('.', ',')} sem juros
-              </option>
-            );
-          })}
+          {options.length === 0 && <option value={1}>1x de R$ {(amountCents / 100).toFixed(2).replace('.', ',')} (à vista)</option>}
+          {options.map(o => (
+            <option key={o.installments} value={o.installments}>
+              {o.installments}x de R$ {(o.installmentCents / 100).toFixed(2).replace('.', ',')}
+              {o.interestFree ? ' sem juros' : ` (total R$ ${(o.totalCents / 100).toFixed(2).replace('.', ',')})`}
+            </option>
+          ))}
         </select>
+        {optionsError && <span role="alert" className="block mt-1 text-xs font-medium text-rose-700">{optionsError} Apenas à vista está disponível.</span>}
       </label>
 
       <input type="hidden" id="pagseguro-email" value={email} readOnly />

@@ -1,5 +1,6 @@
 import apiClient from '../api/client';
 import type { Product, ProductCategory, PaginatedResult, ProductSku, ProductVariant } from '../types';
+import type { ApiError } from '../types/api';
 
 export interface GetProductsParams {
   category?: string;
@@ -20,13 +21,13 @@ const mapProductJsonToProduct = (item: any): Product => ({
   price: item.priceCents != null ? item.priceCents / 100 : 0,
   originalPrice: item.compareAtPriceCents ? item.compareAtPriceCents / 100 : undefined,
   currency: 'BRL',
-  category: item.categorySlugs?.[0] ?? 'Vinhos',
-  categorySlug: item.categorySlugs?.[0] ?? 'vinhos',
+  category: item.categorySlugs?.[0] ?? '',
+  categorySlug: item.categorySlugs?.[0] ?? '',
   images: item.primaryImageUrl ? [item.primaryImageUrl] : [],
-  thumbnail: item.primaryImageUrl ?? 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?q=80&w=600&auto=format&fit=crop',
-  rating: item.rating ?? 4.8,
-  reviewCount: item.reviewCount ?? 12,
-  stock: item.stock ?? 10,
+  thumbnail: item.primaryImageUrl ?? undefined,
+  // rating and review count only when kremlin sends them; the summary view has no stock
+  rating: item.rating ?? undefined,
+  reviewCount: item.reviewCount ?? undefined,
   isFeatured: item.isFeatured ?? false,
   isNew: item.isNew ?? false,
   seller: item.seller ?? null,
@@ -39,7 +40,7 @@ const mapProductJsonToProduct = (item: any): Product => ({
 // Map full product detail representation from /api/public/products/{slug}
 const mapProductDetailJsonToProduct = (item: any): Product => {
   const images = (item.images || []).map((img: any) => img.url);
-  const primaryImage = (item.images || []).find((img: any) => img.isPrimary)?.url || images[0] || 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?q=80&w=600&auto=format&fit=crop';
+  const primaryImage: string | undefined = (item.images || []).find((img: any) => img.isPrimary)?.url || images[0];
 
   const skus: ProductSku[] = (item.skus || []).map((s: any) => ({
     id: s.id,
@@ -97,12 +98,12 @@ const mapProductDetailJsonToProduct = (item: any): Product => {
     price,
     originalPrice,
     currency: 'BRL',
-    category: item.categorySlugs?.[0] ?? 'Vinhos',
-    categorySlug: item.categorySlugs?.[0] ?? 'vinhos',
-    images: images.length > 0 ? images : [primaryImage],
+    category: item.categorySlugs?.[0] ?? '',
+    categorySlug: item.categorySlugs?.[0] ?? '',
+    images,
     thumbnail: primaryImage,
-    rating: item.rating ?? 4.8,
-    reviewCount: item.reviewCount ?? 24,
+    rating: item.rating ?? undefined,
+    reviewCount: item.reviewCount ?? undefined,
     stock: totalStock,
     isFeatured: item.isFeatured ?? false,
     isNew: item.isNew ?? false,
@@ -176,20 +177,12 @@ export const catalogService = {
    */
   async getProductBySlug(slug: string): Promise<Product | null> {
     try {
-      const response = await apiClient.get<any>(`/api/public/products/${slug}`);
-      if (response.data) {
-        return mapProductDetailJsonToProduct(response.data);
-      }
-      return null;
-    } catch {
-      // Fallback query if slug not directly matched
-      try {
-        const fallbackRes = await apiClient.get<PaginatedResult<any>>(`/api/public/products/query`, { params: { q: slug, limit: 1 } });
-        const item = fallbackRes.data.items?.[0];
-        return item ? mapProductJsonToProduct(item) : null;
-      } catch {
-        return null;
-      }
+      const response = await apiClient.get<any>(`/api/public/products/${encodeURIComponent(slug)}`);
+      return response.data ? mapProductDetailJsonToProduct(response.data) : null;
+    } catch (error) {
+      // only "not found" means no such product; any other failure is an error the caller must show
+      if ((error as ApiError).status === 404) return null;
+      throw error;
     }
   },
 
@@ -210,21 +203,10 @@ export const catalogService = {
    * Fetch featured showcase products for vitrine
    */
   async getFeaturedProducts(): Promise<Product[]> {
-    try {
-      const response = await apiClient.get<PaginatedResult<any>>('/api/public/products/query', { params: { limit: 4 } });
-      return (response.data.items || []).map(mapProductJsonToProduct);
-    } catch {
-      return [];
-    }
+    const response = await apiClient.get<PaginatedResult<any>>('/api/public/products/query', { params: { limit: 4 } });
+    return (response.data.items || []).map(mapProductJsonToProduct);
   },
 
-  /**
-   * Validate discount coupon code
-   */
-  async validateCoupon(code: string) {
-    const response = await apiClient.post('/marketing/coupons/validate', { code });
-    return response.data;
-  },
 };
 
 export default catalogService;

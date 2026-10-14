@@ -54,6 +54,7 @@ impl Modify for SecurityAddon {
         endpoints::checkout_quote_endpoint::quote,
         endpoints::checkout_quote_endpoint::select_shipping,
         endpoints::checkout_quote_endpoint::estimate,
+        endpoints::checkout_payment_endpoint::installments,
         endpoints::shipping_settings_endpoint::get,
         endpoints::shipping_settings_endpoint::put,
         endpoints::payment_settings_endpoint::get,
@@ -218,6 +219,8 @@ impl Modify for SecurityAddon {
     ),
     components(
         schemas(
+            endpoints::checkout_payment_endpoint::InstallmentPlan,
+            infrastructure::pagseguro::InstallmentOption,
             endpoints::json::warehouse_json::WarehouseJson,
             endpoints::json::warehouse_json::WarehouseInputJson,
             endpoints::json::user_json::UserJson,

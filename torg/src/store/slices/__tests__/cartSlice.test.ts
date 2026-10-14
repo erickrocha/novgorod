@@ -4,14 +4,11 @@ import cartReducer, {
   removeFromCart,
   updateQuantity,
   clearCart,
-  applyCoupon,
-  removeCoupon,
   setShipping,
-  validateAndApplyCoupon,
   estimateShipping,
   type CartState,
 } from '../cartSlice';
-import type { Product, Coupon, CartItem } from '../../../types';
+import type { Product, CartItem } from '../../../types';
 import cartService from '../../../services/cartService';
 
 vi.mock('../../../services/catalogService');
@@ -35,12 +32,6 @@ const mockProduct: Product = {
 };
 
 
-const mockCoupon: Coupon = {
-  code: 'TORG10',
-  discountType: 'percentage',
-  discountValue: 10,
-};
-
 describe('cartSlice', () => {
   let initialState: CartState;
 
@@ -49,9 +40,6 @@ describe('cartSlice', () => {
     initialState = {
       items: [],
       isOpen: false,
-      appliedCoupon: null,
-      couponLoading: false,
-      couponError: null,
       shippingAmount: 0,
       shippingCep: '',
       shippingLoading: false,
@@ -159,24 +147,14 @@ describe('cartSlice', () => {
           totalPrice: 300.0,
         },
       ],
-      appliedCoupon: mockCoupon,
       shippingAmount: 25.0,
       shippingCep: '01310-100',
     };
 
     const nextState = cartReducer(stateWithData, clearCart());
     expect(nextState.items).toHaveLength(0);
-    expect(nextState.appliedCoupon).toBeNull();
     expect(nextState.shippingAmount).toBe(0);
     expect(nextState.shippingCep).toBe('');
-  });
-
-  it('should handle applyCoupon and removeCoupon', () => {
-    const stateWithCoupon = cartReducer(initialState, applyCoupon(mockCoupon));
-    expect(stateWithCoupon.appliedCoupon).toEqual(mockCoupon);
-
-    const clearedCouponState = cartReducer(stateWithCoupon, removeCoupon());
-    expect(clearedCouponState.appliedCoupon).toBeNull();
   });
 
   it('should handle setShipping', () => {
@@ -191,28 +169,6 @@ describe('cartSlice', () => {
     expect(nextState.shippingAmount).toBe(22.5);
     expect(nextState.shippingCep).toBe('01310-100');
     expect(nextState.shippingDetails?.service).toBe('Padrão');
-  });
-
-  it('should handle validateAndApplyCoupon fulfilled', () => {
-    const action = {
-      type: validateAndApplyCoupon.fulfilled.type,
-      payload: mockCoupon,
-    };
-    const nextState = cartReducer(initialState, action);
-    expect(nextState.couponLoading).toBe(false);
-    expect(nextState.appliedCoupon).toEqual(mockCoupon);
-    expect(nextState.couponError).toBeNull();
-  });
-
-  it('should handle validateAndApplyCoupon rejected', () => {
-    const action = {
-      type: validateAndApplyCoupon.rejected.type,
-      payload: 'Cupom inválido ou expirado',
-    };
-    const nextState = cartReducer(initialState, action);
-    expect(nextState.couponLoading).toBe(false);
-    expect(nextState.couponError).toBe('Cupom inválido ou expirado');
-    expect(nextState.appliedCoupon).toBeNull();
   });
 
   it('should handle estimateShipping fulfilled', () => {

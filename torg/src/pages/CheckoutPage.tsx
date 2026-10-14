@@ -724,6 +724,7 @@ export const CheckoutPage = () => {
                       <PagSeguroCardForm
                         key={`ps-${quote.totalCents}-${payment?.reference || 'new'}`}
                         publicKey={publicKey}
+                        tenantId={quote.sellers[0].tenantId}
                         amountCents={quote.totalCents}
                         email={email}
                         cpf={profile.cpf || ''}

@@ -8,8 +8,16 @@ test.skip(!process.env.E2E_PAGSEGURO_SANDBOX, 'set E2E_PAGSEGURO_SANDBOX=1 (live
 test('real SDK encrypts the card and the sandbox captures the payment', async ({ page }) => {
   await addToCart(page, 'product-pro-1');
   await reachPayment(page);
+  // the installment options are the live PagBank's own: interest-free only, the first is the single payment
+  const options = page.locator('#pagseguro-installments option');
+  await expect(options.first()).toHaveText('1x de R$ 30,00 sem juros');
+  expect(await options.count()).toBeGreaterThanOrEqual(1);
+  await expect(page.getByText(/Apenas à vista está disponível/)).toHaveCount(0);
   const submit = page.waitForRequest(r => /\/purchases\/\d+\/payments\/submit$/.test(r.url()));
   await fillCard(page);
+  // the sandbox does not know the BIN of its own test card: kremlin answers without the BIN
+  await expect(page.getByText(/Apenas à vista está disponível/)).toHaveCount(0);
+  await expect(options.first()).toHaveText('1x de R$ 30,00 sem juros');
   await page.locator('#pagseguro-submit').click();
   const body = (await submit).postData() ?? '';
   expect(body).not.toContain(CARD.number);

@@ -62,6 +62,14 @@ export interface Purchase {
 }
 export interface PaymentState { purchaseId: number; status: string; reference?: string }
 
+export interface InstallmentOption {
+  installments: number;
+  installmentCents: number;
+  /** What the buyer pays in total; equals the purchase total because only interest-free options are offered. */
+  totalCents: number;
+  interestFree: boolean;
+}
+
 const checkoutService = {
   async quote(input: { items: Array<{ skuId: number; quantity: number }>; addressId?: number; shippingAddress?: DeliveryAddress; coupons: Array<{ tenantId: number; code: string }> }) {
     return (await apiClient.post<CheckoutQuote>('/checkout/quotes', input)).data;
@@ -75,6 +83,10 @@ const checkoutService = {
   },
   async paymentConfig(params: { tenantId: number }) {
     return (await apiClient.get<{ provider: string; publicKey: string }>('/checkout/payment-config', { params })).data;
+  },
+  /** Installment options of the payment provider for `amountCents`; `bin` is the first 6 to 8 digits of the card. */
+  async installments(params: { tenantId: number; amountCents: number; bin?: string }) {
+    return (await apiClient.get<{ installments: InstallmentOption[] }>('/checkout/installments', { params })).data.installments;
   },
   async submit(purchaseId: number, input: { token: string; paymentMethodId: string; issuerId?: string; installments: number }) {
     return (await apiClient.post<PaymentState>(`/purchases/${purchaseId}/payments/submit`, input)).data;

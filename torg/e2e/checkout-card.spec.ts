@@ -59,4 +59,30 @@ test.describe('card payment through the screens (provider double)', () => {
     await page.getByRole('button', { name: /Calcular total com frete/ }).click();
     await expect(page.getByText(/Pagamento indisponível/)).toBeVisible();
   });
+
+  test('installments come from the provider, keep the total and travel with the payment', async ({ page }) => {
+    await stubSdk(page, 'approved-card');
+    await addToCart(page, 'product-pro-1');
+    await reachPayment(page);
+    // total R$ 30,00 (item R$ 15,00 + shipping R$ 15,00); the double is interest-free up to 3 installments
+    const select = page.locator('#pagseguro-installments');
+    await expect(select.locator('option')).toHaveText(['1x de R$ 30,00 sem juros', '2x de R$ 15,00 sem juros', '3x de R$ 10,00 sem juros']);
+    await fillCard(page);
+    await expect(select.locator('option')).toHaveCount(3);
+    await select.selectOption('3');
+    const submit = page.waitForRequest(r => /\/purchases\/\d+\/payments\/submit$/.test(r.url()));
+    await page.locator('#pagseguro-submit').click();
+    expect(JSON.parse((await submit).postData() ?? '{}').installments).toBe(3);
+    await expect(page.getByText('Pagamento confirmado')).toBeVisible();
+  });
+
+  test('when the installments cannot be loaded only the single payment is offered', async ({ page }) => {
+    await stubSdk(page, 'approved-card');
+    await addToCart(page, 'product-pro-1');
+    await page.route('**/checkout/installments**', route => route.abort());
+    await reachPayment(page);
+    await expect(page.locator('#pagseguro-installments option')).toHaveText(['1x de R$ 30,00 (à vista)']);
+    await expect(page.getByText(/Apenas à vista está disponível/)).toBeVisible();
+  });
 });
+

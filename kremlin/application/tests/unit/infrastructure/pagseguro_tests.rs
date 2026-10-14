@@ -269,3 +269,41 @@ async fn charge_refuses_raw_card_data_without_calling_the_provider() {
         Ok(_) => panic!("raw card data must be refused"),
     }
 }
+
+// Shape taken from the PagBank sandbox answer of `GET /charges/fees/calculate`.
+fn plan(up_to: i64, free: i64, value: i64) -> serde_json::Value {
+    let rows: Vec<_> = (1..=up_to)
+        .map(|n| {
+            let total = if n <= free { value } else { value + 35 * (n - free) };
+            json!({"installments": n, "installment_value": total / n, "interest_free": n <= free,
+                   "amount": {"value": total, "currency": "BRL"}})
+        })
+        .collect();
+    json!({ "installment_plans": rows })
+}
+
+#[test]
+fn installment_options_are_read_from_the_provider_answer() {
+    let body = json!({"payment_methods": {"credit_card": {"elo": plan(6, 3, 3000)}}});
+    let options = parse_installment_options(&body);
+    assert_eq!(options.len(), 6);
+    assert_eq!(options[0], InstallmentOption { installments: 1, installment_cents: 3000, total_cents: 3000, interest_free: true });
+    assert_eq!(options[2].installment_cents, 1000);
+    assert!(!options[3].interest_free);
+    assert_eq!(options[3].total_cents, 3035);
+}
+
+#[test]
+fn installment_options_without_a_bin_keep_only_what_every_brand_accepts() {
+    let body = json!({"payment_methods": {"credit_card": {"visa": plan(12, 3, 3000), "mastercard": plan(5, 3, 3000)}}});
+    let counts: Vec<u32> = parse_installment_options(&body).iter().map(|o| o.installments).collect();
+    assert_eq!(counts, vec![1, 2, 3, 4, 5]);
+}
+
+#[test]
+fn installment_options_of_an_unexpected_answer_are_empty() {
+    assert!(parse_installment_options(&json!({})).is_empty());
+    assert!(parse_installment_options(&json!({"payment_methods": {"credit_card": {}}})).is_empty());
+    assert!(parse_installment_options(&json!({"payment_methods": {"credit_card": {"elo": {"installment_plans": [{"installments": "x"}]}}}})).is_empty());
+}
+

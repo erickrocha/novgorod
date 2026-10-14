@@ -7,7 +7,7 @@ vi.mock('../../api/client');
 const option = (serviceName: string, priceCents: number, transitDays: number | null) => ({ serviceName, priceCents, transitDays });
 
 describe('cartService.estimateShipping', () => {
-  beforeEach(() => vi.mocked(apiClient.post).mockReset());
+  beforeEach(() => { vi.mocked(apiClient.post).mockReset(); });
 
   it('names the service for one seller', async () => {
     vi.mocked(apiClient.post).mockResolvedValue({ data: { sellers: [{ tenantId: 1, options: [option('Entrega Padrão', 1500, 2)] }] } });

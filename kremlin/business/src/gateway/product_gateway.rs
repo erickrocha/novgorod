@@ -396,8 +396,9 @@ impl ProductGateway {
             skus,
             attributes,
             category_slugs,
-            rating: Some(4.8),
-            review_count: Some(24),
+            // there is no review system: never invent a rating
+            rating: None,
+            review_count: None,
         }))
     }
 }

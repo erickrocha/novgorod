@@ -1,3 +1,4 @@
+import ProductImage from '../product/ProductImage';
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
@@ -48,7 +49,7 @@ export const QuickViewModal: React.FC = () => {
         <div className="grid grid-cols-1 md:grid-cols-2">
           {/* Image */}
           <div className="relative h-72 md:h-full bg-slate-100">
-            <img
+            <ProductImage
               src={product.images[0] || product.thumbnail}
               alt={product.name}
               className="w-full h-full object-cover"
@@ -66,7 +67,7 @@ export const QuickViewModal: React.FC = () => {
           <div className="p-6 md:p-8 flex flex-col justify-between">
             <div>
               <div className="flex items-center gap-2 text-xs text-amber-700 font-semibold mb-1">
-                <span>{product.category}</span>
+                {product.category && <span>{product.category}</span>}
                 {product.attributes?.origin && (
                   <>
                     <span>•</span>
@@ -79,18 +80,22 @@ export const QuickViewModal: React.FC = () => {
                 {product.name}
               </h2>
 
-              {/* Rating */}
-              <div className="flex items-center gap-2 mt-2">
-                <div className="flex items-center text-amber-500">
-                  <Star className="w-4 h-4 fill-amber-400" />
-                  <span className="ml-1 text-sm font-bold text-slate-800">
-                    {product.rating}
-                  </span>
+              {/* Rating: only when the backend provides one */}
+              {product.rating != null && (
+                <div className="flex items-center gap-2 mt-2">
+                  <div className="flex items-center text-amber-500">
+                    <Star className="w-4 h-4 fill-amber-400" />
+                    <span className="ml-1 text-sm font-bold text-slate-800">
+                      {product.rating}
+                    </span>
+                  </div>
+                  {product.reviewCount != null && (
+                    <span className="text-xs text-slate-400">
+                      ({product.reviewCount} avaliações)
+                    </span>
+                  )}
                 </div>
-                <span className="text-xs text-slate-400">
-                  ({product.reviewCount} avaliações)
-                </span>
-              </div>
+              )}
 
               {/* Price */}
               <div className="mt-4 flex items-baseline gap-3">

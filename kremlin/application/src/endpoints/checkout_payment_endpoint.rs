@@ -2,7 +2,7 @@ use crate::{
     AppState,
     infrastructure::{
         mock_payment::{MockPaymentProvider, MockProviderKind},
-        pagseguro::PagSeguro,
+        pagseguro::{InstallmentOption, PagSeguro},
         payment_credentials::TenantCredentialsPayload,
     },
 };
@@ -87,6 +87,77 @@ pub async fn config(
         })),
         _ => Err(unavailable()),
     }
+}
+
+/// Installments offered without interest (the seller bears the provider fee):
+/// `PAYMENT_MAX_INTEREST_FREE_INSTALLMENTS`, default 3, at most 12. The charge always equals the purchase
+/// total, so options with buyer interest are not offered and not accepted at submit.
+pub fn max_interest_free_installments() -> u32 {
+    std::env::var("PAYMENT_MAX_INTEREST_FREE_INSTALLMENTS")
+        .ok()
+        .and_then(|value| value.trim().parse::<u32>().ok())
+        .filter(|n| (1..=12).contains(n))
+        .unwrap_or(3)
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct InstallmentPlan {
+    pub installments: Vec<InstallmentOption>,
+}
+
+#[utoipa::path(get, path="/checkout/installments", tag="Payment", params(("tenantId"=i64, Query), ("amountCents"=i64, Query), ("bin"=Option<String>, Query)), responses((status=200, body=InstallmentPlan), (status=400, description="Invalid amount or card BIN"), (status=403, description="Customer only"), (status=502, description="Provider unavailable"), (status=503, description="Payment not configured")), security(("bearer_auth" = [])))]
+pub async fn installments(
+    State(state): State<AppState>,
+    Extension(user): Extension<User>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<InstallmentPlan>, ApiError> {
+    if user.role != Role::Customer {
+        return Err(bad(StatusCode::FORBIDDEN, "Acesso negado"));
+    }
+    let tenant_id = params
+        .get("tenantId")
+        .and_then(|v| v.parse::<i64>().ok())
+        .ok_or_else(|| bad(StatusCode::BAD_REQUEST, "Vendedor inválido"))?;
+    let amount_cents = params
+        .get("amountCents")
+        .and_then(|v| v.parse::<i64>().ok())
+        .filter(|v| (1..=100_000_000).contains(v))
+        .ok_or_else(|| bad(StatusCode::BAD_REQUEST, "Valor inválido"))?;
+    let bin = match params.get("bin").map(|v| v.trim()).filter(|v| !v.is_empty()) {
+        None => None,
+        Some(v) if (6..=8).contains(&v.len()) && v.bytes().all(|b| b.is_ascii_digit()) => Some(v),
+        Some(_) => return Err(bad(StatusCode::BAD_REQUEST, "BIN do cartão inválido")),
+    };
+    let max_free = max_interest_free_installments();
+    let provider = match configured_mock_provider()? {
+        Some(mock) => ResolvedProvider::Mock(mock),
+        None => tenant_provider(&state, tenant_id).await?,
+    };
+    let options = match &provider {
+        ResolvedProvider::PagSeguro(ps) => ps
+            .installments(amount_cents, bin, max_free)
+            .await
+            .map_err(|e| {
+                log::warn!("installment lookup failed for tenant {tenant_id}: {}", e.0);
+                bad(StatusCode::BAD_GATEWAY, "Não foi possível consultar as parcelas")
+            })?,
+        // the mock provider simulates the gateway without its fee table: equal interest-free parts
+        ResolvedProvider::Mock(_) => (1..=max_free)
+            .map(|n| InstallmentOption {
+                installments: n,
+                installment_cents: amount_cents / i64::from(n),
+                total_cents: amount_cents,
+                interest_free: true,
+            })
+            .collect(),
+    };
+    // only options that keep the charge equal to the purchase total
+    let installments = options
+        .into_iter()
+        .filter(|o| o.interest_free && o.total_cents == amount_cents && o.installments <= max_free)
+        .collect();
+    Ok(Json(InstallmentPlan { installments }))
 }
 
 #[derive(Deserialize)]
@@ -646,7 +717,7 @@ pub async fn submit(
         || card.token.len() > 1024
         || card.payment_method_id.is_empty()
         || card.installments < 1
-        || card.installments > 24
+        || card.installments > i32::try_from(max_interest_free_installments()).unwrap_or(3)
     {
         return Err(bad(StatusCode::BAD_REQUEST, "Dados do cartão inválidos"));
     }

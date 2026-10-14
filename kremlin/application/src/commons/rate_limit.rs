@@ -64,11 +64,15 @@ pub fn check_estimate(headers: &HeaderMap, peer: Option<SocketAddr>) -> Result<(
 /// `x-forwarded-for`, first value); without it the peer address is used. Set it only when every request
 /// passes through a proxy that overwrites that header, or a client could pick its own key.
 fn client_key(headers: &HeaderMap, peer: Option<SocketAddr>) -> String {
-    let forwarded = std::env::var("CLIENT_IP_HEADER")
-        .ok()
-        .and_then(|name| headers.get(name.trim().to_ascii_lowercase()).cloned())
-        .and_then(|value| value.to_str().ok().map(str::to_owned))
-        .and_then(|value| value.split(',').next().map(|first| first.trim().to_owned()))
+    client_key_with(headers, peer, std::env::var("CLIENT_IP_HEADER").ok().as_deref())
+}
+
+fn client_key_with(headers: &HeaderMap, peer: Option<SocketAddr>, header_name: Option<&str>) -> String {
+    let forwarded = header_name
+        .and_then(|name| headers.get(name.trim().to_ascii_lowercase()))
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split(',').next())
+        .map(|first| first.trim().to_owned())
         .filter(|value| !value.is_empty() && value.len() <= 64);
     forwarded
         .or_else(|| peer.map(|address| address.ip().to_string()))
@@ -97,7 +101,14 @@ mod tests {
         let peer: SocketAddr = "203.0.113.9:4000".parse().unwrap();
         let mut headers = HeaderMap::new();
         headers.insert("x-forwarded-for", "198.51.100.7, 10.0.0.1".parse().unwrap());
-        assert_eq!(client_key(&headers, Some(peer)), "203.0.113.9");
-        assert_eq!(client_key(&HeaderMap::new(), None), "unknown");
+        // header configured: its first value wins over the peer
+        assert_eq!(client_key_with(&headers, Some(peer), Some("X-Forwarded-For")), "198.51.100.7");
+        // header configured but absent or empty: the peer
+        assert_eq!(client_key_with(&HeaderMap::new(), Some(peer), Some("x-forwarded-for")), "203.0.113.9");
+        headers.insert("x-forwarded-for", "".parse().unwrap());
+        assert_eq!(client_key_with(&headers, Some(peer), Some("x-forwarded-for")), "203.0.113.9");
+        // nothing configured: the peer, and "unknown" without a peer
+        assert_eq!(client_key_with(&headers, Some(peer), None), "203.0.113.9");
+        assert_eq!(client_key_with(&HeaderMap::new(), None, None), "unknown");
     }
 }

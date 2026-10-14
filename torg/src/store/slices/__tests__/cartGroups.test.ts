@@ -8,7 +8,7 @@ const product = (id: string, sellerId?: number, name = 'Shared name'): Product =
   category: '', categorySlug: '', images: [], thumbnail: '', rating: 0, reviewCount: 0, stock: 1,
   seller: sellerId ? { id: sellerId, businessName: name } : undefined,
 });
-const state = (items: ReturnType<typeof cartReducer>['items']) => ({ cart: { items, appliedCoupon: null, shippingAmount: 0 } } as RootState);
+const state = (items: ReturnType<typeof cartReducer>['items']) => ({ cart: { items, shippingAmount: 0 } } as unknown as RootState);
 
 describe('cart tenant grouping', () => {
   it('separates tenants by ID, keeps first-added order, and updates subtotals', () => {

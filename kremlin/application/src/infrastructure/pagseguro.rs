@@ -18,6 +18,52 @@ pub fn reject_raw_card_data(token: &str) -> Result<(), ProviderError> {
     Ok(())
 }
 
+/// One installment option of the provider's fee calculation (`GET /charges/fees/calculate`).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct InstallmentOption {
+    pub installments: u32,
+    pub installment_cents: i64,
+    /// What the buyer pays in total; above the purchase amount when the provider adds interest.
+    pub total_cents: i64,
+    pub interest_free: bool,
+}
+
+/// Merges the per-brand plans of a fee calculation into the options valid for every brand present,
+/// so a response without a card number never offers an option that some brand would refuse.
+pub fn parse_installment_options(body: &serde_json::Value) -> Vec<InstallmentOption> {
+    let Some(brands) = body.pointer("/payment_methods/credit_card").and_then(|v| v.as_object()) else {
+        return Vec::new();
+    };
+    let mut merged: Option<Vec<InstallmentOption>> = None;
+    for brand in brands.values() {
+        let plan: Vec<InstallmentOption> = brand
+            .get("installment_plans")
+            .and_then(|v| v.as_array())
+            .map(|plans| {
+                plans
+                    .iter()
+                    .filter_map(|p| {
+                        Some(InstallmentOption {
+                            installments: u32::try_from(p.get("installments")?.as_u64()?).ok()?,
+                            installment_cents: p.get("installment_value")?.as_i64()?,
+                            total_cents: p.pointer("/amount/value")?.as_i64()?,
+                            interest_free: p.get("interest_free")?.as_bool()?,
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        merged = Some(match merged {
+            None => plan,
+            Some(previous) => previous.into_iter().filter(|o| plan.contains(o)).collect(),
+        });
+    }
+    let mut options = merged.unwrap_or_default();
+    options.sort_by_key(|o| o.installments);
+    options
+}
+
 pub struct PagSeguro {
     client: reqwest::Client,
     token: String,
@@ -72,6 +118,50 @@ fn parse_int_or_str(v: &serde_json::Value) -> Option<i32> {
 }
 
 impl PagSeguro {
+    /// Installment options for `amount_cents` from the provider, for the card `bin` (six to eight digits)
+    /// when known; interest-free up to `max_interest_free` installments, up to 12 in total.
+    pub async fn installments(
+        &self,
+        amount_cents: i64,
+        bin: Option<&str>,
+        max_interest_free: u32,
+    ) -> Result<Vec<InstallmentOption>, ProviderError> {
+        let url = format!("{}/charges/fees/calculate", self.base_url);
+        let mut query = vec![
+            ("payment_methods", "CREDIT_CARD".to_owned()),
+            ("value", amount_cents.to_string()),
+            ("max_installments", "12".to_owned()),
+            ("max_installments_no_interest", max_interest_free.to_string()),
+        ];
+        if let Some(bin) = bin {
+            query.push(("credit_card_bin", bin.to_owned()));
+        }
+        let response = self
+            .client
+            .get(&url)
+            .bearer_auth(&self.token)
+            .query(&query)
+            .send()
+            .await
+            .map_err(|e| ProviderError(e.to_string()))?;
+        // the provider answers 400 for a BIN it does not know (it does not know the sandbox test cards):
+        // ask again without it, which keeps only the options valid for every brand
+        if bin.is_some() && response.status() == reqwest::StatusCode::BAD_REQUEST {
+            return Box::pin(self.installments(amount_cents, None, max_interest_free)).await;
+        }
+        if !response.status().is_success() {
+            return Err(ProviderError(format!(
+                "pagseguro installments returned {}",
+                response.status()
+            )));
+        }
+        let body: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|e| ProviderError(e.to_string()))?;
+        Ok(parse_installment_options(&body))
+    }
+
     fn with_base_url(token: String, base_url: String) -> Result<Self, ProviderError> {
         if token.is_empty() {
             return Err(ProviderError("Token do PagSeguro inválido".into()));
