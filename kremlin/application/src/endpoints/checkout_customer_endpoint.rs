@@ -118,8 +118,10 @@ pub async fn me(State(state): State<AppState>, Extension(user): Extension<User>,
     tag = "Customer",
     responses(
         (status = 204, description = "Customer account deactivated"),
+        (status = 400, description = "Query string or body supplied", body = crate::endpoints::json::error_response_json::BadRequestErrorJson),
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Forbidden", body = crate::endpoints::json::error_response_json::ForbiddenErrorJson),
+        (status = 404, description = "No self-resource (SysAdmin)", body = crate::endpoints::json::error_response_json::NotFoundErrorJson),
         (status = 500, description = "Internal server error", body = crate::endpoints::json::error_response_json::InternalServerErrorJson),
     ),
     security(("bearer_auth" = []))
@@ -196,9 +198,10 @@ pub async fn deactivate(
     tag = "Customer",
     responses(
         (status = 204, description = "Customer account erased; avatar cleanup is pending"),
+        (status = 400, description = "Query string or body supplied", body = crate::endpoints::json::error_response_json::BadRequestErrorJson),
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Forbidden", body = crate::endpoints::json::error_response_json::ForbiddenErrorJson),
-        (status = 404, description = "Customer not found", body = crate::endpoints::json::error_response_json::NotFoundErrorJson),
+        (status = 404, description = "SysAdmin has no self-resource, or Customer removed during the request", body = crate::endpoints::json::error_response_json::NotFoundErrorJson),
         (status = 500, description = "Internal server error", body = crate::endpoints::json::error_response_json::InternalServerErrorJson),
     ),
     security(("bearer_auth" = []))
