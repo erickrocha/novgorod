@@ -63,7 +63,7 @@ async fn owned_on<C: ConnectionTrait>(
     customer_entity::Entity::find().filter(customer_entity::Column::UserId.eq(id))
         .filter(customer_entity::Column::Active.eq(true)).one(connection).await
         .map_err(|_| ExceptionResponse::InternalServerError(locale, ErrorKey::PurchaseUnavailable))?
-        .ok_or(ExceptionResponse::NotFound(locale, ErrorKey::PurchaseForbidden))
+        .ok_or(ExceptionResponse::Forbidden(locale, ErrorKey::PurchaseForbidden))
 }
 
 async fn owned(

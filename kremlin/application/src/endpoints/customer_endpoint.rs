@@ -94,8 +94,6 @@ async fn validate_customer_user_link(
         (status = 200, description = "List of customers", body = [CustomerJson]),
         (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
         (status = 403, description = "Forbidden", body = ForbiddenErrorJson),
-        (status = 404, description = "Linked User not found", body = ErrorResponseJson),
-        (status = 409, description = "User already linked to another Customer", body = ErrorResponseJson),
         (status = 500, description = "Internal server error", body = InternalServerErrorJson),
     ),
     security(("bearer_auth" = []))
@@ -118,7 +116,6 @@ pub async fn list_all(
         (status = 200, description = "Paged customers", body = PagedResponse<CustomerJson>),
         (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
         (status = 403, description = "Forbidden", body = ForbiddenErrorJson),
-        (status = 409, description = "User already linked to another Customer", body = ErrorResponseJson),
         (status = 500, description = "Internal server error", body = InternalServerErrorJson),
     ),
     security(("bearer_auth" = []))
@@ -218,6 +215,8 @@ pub async fn get_by_id(State(state): State<AppState>,Extension(locale): Extensio
         (status = 400, description = "Bad request", body = BadRequestErrorJson),
         (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
         (status = 403, description = "Forbidden", body = ForbiddenErrorJson),
+        (status = 404, description = "Linked User not found", body = ErrorResponseJson),
+        (status = 409, description = "User already linked to another Customer", body = ErrorResponseJson),
         (status = 500, description = "Internal server error", body = InternalServerErrorJson),
     ),
     security(("bearer_auth" = []))
@@ -291,6 +290,7 @@ pub async fn add(
         (status = 404, description = "Not found", body = NotFoundErrorJson),
         (status = 401, description = "Unauthorized", body = UnauthorizedErrorJson),
         (status = 403, description = "Forbidden", body = ForbiddenErrorJson),
+        (status = 409, description = "User already linked to another Customer", body = ErrorResponseJson),
         (status = 500, description = "Internal server error", body = InternalServerErrorJson),
     ),
     security(("bearer_auth" = []))
