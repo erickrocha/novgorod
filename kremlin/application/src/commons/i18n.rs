@@ -41,6 +41,7 @@ impl Locale {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ErrorKey {
+    TooManyRequests,
     PurchaseConflict,
     PurchaseInvalid,
     PurchaseUnavailable,
@@ -61,6 +62,7 @@ pub enum ErrorKey {
 impl ErrorKey {
     pub fn as_str(self) -> &'static str {
         match self {
+            ErrorKey::TooManyRequests => "TooManyRequests",
             ErrorKey::PurchaseConflict => "PurchaseConflict",
             ErrorKey::PurchaseInvalid => "PurchaseInvalid",
             ErrorKey::PurchaseUnavailable => "PurchaseUnavailable",
@@ -81,6 +83,7 @@ impl ErrorKey {
 
     pub fn message_id(self) -> &'static str {
         match self {
+            ErrorKey::TooManyRequests => "too-many-requests",
             ErrorKey::PurchaseConflict => "purchase-conflict",
             ErrorKey::PurchaseInvalid => "purchase-invalid",
             ErrorKey::PurchaseUnavailable => "purchase-unavailable",

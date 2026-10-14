@@ -19,6 +19,8 @@ pub enum ExceptionResponse {
     CustomBadRequest(String),
     Conflict(Locale, ErrorKey),
     InternalServerError(Locale, ErrorKey),
+    /// 429; the number is the `Retry-After` in seconds.
+    TooManyRequests(Locale, ErrorKey, u64),
 }
 
 impl IntoResponse for ExceptionResponse {
@@ -55,6 +57,14 @@ impl IntoResponse for ExceptionResponse {
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,
                 ErrorResponseJson::new(key.as_str().to_string(), translate(locale, key)),
             ),
+            ExceptionResponse::TooManyRequests(locale, key, retry_after) => {
+                let body = ErrorResponseJson::new(key.as_str().to_string(), translate(locale, key));
+                let mut response = (axum::http::StatusCode::TOO_MANY_REQUESTS, Json(body)).into_response();
+                if let Ok(value) = axum::http::HeaderValue::from_str(&retry_after.to_string()) {
+                    response.headers_mut().insert(axum::http::header::RETRY_AFTER, value);
+                }
+                return response;
+            }
             ExceptionResponse::CustomBadRequest(msg) => (
                 axum::http::StatusCode::BAD_REQUEST,
                 ErrorResponseJson::new("bad_request".to_string(), msg),

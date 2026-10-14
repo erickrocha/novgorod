@@ -26,7 +26,7 @@ test('two sellers: the prices add up and the longest delivery time is shown', as
   await addToCart(page, 'product-pro-1');
   await addToCart(page, 'product-b1');
   await estimate(page, '01001-000');
-  await expect(page.getByText(/2 vendedores \(em até 2 dias\)/)).toBeVisible();
+  await expect(page.getByText(/Frete de 2 vendedores \(prazo máximo: 2 dias\)/)).toBeVisible();
   await expect(page.getByText(/R\$ 25\.00/)).toBeVisible();
 });
 
@@ -45,3 +45,19 @@ test('an invalid CEP shows an error and no price', async ({ page }) => {
   await expect(page.getByText(/Frete calculado/)).toHaveCount(0);
   await expect(page.getByText(/(invalid CEP|CEP inválido)/i).first()).toBeVisible();
 });
+
+test('the public estimate answers 429 with Retry-After after 10 requests from one client', async ({ request }) => {
+  const url = `${process.env.E2E_API_URL ?? 'http://127.0.0.1:8080'}/api/public/shipping/estimate`;
+  const headers = { 'x-forwarded-for': `203.0.113.${Math.floor(Math.random() * 200) + 1}`, 'accept-language': 'pt-BR' };
+  const data = { items: [{ skuId: 1, quantity: 1 }], cep: '01001-000' };
+  for (let call = 1; call <= 10; call += 1) {
+    expect((await request.post(url, { headers, data })).status(), `call ${call}`).toBe(200);
+  }
+  const limited = await request.post(url, { headers, data });
+  expect(limited.status()).toBe(429);
+  expect(Number(limited.headers()['retry-after'])).toBeGreaterThan(0);
+  expect((await limited.json()).message).toMatch(/Muitas solicitações/);
+  const other = await request.post(url, { headers: { ...headers, 'x-forwarded-for': '198.51.100.250' }, data });
+  expect(other.status()).toBe(200);
+});
+

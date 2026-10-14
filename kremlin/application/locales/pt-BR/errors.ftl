@@ -62,3 +62,4 @@ purchase-invalid = Verifique os produtos, quantidades, dados do cliente e endere
 purchase-unavailable = Não foi possível processar a compra. Tente novamente.
 purchase-forbidden = Você não tem permissão para acessar esta compra.
 purchase-not-found = Compra ou pedido não encontrado.
+too-many-requests = Muitas solicitações. Aguarde um pouco e tente novamente.

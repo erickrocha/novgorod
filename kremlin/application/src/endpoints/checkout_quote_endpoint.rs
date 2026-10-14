@@ -3,9 +3,10 @@ use crate::commons::{
     exception_response::{ExceptionResponse, HttpResponse},
     i18n::{ErrorKey, Locale},
 };
+use std::net::SocketAddr;
 use axum::{
     Json,
-    extract::{Extension, State},
+    extract::{ConnectInfo, Extension, State},
     http::{HeaderMap, StatusCode, header::ACCEPT_LANGUAGE},
 };
 use business::{
@@ -102,10 +103,11 @@ pub(crate) async fn ensure_quote_tenant(
     }
 }
 
-#[utoipa::path(post, path="/api/public/shipping/estimate", tag="WebStore", request_body=ShippingEstimateRequest, responses((status=200, body=ShippingEstimate), (status=400, description="Invalid CEP, item or seller"), (status=503, description="Shipping provider unavailable")))]
+#[utoipa::path(post, path="/api/public/shipping/estimate", tag="WebStore", request_body=ShippingEstimateRequest, responses((status=200, body=ShippingEstimate), (status=400, description="Invalid CEP, item or seller"), (status=422, description="Malformed body or unknown field"), (status=429, description="Rate limit exceeded; Retry-After in seconds"), (status=503, description="Shipping provider unavailable")))]
 pub async fn estimate(
     State(state): State<AppState>,
     headers: HeaderMap,
+    peer: Option<Extension<ConnectInfo<SocketAddr>>>,
     Extension(context): Extension<crate::commons::tenant_context::TenantContext>,
     Json(input): Json<ShippingEstimateRequest>,
 ) -> HttpResponse<Json<ShippingEstimate>> {
@@ -115,6 +117,17 @@ pub async fn estimate(
             .get(ACCEPT_LANGUAGE)
             .and_then(|value| value.to_str().ok()),
     );
+    // public route that can cost a carrier call: limited per client (default 10 per minute)
+    if let Err(retry_after) = crate::commons::rate_limit::check_estimate(
+        &headers,
+        peer.map(|Extension(ConnectInfo(address))| address),
+    ) {
+        return Err(ExceptionResponse::TooManyRequests(
+            locale,
+            ErrorKey::TooManyRequests,
+            retry_after,
+        ));
+    }
     let result =
         CheckoutQuoteUseCase::with_provider(state.conn.as_ref().clone(), state.shipping.clone())
             .estimate(input, context.tenant_id())

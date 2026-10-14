@@ -83,6 +83,7 @@ services:
       - SYSADMIN_PASSWORD=${TEST_SYSADMIN_PASSWORD:-SysAdmin-test-1}
       # Test stack only: lets the PagSeguro adapter talk to the psd double. For the live sandbox set
       # TEST_PAGSEGURO_API_BASE_URL=https://sandbox.api.pagseguro.com and configure real credentials on the tenants.
+      - CLIENT_IP_HEADER=x-forwarded-for # rate limit of the public estimate: tests pick their own client
       - PAYMENT_MOCK_ALLOWED=true
       - PAGSEGURO_API_BASE_URL=${TEST_PAGSEGURO_API_BASE_URL:-http://psd:8099}
       - GATEWAY_TOKEN=${TEST_GATEWAY_TOKEN:-test-gateway-8f2b6d4a0c1e3957}

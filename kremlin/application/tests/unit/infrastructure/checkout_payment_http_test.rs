@@ -3,7 +3,7 @@ use crate::{
     commons::{i18n::Locale, tenant_context::TenantContext},
     endpoints::{
         checkout_payment_endpoint::{config as payment_config, pagseguro_webhook, status, submit},
-        checkout_quote_endpoint::{quote, select_shipping},
+        checkout_quote_endpoint::{estimate, quote, select_shipping},
         payment_settings_endpoint::{get as get_payment_settings, put as put_payment_settings},
         orders_endpoint::{
             create_purchase, get_by_id, get_purchase, history, payments, transactions,
@@ -236,6 +236,7 @@ fn router(state: AppState) -> Router {
         .route("/purchases/{id}/payments/submit", post(submit))
         .route("/purchases/{id}/payments/status", get(status))
         .route("/checkout/payment-config", get(payment_config))
+        .route("/api/public/shipping/estimate", post(estimate))
         .route("/webhooks/pagseguro", post(pagseguro_webhook))
         .route("/orders/{id}", get(get_by_id))
         .route("/orders/{id}/status-history", get(history))
@@ -4247,5 +4248,43 @@ async fn reconciliation_covers_pending_authorized_backoff_locking_and_cancellati
         .try_get("", "count")
         .unwrap();
     assert_eq!(refund_count, 0);
+    cleanup(root, db, schema).await.unwrap();
+}
+
+// SR-EST-006 (NOV-35): the public estimate route is limited per client (10 per minute by default).
+#[tokio::test]
+#[ignore = "requires isolated PostgreSQL"]
+async fn public_shipping_estimate_is_rate_limited_per_client() {
+    let _environment_restore = EnvironmentRestore::capture(&["CLIENT_IP_HEADER"]);
+    unsafe {
+        std::env::set_var("CLIENT_IP_HEADER", "x-test-client");
+    }
+    let (root, db, schema) = database().await.unwrap();
+    Migrator::up(&db, None).await.unwrap();
+    fixtures(&db).await.unwrap();
+    let app = router(state(db.clone()));
+    let send = |client: &'static str| {
+        let app = app.clone();
+        async move {
+            let mut request = Request::builder()
+                .method(Method::POST)
+                .uri("/api/public/shipping/estimate")
+                .header("content-type", "application/json")
+                .header("x-test-client", client)
+                .body(Body::from(json!({"items":[{"skuId":1,"quantity":1}],"cep":"01001000"}).to_string()))
+                .unwrap();
+            request.extensions_mut().insert(TenantContext::Marketplace);
+            app.oneshot(request).await.unwrap()
+        }
+    };
+    for call in 1..=10 {
+        let response = send("203.0.113.10").await;
+        assert_ne!(response.status(), StatusCode::TOO_MANY_REQUESTS, "call {call}");
+    }
+    let limited = send("203.0.113.10").await;
+    assert_eq!(limited.status(), StatusCode::TOO_MANY_REQUESTS);
+    let retry_after: u64 = limited.headers()["retry-after"].to_str().unwrap().parse().unwrap();
+    assert!((1..=60).contains(&retry_after));
+    assert_ne!(send("203.0.113.11").await.status(), StatusCode::TOO_MANY_REQUESTS, "another client");
     cleanup(root, db, schema).await.unwrap();
 }

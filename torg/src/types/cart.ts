@@ -20,6 +20,8 @@ export interface Coupon {
 export interface ShippingQuote {
   cost: number;
   deliveryDays: number | null;
+  /** Sellers the estimate covers; above one, the delivery time is the longest of them. */
+  sellerCount?: number;
   service: string;
 }
 

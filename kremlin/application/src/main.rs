@@ -462,7 +462,11 @@ async fn start() -> anyhow::Result<()> {
 
     let listener = tokio::net::TcpListener::bind(&server_url).await?;
     log::info!("Server started on address {}", server_url);
-    axum::serve(listener, app).await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .await?;
 
     Ok(())
 }

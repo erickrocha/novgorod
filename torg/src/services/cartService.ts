@@ -31,7 +31,8 @@ export const cartService = {
     return {
       cost: cheapest.reduce((sum, option) => sum + option.priceCents, 0) / 100,
       deliveryDays: days.length ? Math.max(...days) : null,
-      service: cheapest.length === 1 ? cheapest[0].serviceName : `${cheapest.length} vendedores`,
+      service: cheapest.length === 1 ? cheapest[0].serviceName : `Frete de ${cheapest.length} vendedores`,
+      sellerCount: cheapest.length,
     };
   },
 };

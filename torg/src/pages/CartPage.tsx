@@ -337,7 +337,9 @@ export const CartPage: React.FC = () => {
               {shippingDetails && (
                 <p className="text-xs text-slate-600 mt-1 flex items-center gap-1">
                   <Truck className="w-3.5 h-3.5 text-amber-600" />
-                  <span>{shippingDetails.service}{shippingDetails.deliveryDays !== null && ` (em até ${shippingDetails.deliveryDays} dias)`}</span>
+                  <span>{shippingDetails.service}{shippingDetails.deliveryDays !== null && (shippingDetails.sellerCount ?? 1) > 1
+                    ? ` (prazo máximo: ${shippingDetails.deliveryDays} dias)`
+                    : shippingDetails.deliveryDays !== null && ` (em até ${shippingDetails.deliveryDays} dias)`}</span>
                 </p>
               )}
             </form>
