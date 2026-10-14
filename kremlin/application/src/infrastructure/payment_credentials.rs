@@ -90,7 +90,7 @@ impl PaymentKeyRing {
                 return Err("invalid payment encryption key");
             }
             let mut key = [0_u8; 32];
-            for (i, pair) in value.as_bytes().chunks_exact(2).enumerate() {
+            for (i, pair) in value.as_bytes().as_chunks::<2>().0.iter().enumerate() {
                 let hex =
                     std::str::from_utf8(pair).map_err(|_| "invalid payment encryption key")?;
                 key[i] =

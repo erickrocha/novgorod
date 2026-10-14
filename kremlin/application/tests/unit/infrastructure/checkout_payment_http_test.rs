@@ -3428,21 +3428,22 @@ async fn tc04_charge_uses_purchase_amount_and_payer_and_skips_zero_total() {
     .await
     .unwrap();
     assert_eq!(status, StatusCode::OK, "{submitted}");
-    let captured_requests = requests.lock().unwrap();
-    assert_eq!(captured_requests.len(), 1);
-    let provider_request = &captured_requests[0];
-    assert_eq!(
-        provider_request["transaction_amount"],
-        payment_amount_cents as f64 / 100.0
-    );
-    assert_eq!(payment_amount_cents, expected_amount_cents);
-    assert_eq!(provider_request["payer"]["email"], expected_email);
-    assert_eq!(
-        provider_request["payer"]["identification"]["number"],
-        expected_tax_id
-    );
-    assert_eq!(provider_request["installments"], 3);
-    drop(captured_requests);
+    {
+        let captured_requests = requests.lock().unwrap();
+        assert_eq!(captured_requests.len(), 1);
+        let provider_request = &captured_requests[0];
+        assert_eq!(
+            provider_request["transaction_amount"],
+            payment_amount_cents as f64 / 100.0
+        );
+        assert_eq!(payment_amount_cents, expected_amount_cents);
+        assert_eq!(provider_request["payer"]["email"], expected_email);
+        assert_eq!(
+            provider_request["payer"]["identification"]["number"],
+            expected_tax_id
+        );
+        assert_eq!(provider_request["installments"], 3);
+    }
 
     db.execute_unprepared(
         "UPDATE sku SET price_cents=0 WHERE id=1; UPDATE shipping_rate SET price_cents=0 WHERE tenant_id=1",
@@ -3611,7 +3612,7 @@ async fn tc05_persists_attempt_before_provider_and_reuses_it_for_both_providers(
         );
         assert_eq!(
             charge_state.idempotency_keys.lock().unwrap().as_slice(),
-            &[attempt_key.clone()]
+            std::slice::from_ref(&attempt_key)
         );
 
         let (pending_repeat_status, pending_repeat) = request(
@@ -4325,9 +4326,7 @@ async fn tc08_mercado_pago_webhook_checks_signature_replay_and_provider_data() {
         ("currency_id", json!("USD")),
         ("collector_id", json!(9999)),
     ] {
-        let mut response = provider_response.lock().unwrap();
-        response[field] = mismatch;
-        drop(response);
+        provider_response.lock().unwrap()[field] = mismatch;
         let response = mercado_pago_webhook_request(
             app.clone(),
             body.as_bytes(),

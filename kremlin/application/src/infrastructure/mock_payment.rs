@@ -83,6 +83,7 @@ pub struct MockPaymentProvider {
 }
 
 impl MockPaymentProvider {
+    #[cfg(test)]
     pub fn configured() -> Result<Self, ProviderError> {
         let provider = std::env::var("PAYMENT_MOCK_PROVIDER")
             .map_err(|_| ProviderError("PAYMENT_MOCK_PROVIDER is required in mock mode".into()))?;

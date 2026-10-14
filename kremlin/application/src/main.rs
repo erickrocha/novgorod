@@ -550,9 +550,8 @@ mod shipping_api_tests {
         assert!(doc["paths"]["/customers/me/erasure"]["delete"].is_object());
 
         for path in ["/api/public/products/query", "/api/public/products/{slug}"] {
-            assert_eq!(
+            assert!(
                 doc["paths"][path]["get"]["security"][0]["bearer_auth"].is_array(),
-                true,
                 "record the current public-route bearer annotation on {path}"
             );
         }

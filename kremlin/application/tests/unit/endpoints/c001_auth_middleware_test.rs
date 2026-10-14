@@ -27,7 +27,7 @@ use std::sync::{Arc, Mutex};
 use tower::ServiceExt;
 
 const TEST_SECRET: &str = "c001-test-secret-long-enough-for-hs512-auth-middleware-tests";
-static PAYMENT_CONFIG_ENV_LOCK: Mutex<()> = Mutex::new(());
+static PAYMENT_CONFIG_ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 struct UnusedShippingProvider;
 
@@ -1206,7 +1206,7 @@ async fn payment_config_is_customer_only() {
 
 #[tokio::test]
 async fn payment_config_without_tenant_ignores_platform_public_key_and_is_unavailable() {
-    let _env_guard = PAYMENT_CONFIG_ENV_LOCK.lock().unwrap();
+    let _env_guard = PAYMENT_CONFIG_ENV_LOCK.lock().await;
     unsafe {
         std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET);
     }
@@ -1258,7 +1258,7 @@ async fn payment_config_without_tenant_ignores_platform_public_key_and_is_unavai
 
 #[tokio::test]
 async fn payment_config_prefers_tenant_public_key_over_global_fallback() {
-    let _env_guard = PAYMENT_CONFIG_ENV_LOCK.lock().unwrap();
+    let _env_guard = PAYMENT_CONFIG_ENV_LOCK.lock().await;
     unsafe {
         std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET);
     }
@@ -3981,8 +3981,7 @@ async fn person_and_address_by_id_routes_enforce_tenant_scope() {
                 .into_transaction_log()
                 .into_iter()
                 .flat_map(|transaction| transaction.statements().to_vec())
-                .filter(|statement| statement.sql.contains(&format!("FROM \"{table}\"")))
-                .last()
+                .rfind(|statement| statement.sql.contains(&format!("FROM \"{table}\"")))
                 .expect("resource-by-ID query should execute");
             let where_clause = resource_query
                 .sql
@@ -5275,7 +5274,7 @@ async fn shipping_tax_read_routes_scope_roles_and_ids() {
             let app_state = state(db);
             let app = crate::routes::shipping_tax_routes::shipping_tax_routes(app_state.clone())
                 .with_state(app_state);
-            let method = if operation == "by_id" { "GET" } else { "GET" };
+            let method = "GET";
             let response = app
                 .oneshot(request(
                     method,
@@ -5795,8 +5794,7 @@ async fn user_by_id_route_characterizes_cross_tenant_role_access() {
         let user_query = transaction_log
             .iter()
             .flat_map(|transaction| transaction.statements())
-            .filter(|statement| statement.sql.contains("FROM \"user\""))
-            .last()
+            .rfind(|statement| statement.sql.contains("FROM \"user\""))
             .expect("user-by-ID query should be executed");
         let where_clause = user_query
             .sql
@@ -6268,8 +6266,7 @@ async fn user_change_password_route_scopes_user_lookup_by_role() {
             .into_transaction_log()
             .into_iter()
             .flat_map(|transaction| transaction.statements().to_vec())
-            .filter(|statement| statement.sql.contains("FROM \"user\""))
-            .last()
+            .rfind(|statement| statement.sql.contains("FROM \"user\""))
             .expect("change-password user lookup should execute");
         let where_clause = user_query
             .sql
@@ -7912,7 +7909,6 @@ async fn profile_put_aliases_update_authenticated_person_for_all_roles() {
                 .into_transaction_log()
                 .into_iter()
                 .flat_map(|transaction| transaction.statements().to_vec())
-                .into_iter()
                 .map(|statement| statement.sql)
                 .collect();
             assert_eq!(
