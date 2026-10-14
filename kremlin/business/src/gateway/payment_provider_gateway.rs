@@ -36,7 +36,6 @@ pub struct ProviderResult {
     pub amount_cents: i64,
     pub currency: String,
     pub external_reference: String,
-    pub collector_id: i64,
     pub payment_type_id: String,
     pub card: Option<ProviderCardMetadata>,
 }

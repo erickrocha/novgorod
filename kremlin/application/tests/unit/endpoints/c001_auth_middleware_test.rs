@@ -1211,10 +1211,8 @@ async fn payment_config_without_tenant_ignores_platform_public_key_and_is_unavai
         std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET);
     }
     let original_pagseguro_key = std::env::var_os("PAGSEGURO_PUBLIC_KEY");
-    let original_mp_key = std::env::var_os("MP_PUBLIC_KEY");
     unsafe {
         std::env::set_var("PAGSEGURO_PUBLIC_KEY", "pk_test_dummy");
-        std::env::remove_var("MP_PUBLIC_KEY");
     }
 
     let db = MockDatabase::new(DatabaseBackend::Postgres)
@@ -1244,11 +1242,6 @@ async fn payment_config_without_tenant_ignores_platform_public_key_and_is_unavai
         } else {
             std::env::remove_var("PAGSEGURO_PUBLIC_KEY");
         }
-        if let Some(value) = original_mp_key {
-            std::env::set_var("MP_PUBLIC_KEY", value);
-        } else {
-            std::env::remove_var("MP_PUBLIC_KEY");
-        }
     }
 
     // NOV-5 TC-14/16 (SR-PAY-014): no platform or other-tenant fallback.
@@ -1263,10 +1256,8 @@ async fn payment_config_prefers_tenant_public_key_over_global_fallback() {
         std::env::set_var("ACCESS_TOKEN_SECRET", TEST_SECRET);
     }
     let original_pagseguro_key = std::env::var_os("PAGSEGURO_PUBLIC_KEY");
-    let original_mp_key = std::env::var_os("MP_PUBLIC_KEY");
     unsafe {
         std::env::set_var("PAGSEGURO_PUBLIC_KEY", "pk_global_dummy");
-        std::env::remove_var("MP_PUBLIC_KEY");
     }
 
     let tenant_settings: BTreeMap<String, Value> = BTreeMap::from([
@@ -1302,11 +1293,6 @@ async fn payment_config_prefers_tenant_public_key_over_global_fallback() {
             std::env::set_var("PAGSEGURO_PUBLIC_KEY", value);
         } else {
             std::env::remove_var("PAGSEGURO_PUBLIC_KEY");
-        }
-        if let Some(value) = original_mp_key {
-            std::env::set_var("MP_PUBLIC_KEY", value);
-        } else {
-            std::env::remove_var("MP_PUBLIC_KEY");
         }
     }
 
@@ -3326,7 +3312,7 @@ async fn payment_settings_routes_characterize_role_and_tenant_matrix() {
                     method,
                     "/tenants/7/payment-settings",
                     &authorization,
-                    r#"{"provider":"mercado_pago"}"#,
+                    r#"{"provider":"pagseguro"}"#,
                 )
             };
             let response = app.oneshot(request).await.unwrap();

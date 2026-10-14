@@ -295,7 +295,6 @@ impl Modify for SecurityAddon {
             endpoints::payment_settings_endpoint::PaymentSettingsResponse,
             endpoints::payment_settings_endpoint::PaymentSettingsUpdate,
             endpoints::payment_settings_endpoint::PaymentCredentialsUpdate,
-            endpoints::payment_settings_endpoint::MercadoPagoCredentialsUpdate,
             endpoints::payment_settings_endpoint::PagSeguroCredentialsUpdate,
         ),
     ),
@@ -438,10 +437,6 @@ async fn start() -> anyhow::Result<()> {
         .merge(customer_routes(state.clone()))
         .merge(person_routes(state.clone()))
         .merge(order_routes(state.clone()))
-        .route(
-            "/webhooks/mercado-pago",
-            post(endpoints::checkout_payment_endpoint::webhook),
-        )
         .route(
             "/webhooks/pagseguro",
             post(endpoints::checkout_payment_endpoint::pagseguro_webhook),

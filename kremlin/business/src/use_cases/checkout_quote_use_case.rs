@@ -14,7 +14,6 @@ use sea_orm::{
     QueryFilter, Set, Statement,
 };
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -592,12 +591,9 @@ impl CheckoutQuoteUseCase {
             } else {
                 (None, Vec::new(), config.origin_cep.clone())
             };
-            let inputs_hash = format!(
-                "{:x}",
-                Sha256::digest(
-                    serde_json::to_vec(&(&measurements, &config, fixed, &fixed_options))
-                        .map_err(|_| PurchaseError::Validation("invalid shipping inputs"))?
-                )
+            let inputs_hash = crate::commons::functions::sha256_hex(
+                serde_json::to_vec(&(&measurements, &config, fixed, &fixed_options))
+                    .map_err(|_| PurchaseError::Validation("invalid shipping inputs"))?,
             );
             let mut snapshot = ShippingSnapshot {
                 configuration_version: version,

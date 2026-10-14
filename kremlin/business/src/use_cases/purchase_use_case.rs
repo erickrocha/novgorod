@@ -101,16 +101,13 @@ impl PurchaseUseCase {
         let user_id = user.id.ok_or(PurchaseError::Forbidden)?;
         let input = input.normalize()?;
         let hash = if let Some(ref checkout) = checkout {
-            format!(
-                "{:x}",
-                Sha256::digest(format!(
-                    "{}:{}:{}:{}",
-                    input.request_hash(),
-                    checkout.quote_id,
-                    checkout.email,
-                    checkout.phone
-                ))
-            )
+            crate::commons::functions::sha256_hex(format!(
+                "{}:{}:{}:{}",
+                input.request_hash(),
+                checkout.quote_id,
+                checkout.email,
+                checkout.phone
+            ))
         } else {
             input.request_hash()
         };

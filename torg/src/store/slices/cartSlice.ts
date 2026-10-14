@@ -79,7 +79,8 @@ export const estimateShipping = createAsyncThunk(
       const quote = await cartService.estimateShipping(cep.trim(), lines);
       return { quote, cep: cep.trim() };
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Falha ao calcular frete para este CEP';
+      // apiClient rejects with an ApiError whose message is the backend's (already translated)
+      const message = (err as { message?: string } | null)?.message || 'Falha ao calcular frete para este CEP';
       return rejectWithValue(message);
     }
   }

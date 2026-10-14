@@ -3,9 +3,7 @@
 Disposable PostgreSQL plus a Rust container that runs the kremlin tests. Same Postgres image as `../dev`, but nothing persists (tmpfs) and it listens on port 5433, so it never touches the dev database.
 
 ```
-./run.sh                      # full suite; excludes live PagSeguro Sandbox transaction
-./run.sh pagseguro             # live PagSeguro Sandbox charge + status check
-./run.sh mercadopago           # live Mercado Pago Sandbox charge + status check
+./run.sh                      # full suite
 ./run.sh clippy               # cargo clippy --workspace --all-targets
 ./run.sh cargo test -p business --test cart_cleanup_postgres -- --ignored --nocapture
 ```
@@ -14,8 +12,7 @@ Requires Docker with the compose plugin. The first run downloads the images and 
 
 - The Postgres tests are `#[ignore]d`, read `KREMLIN_TEST_DATABASE_URL`, and refuse a database whose name does not end in `_test`. The compose file sets both. Each test creates its own schema and runs the migrations in it.
 - Credentials are throwaway defaults for a local, non-persistent database. Override with `TEST_DATABASE_NAME`, `TEST_DATABASE_USER`, `TEST_DATABASE_PASSWORD`, `TEST_DATABASE_PORT`.
-- `infra/test/.env` is loaded by Compose when `run.sh` starts from this directory. `PAGSEGURO_TOKEN` is passed only to `kremlin-tests`; `./run.sh pagseguro` explicitly runs a sandbox charge and status lookup. The default suite skips that networked, transaction-creating test.
-- `MP_SANDBOX_ACCESS_TOKEN`, `MP_SANDBOX_PUBLIC_KEY`, `MP_SANDBOX_COLLECTOR_ID` and `MP_SANDBOX_BUYER_EMAIL` are passed only to `kremlin-tests`; the buyer email must belong to a Mercado Pago test-buyer account in the same country as the seller. `./run.sh mercadopago` loads the Visa test-card details from the ignored `cards.yaml` and validates APRO (approved), OTHE (rejected) and CONT (pending), including status lookup. The default suite skips these networked Sandbox payments.
+- `infra/test/.env` is loaded by Compose when `run.sh` starts from this directory. `PAGSEGURO_TOKEN`, `PAGSEGURO_PUBLIC_KEY` and `PAGSEGURO_ENVIRONMENT` are read only by `pagseguro_tenants.py`, which puts them on the seeded tenants for live-sandbox runs through the screens (`torg/e2e`). No kremlin test sends raw card data: the server refuses it in every environment.
 - The default suite runs tests serially because several tests alter process-wide environment variables.
 - The source is mounted from `../../kremlin`; build output goes to the `cargo_target` volume, not into the repo.
 
@@ -24,7 +21,7 @@ Requires Docker with the compose plugin. The first run downloads the images and 
 Runs the kremlin app itself on the disposable database and drives it over HTTP. Python 3 stdlib on the host, plus Docker. Nothing here touches production code, and nothing persists.
 
 ```
-docker compose up -d --build --wait kremlin mpd   # app on :8080, Mercado Pago double on :8099, Postgres on :5433
+docker compose up -d --build --wait kremlin psd   # app on :8080, PagSeguro double on :8099, Postgres on :5433
 ./kit.py seed                                      # fixtures E1 (once per fresh stack)
 ./kit.py tchk08                                    # Customer auth-layer regression: marketplace, store mode, coupon payment
 ./kit.py tchk11                                    # Capture consumes and failure releases stock, including replays
@@ -38,7 +35,7 @@ docker compose up -d --build --wait kremlin mpd   # app on :8080, Mercado Pago d
 docker compose down -v                             # always tear down; the database is gone with it
 ```
 
-Stack (`docker-compose.yml`): `kremlin` runs `cargo run -p application --bin kremlin` (migrations and the SysAdmin seed happen at boot; healthy when the port answers; the first start compiles for a few minutes, `down -v` also drops the cargo cache volumes), `mpd` is `mpd.py` in `python:3-alpine`. Every env var the app needs is set in the compose file with a made-up local-only value (JWT secrets, SysAdmin password, `MP_*`, `GATEWAY_TOKEN`); override with `TEST_ACCESS_TOKEN_SECRET`, `TEST_REFRESH_TOKEN_SECRET`, `TEST_SYSADMIN_PASSWORD`, `TEST_MP_WEBHOOK_SECRET`, `TEST_GATEWAY_TOKEN`, `TEST_KREMLIN_PORT`, `TEST_MPD_PORT`, `TEST_KREMLIN_LOG`, `TEST_STOCK_EXPIRY_JOB_ENABLED`. Compose loads `.env` for interpolation; only explicitly referenced values are passed to containers. SQS and S3 are not configured for the HTTP app (the consumer is off, storage touches S3 only for images); it uses a fake shipping key ring and tenant payment settings. The test runner uses local-only payment/shipping key rings and mock payment mode.
+Stack (`docker-compose.yml`): `kremlin` runs `cargo run -p application --bin kremlin` (migrations and the SysAdmin seed happen at boot; healthy when the port answers; the first start compiles for a few minutes, `down -v` also drops the cargo cache volumes), `psd` is `psd.py` in `python:3-alpine`. Every env var the app needs is set in the compose file with a made-up local-only value (JWT secrets, SysAdmin password, `PAGSEGURO_API_BASE_URL`, `GATEWAY_TOKEN`); override with `TEST_ACCESS_TOKEN_SECRET`, `TEST_REFRESH_TOKEN_SECRET`, `TEST_SYSADMIN_PASSWORD`, `TEST_GATEWAY_TOKEN`, `TEST_KREMLIN_PORT`, `TEST_PSD_PORT`, `TEST_PAGSEGURO_API_BASE_URL`, `TEST_KREMLIN_LOG`, `TEST_STOCK_EXPIRY_JOB_ENABLED`. Compose loads `.env` for interpolation; only explicitly referenced values are passed to containers. SQS and S3 are not configured for the HTTP app (the consumer is off, storage touches S3 only for images); it uses a fake shipping key ring and tenant payment settings. The test runner uses local-only payment/shipping key rings and mock payment mode.
 
 ### Fixtures (`kit.py seed`, test-cases.md environment E1)
 
@@ -60,7 +57,7 @@ Stack (`docker-compose.yml`): `kremlin` runs `cargo run -p application --bin kre
 
 `./kit.py tchk12` verifies expired reservations are released only for `pending_provider` payments without an attempt or failed payments; a `pending` payment stays reserved. Run with `TEST_STOCK_EXPIRY_JOB_ENABLED=false` when starting Compose, then `./kit.py tchk12 --expect-disabled`, to verify the switch prevents releases.
 
-`./kit.py tchk13` verifies TC-25: attempts after the 15-minute window are refused without MPD calls; retries inside the window re-reserve stock before charging; insufficient stock returns 409 without changing the failed payment or released reservation; pending attempts remain in flight.
+`./kit.py tchk13` verifies TC-25: attempts after the 15-minute window are refused without provider calls; retries inside the window re-reserve stock before charging; insufficient stock returns 409 without changing the failed payment or released reservation; pending attempts remain in flight.
 
 `./kit.py tchk14` verifies late approved webhooks: released stock is consumed if available; otherwise the payment is confirmed, inventory stays unchanged, and one oversell error is logged with purchase, SKU, and quantity.
 
@@ -79,19 +76,21 @@ Stack (`docker-compose.yml`): `kremlin` runs `cargo run -p application --bin kre
 
 `--as` is `sysadmin|s1|s2|u1|c1|c2|c3|anon`; add `-H 'x-tenant-id: 1'` for store mode. Output is the status, the time and the body.
 
-### Mercado Pago double (T-CHK-02)
+### PagSeguro double (T-CHK-02)
 
-`mpd.py` answers what `application/src/infrastructure/mercado_pago.rs` calls (`POST /v1/payments`, `GET /v1/payments/{id}`, `GET /v1/payments/search`) through `MP_API_BASE_URL=http://mpd:8099`, and records every call.
+`psd.py` answers what `application/src/infrastructure/pagseguro.rs` calls (`POST /charges`, `GET /charges/{id}`, `GET /charges?reference_id=`, `POST /charges/{id}/cancel`) through `PAGSEGURO_API_BASE_URL=http://psd:8099` (honored only with `PAYMENT_MOCK_ALLOWED=true`, set in this stack), and records every call. `seed` configures PagSeguro credentials (token `psd-test-token`) on T1 and T2.
 
 ```
-./kit.py mpd approved|rejected|pending|authorized|error [--amount-cents N]   # applies to the next charges; --amount-cents answers a different amount
-./kit.py mpd-calls        # every call received, oldest first (method, path, query, body, idempotency key)
-./kit.py mpd-payments     # payments it created (the id is what a webhook carries)
-./kit.py mpd-reset        # clear calls, payments and config
-./kit.py webhook PAYMENT_ID [--request-id X] [--bad]   # POST /webhooks/mercado-pago, signed with MP_WEBHOOK_SECRET
+./kit.py psd approved|rejected|pending|authorized|error [--amount-cents N]   # applies to the next charges; --amount-cents answers a different amount
+./kit.py psd-calls        # every call received, oldest first (method, path, query, body, idempotency key)
+./kit.py psd-payments     # charges it created (id and reference_id; a webhook names the reference)
+./kit.py psd-reset        # clear calls, charges and config
+./kit.py webhook PAYMENT_ID [--bad]   # POST /webhooks/pagseguro, x-authenticity-token = sha256("<tenant token>-<body>")
 ```
 
-Also: a card `token` starting with `reject`, `pending`, `authorized` or `error` overrides the mode for that one charge; `POST /_mpd/payments/{id}` with `{"status": "...", "amount_cents": N}` changes a stored payment (for the status call, the reconciliation and a webhook); the same `X-Idempotency-Key` returns the same payment. Signature: header `x-signature: ts=<ms>,v1=<hex HMAC-SHA256 of "id:<data.id>;request-id:<x-request-id>;ts:<ts>;">`, as `verify_signature` in `checkout_payment_endpoint.rs` checks it (`--bad` signs with a wrong secret, expect 401).
+Also: a card `token` starting with `reject`, `pending`, `authorized` or `error` overrides the mode for that one charge; `POST /_psd/payments/{id}` with `{"status": "...", "amount_cents": N}` changes a stored charge (for the status call, the reconciliation and a webhook); the same `x-idempotency-key` returns the same charge. The webhook body only names the charge; kremlin refreshes it from the provider (`--bad` signs with a wrong token, expect 401).
+
+For the live PagSeguro sandbox through the real screens start the stack with `TEST_PAGSEGURO_API_BASE_URL=https://sandbox.api.pagseguro.com` and run `./pagseguro_tenants.py` after `./kit.py seed`: it puts the sandbox credentials of `.env` on the tenants (values are never printed).
 
 ### Evidence, time and concurrency (T-CHK-03)
 

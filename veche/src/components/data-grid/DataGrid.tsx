@@ -1,19 +1,18 @@
+import { flexRender, type PaginationState, type RowData, type SortingState } from "@tanstack/react-table";
+// TanStack Table 9 through its official v8-compatible entry; moving to the native useTable API is a follow-up.
 import {
-  flexRender,
   getCoreRowModel,
   getFilteredRowModel,
   getPaginationRowModel,
   getSortedRowModel,
-  useReactTable,
-  type ColumnDef,
-  type PaginationState,
-  type SortingState,
-} from "@tanstack/react-table";
+  useLegacyTable as useReactTable,
+  type LegacyColumnDef as ColumnDef,
+} from "@tanstack/react-table/legacy";
 import { ChevronDown, ChevronUp, ChevronsUpDown } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-export interface DataGridProps<T> {
+export interface DataGridProps<T extends RowData> {
   data: T[];
   columns: ColumnDef<T, unknown>[];
   getRowId?: (row: T, index: number) => string;
@@ -35,7 +34,7 @@ export interface DataGridProps<T> {
   actions?: React.ReactNode;
 }
 
-export default function DataGrid<T>({
+export default function DataGrid<T extends RowData>({
   data,
   columns,
   getRowId,

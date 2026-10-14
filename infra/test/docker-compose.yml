@@ -29,15 +29,9 @@ services:
     # The Postgres tests are #[ignore]d and refuse any database whose name does not end in _test.
     environment:
       - KREMLIN_TEST_DATABASE_URL=postgres://${TEST_DATABASE_USER:-novgorod_test}:${TEST_DATABASE_PASSWORD:-novgorod_test}@postgres:5432/${TEST_DATABASE_NAME:-novgorod_test}
-      - PAGSEGURO_TOKEN=${PAGSEGURO_TOKEN:-}
-      - MP_SANDBOX_ACCESS_TOKEN=${MP_SANDBOX_ACCESS_TOKEN:-}
-      - MP_SANDBOX_PUBLIC_KEY=${MP_SANDBOX_PUBLIC_KEY:-}
-      - MP_SANDBOX_COLLECTOR_ID=${MP_SANDBOX_COLLECTOR_ID:-}
-      - MP_SANDBOX_BUYER_EMAIL=${MP_SANDBOX_BUYER_EMAIL:-}
-      - MP_SANDBOX_TEST_CARDS_FILE=/test-cards.yaml
       - PAYMENT_PROVIDER_MODE=mock
       - PAYMENT_MOCK_ALLOWED=true
-      - PAYMENT_MOCK_PROVIDER=mercado_pago
+      - PAYMENT_MOCK_PROVIDER=pagseguro
       - 'PAYMENT_ENCRYPTION_KEYS={"test-payment-v1":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}'
       - PAYMENT_ACTIVE_KEY_VERSION=test-payment-v1
       - 'SHIPPING_ENCRYPTION_KEYS={"test-shipping-v1":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}'
@@ -46,7 +40,6 @@ services:
     volumes:
       - ../../kremlin:/work/kremlin
       - ../../data:/work/data:ro # a kremlin unit test reads data/wines/wine_catalog.csv
-      - ./cards.yaml:/test-cards.yaml:ro
       - cargo_registry:/usr/local/cargo/registry
       - cargo_target:/cargo-target
     networks:
@@ -57,16 +50,16 @@ services:
     # Override the command to run something else, e.g. `cargo test -p business --test cart_cleanup_postgres -- --ignored --nocapture`
     command: cargo test --workspace -- --include-ignored
 
-  # ---- HTTP kit (NOV-3 T-CHK-01..03): `docker compose up -d --build --wait kremlin mpd`, then ./kit.py (see README) ----
-  # Mercado Pago test double (Python stdlib). kremlin reaches it through MP_API_BASE_URL.
-  mpd:
+  # ---- HTTP kit (NOV-3 T-CHK-01..03): `docker compose up -d --build --wait kremlin psd`, then ./kit.py (see README) ----
+  # PagSeguro test double (Python stdlib). kremlin reaches it through PAGSEGURO_API_BASE_URL.
+  psd:
     image: python:3-alpine
-    container_name: novgorod_test_mpd
-    command: python /mpd.py
+    container_name: novgorod_test_psd
+    command: python /psd.py
     volumes:
-      - ./mpd.py:/mpd.py:ro
+      - ./psd.py:/psd.py:ro
     ports:
-      - '${TEST_MPD_PORT:-8099}:8099'
+      - '${TEST_PSD_PORT:-8099}:8099'
     networks:
       - novgorod-test-network
 
@@ -88,11 +81,10 @@ services:
       - REFRESH_TOKEN_SECRET=${TEST_REFRESH_TOKEN_SECRET:-test-refresh-6d1e84a2c7f9405b93a0e2d8b4c71f35}
       - SYSADMIN_EMAIL=sysadmin@test.local
       - SYSADMIN_PASSWORD=${TEST_SYSADMIN_PASSWORD:-SysAdmin-test-1}
-      - MP_ACCESS_TOKEN=TEST-mp-access-token-local
-      - MP_COLLECTOR_ID=424242
-      - MP_PUBLIC_KEY=TEST-mp-public-key-local
-      - MP_API_BASE_URL=http://mpd:8099
-      - MP_WEBHOOK_SECRET=${TEST_MP_WEBHOOK_SECRET:-test-mp-webhook-3a9c5e7b1d2f4860}
+      # Test stack only: lets the PagSeguro adapter talk to the psd double. For the live sandbox set
+      # TEST_PAGSEGURO_API_BASE_URL=https://sandbox.api.pagseguro.com and configure real credentials on the tenants.
+      - PAYMENT_MOCK_ALLOWED=true
+      - PAGSEGURO_API_BASE_URL=${TEST_PAGSEGURO_API_BASE_URL:-http://psd:8099}
       - GATEWAY_TOKEN=${TEST_GATEWAY_TOKEN:-test-gateway-8f2b6d4a0c1e3957}
       # Fake local-only key ring for shipping-credential encryption tests.
       - 'SHIPPING_ENCRYPTION_KEYS={"test-only-v1":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}'
@@ -112,7 +104,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      mpd:
+      psd:
         condition: service_started
     healthcheck:
       test: [ "CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/8080 && printf \"GET / HTTP/1.0\\r\\n\\r\\n\" >&3 && head -c 12 <&3 | grep -q HTTP'" ]

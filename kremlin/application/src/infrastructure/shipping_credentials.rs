@@ -1,7 +1,7 @@
 //! Deployment-managed AES-256-GCM key ring. Never log keys or plaintext credentials.
 use aes_gcm::{
     Aes256Gcm, KeyInit, Nonce,
-    aead::{Aead, AeadCore, OsRng, Payload},
+    aead::{Aead, Generate, Payload},
 };
 use business::domain::marketplace::PurchaseError;
 use serde::{Deserialize, Serialize};
@@ -103,7 +103,8 @@ impl ShippingKeyRing {
         credentials: &CorreiosCredentials,
     ) -> Result<(String, Vec<u8>), PurchaseError> {
         let cipher = self.cipher(&self.active)?;
-        let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
+        let nonce = aes_gcm::aead::Nonce::<Aes256Gcm>::try_generate()
+            .map_err(|_| PurchaseError::ShippingUnavailable)?;
         let plaintext =
             serde_json::to_vec(credentials).map_err(|_| PurchaseError::ShippingUnavailable)?;
         let aad = Self::aad(tenant_id, &self.active);

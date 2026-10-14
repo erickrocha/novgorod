@@ -520,14 +520,7 @@ export interface ShippingSettingsUpdate {
   credentials?: CorreiosCredentialsUpdate;
 }
 
-export type PaymentProvider = "mercado_pago" | "pagseguro";
-
-export interface MercadoPagoCredentialsUpdate {
-  accessToken?: string;
-  publicKey?: string;
-  collectorId?: number;
-  webhookSecret?: string;
-}
+export type PaymentProvider = "pagseguro";
 
 export interface PagSeguroCredentialsUpdate {
   token?: string;
@@ -536,7 +529,6 @@ export interface PagSeguroCredentialsUpdate {
 }
 
 export interface PaymentCredentialsUpdate {
-  mercadoPago?: MercadoPagoCredentialsUpdate;
   pagseguro?: PagSeguroCredentialsUpdate;
 }
 

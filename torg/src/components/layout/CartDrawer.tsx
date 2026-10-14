@@ -70,7 +70,7 @@ export const CartDrawer: React.FC = () => {
               </div>
             ) : (
               groups.map(group => <section key={group.key} className="py-3">
-                <CartTenantHeading {...group} />
+                <CartTenantHeading name={group.name} subtotal={group.subtotal} unresolved={group.unresolved} items={group.items} />
                 {group.items.map((item) => (
                 <div key={item.id} className="py-4 first:pt-0 last:pb-0 flex gap-4">
                   <img

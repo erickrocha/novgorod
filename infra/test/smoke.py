@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Smoke test of the HTTP kit: up -> seed -> Customer login -> public endpoint -> quote -> purchase -> payment (MPD) -> webhook
+"""Smoke test of the HTTP kit: up -> seed -> Customer login -> public endpoint -> quote -> purchase -> payment (PagSeguro double) -> webhook
 -> concurrent replay -> time shift -> reset -> down -v. Always tears the stack down (use --keep to leave it up)."""
 import json, subprocess, sys, kit
 
@@ -16,7 +16,7 @@ def step(title, res, want):
 def main():
     sh("down", "-v")
     try:
-        if sh("up", "-d", "--build", "--wait", "kremlin", "mpd"):
+        if sh("up", "-d", "--build", "--wait", "kremlin", "psd"):
             raise SystemExit("stack did not become healthy (docker compose logs kremlin)")
         print("== health:", kit.http("GET", "/")[:2])
         kit.seed(None)
@@ -29,12 +29,12 @@ def main():
         p = step("POST /purchases", kit.api("POST", "/purchases", "c1", body, {"Idempotency-Key": "smoke-1"}), (201,))
         res = kit.burst([{"as": "c1", "path": "/purchases", "json": body, "headers": {"Idempotency-Key": "smoke-1"}}] * 5)
         print("   5 simultaneous replays of the same key:", sorted(r[0] for r in res), "-> purchases in DB:", kit.psql("SELECT count(*) FROM purchase", True, True).strip())
-        step("POST payments/submit (MPD approved)", kit.api("POST", f"/purchases/{p['id']}/payments/submit", "c1", {"token": "tok-smoke", "paymentMethodId": "visa", "installments": 1}), (200, 503))
-        print("   MPD calls:", [(c["method"], c["path"]) for c in kit.http("GET", "/_mpd/calls", base=kit.MPD)[1]])
-        pay = kit.http("GET", "/_mpd/payments", base=kit.MPD)[1]
+        step("POST payments/submit (PagSeguro double approved)", kit.api("POST", f"/purchases/{p['id']}/payments/submit", "c1", {"token": "tok-smoke", "paymentMethodId": "visa", "installments": 1}), (200, 503))
+        print("   PSD calls:", [(c["method"], c["path"]) for c in kit.http("GET", "/_psd/calls", base=kit.PSD)[1]])
+        pay = kit.http("GET", "/_psd/payments", base=kit.PSD)[1]
         if pay:
-            step("webhook valid signature", kit.http("POST", f"/webhooks/mercado-pago?data.id={pay[0]['id']}", {"data": {"id": str(pay[0]["id"])}}, {"x-request-id": "r1", "x-signature": kit.sign(pay[0]["id"], "r1")}), (200, 503))
-            step("webhook bad signature", kit.http("POST", f"/webhooks/mercado-pago?data.id={pay[0]['id']}", {"data": {"id": str(pay[0]["id"])}}, {"x-request-id": "r1", "x-signature": kit.sign(pay[0]["id"], "r1", "nope")}), (401,))
+            step("webhook valid signature", kit.ps_webhook(pay[0]["id"]), (200,))
+            step("webhook bad signature", kit.ps_webhook(pay[0]["id"], bad=True), (401,))
         print(kit.psql("SELECT p.id, p.status, pay.status AS payment_status, pay.amount_cents, p.total_cents FROM purchase p JOIN payment pay ON pay.purchase_id=p.id", True))
         kit.shift(type("A", (), {"what": "quote", "id": q["id"], "minutes": "20"}))
         step("expired quote -> purchase refused", kit.api("POST", "/purchases", "c1", {**body, "quoteId": q["id"]}, {"Idempotency-Key": "smoke-2"}), (409,))

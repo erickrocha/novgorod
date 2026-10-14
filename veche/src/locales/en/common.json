@@ -1541,7 +1541,6 @@
       "saveSuccess": "Payment settings saved successfully.",
       "providerSelection": "Payment Provider",
       "providerDescription": "Choose which payment gateway will be used for orders of this seller.",
-      "mercadoPagoDesc": "Transparent credit card checkout with automatic reconciliation.",
       "pagseguroDesc": "PagBank gateway with client-side card encryption and direct reconciliation.",
       "credentialsConfigured": "Credentials configured and securely stored",
       "credentialsNotConfigured": "No credentials registered for this tenant (using global default)"

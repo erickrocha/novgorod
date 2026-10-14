@@ -6,6 +6,18 @@ use business::sea_orm::prelude::async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::json;
 
+/// Card data must reach kremlin only as the PagSeguro SDK `encryptedCard` or a provider card token, never as
+/// card fields (SR-PAY-030): refuses a JSON object/array body and anything that looks like a card number.
+pub fn reject_raw_card_data(token: &str) -> Result<(), ProviderError> {
+    let trimmed = token.trim();
+    let digits: String = trimmed.chars().filter(|c| !matches!(c, ' ' | '-')).collect();
+    let looks_like_pan = (12..=19).contains(&digits.len()) && digits.bytes().all(|b| b.is_ascii_digit());
+    if trimmed.starts_with(['{', '[']) || looks_like_pan {
+        return Err(ProviderError("card data must be sent encrypted by the PagSeguro SDK".into()));
+    }
+    Ok(())
+}
+
 pub struct PagSeguro {
     client: reqwest::Client,
     token: String,
@@ -84,8 +96,15 @@ impl PagSeguro {
             Some("sandbox") => "https://sandbox.api.pagseguro.com".to_string(),
             _ => return Err(ProviderError("Ambiente do PagSeguro inválido".into())),
         };
-        #[cfg(test)]
-        let base_url = std::env::var("PAGSEGURO_API_BASE_URL").unwrap_or(base_url);
+        // A provider double may replace the API only in unit tests or on a test stack that opted in
+        // with PAYMENT_MOCK_ALLOWED=true (the same guard as the mock provider mode).
+        let double_allowed =
+            cfg!(test) || std::env::var("PAYMENT_MOCK_ALLOWED").as_deref() == Ok("true");
+        let base_url = if double_allowed {
+            std::env::var("PAGSEGURO_API_BASE_URL").unwrap_or(base_url)
+        } else {
+            base_url
+        };
         Self::with_base_url(token, base_url)
     }
 
@@ -168,7 +187,6 @@ impl PagSeguro {
             amount_cents,
             currency,
             external_reference: response.reference_id.unwrap_or_default(),
-            collector_id: 0,
             payment_type_id,
             card,
         })
@@ -178,10 +196,8 @@ impl PagSeguro {
 #[async_trait]
 impl PaymentProviderGateway for PagSeguro {
     async fn charge(&self, request: ChargeRequest) -> Result<ProviderResult, ProviderError> {
-        let card_payload = if request.provider_token.starts_with('{') {
-            serde_json::from_str::<serde_json::Value>(&request.provider_token)
-                .unwrap_or_else(|_| json!({ "encrypted": request.provider_token }))
-        } else if request.provider_token.len() > 64 {
+        reject_raw_card_data(&request.provider_token)?;
+        let card_payload = if request.provider_token.len() > 64 {
             json!({ "encrypted": request.provider_token })
         } else {
             json!({ "token": request.provider_token })

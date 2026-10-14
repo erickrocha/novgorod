@@ -9,7 +9,6 @@ import catalogService from '../services/catalogService';
 import checkoutService, { type CheckoutQuote, type DeliveryAddress, type Purchase, type PaymentState } from '../services/checkoutService';
 import type { ProductSku } from '../types/product';
 import { CheckoutAuth } from '../components/checkout/CheckoutAuth';
-import MercadoPagoCardForm from '../components/checkout/MercadoPagoCardForm';
 import PagSeguroCardForm from '../components/checkout/PagSeguroCardForm';
 import { Breadcrumb } from '../components/common/Breadcrumb';
 import { CreditCard, Truck, CheckCircle2, AlertTriangle, ShieldCheck } from 'lucide-react';
@@ -59,7 +58,6 @@ export const CheckoutPage = () => {
   const [quote, setQuote] = useState<CheckoutQuote | null>(null);
   const [purchase, setPurchase] = useState<Purchase | null>(null);
   const [publicKey, setPublicKey] = useState('');
-  const [paymentProvider, setPaymentProvider] = useState<'mercado_pago' | 'pagseguro'>('mercado_pago');
   const [payment, setPayment] = useState<PaymentState | null>(null);
   const [paymentMethod, setPaymentMethod] = useState<'credit_card'>('credit_card');
   const [busy, setBusy] = useState(false);
@@ -127,7 +125,7 @@ export const CheckoutPage = () => {
       const restored = JSON.parse(saved) as Purchase;
       setPurchase(restored);
       checkoutService.status(restored.id).then(setPayment).catch(() => {});
-      checkoutService.paymentConfig().then(config => setPublicKey(config.publicKey)).catch(() => {});
+      checkoutService.paymentConfig({ tenantId: restored.orders[0].tenantId }).then(config => setPublicKey(config.publicKey)).catch(e => setError(errorText(e)));
     } catch {
       sessionStorage.removeItem('torg_pending_purchase');
     }
@@ -212,11 +210,7 @@ export const CheckoutPage = () => {
       });
       setQuote(result);
       if (result.totalCents > 0) {
-        checkoutService.paymentConfig().then(cfg => {
-          setPublicKey(cfg.publicKey);
-          if (cfg.provider === 'pagseguro') setPaymentProvider('pagseguro');
-          else setPaymentProvider('mercado_pago');
-        }).catch(() => {});
+        checkoutService.paymentConfig({ tenantId: result.sellers[0].tenantId }).then(cfg => setPublicKey(cfg.publicKey)).catch(e => setError(errorText(e)));
       }
     } catch (e) {
       setError(errorText(e));
@@ -237,11 +231,7 @@ export const CheckoutPage = () => {
       const updated = await checkoutService.selectShipping(quote.id, selections);
       setQuote(updated);
       if (updated.totalCents > 0) {
-        checkoutService.paymentConfig().then(cfg => {
-          setPublicKey(cfg.publicKey);
-          if (cfg.provider === 'pagseguro') setPaymentProvider('pagseguro');
-          else setPaymentProvider('mercado_pago');
-        }).catch(() => {});
+        checkoutService.paymentConfig({ tenantId: updated.sellers[0].tenantId }).then(cfg => setPublicKey(cfg.publicKey)).catch(e => setError(errorText(e)));
       }
     } catch (e) {
       setError(errorText(e));
@@ -731,25 +721,14 @@ export const CheckoutPage = () => {
                       </div>
                     )}
                     {publicKey ? (
-                      paymentProvider === 'pagseguro' ? (
-                        <PagSeguroCardForm
-                          key={`ps-${quote.totalCents}-${payment?.reference || 'new'}`}
-                          publicKey={publicKey}
-                          amountCents={quote.totalCents}
-                          email={email}
-                          cpf={profile.cpf || ''}
-                          onPay={pay}
-                        />
-                      ) : (
-                        <MercadoPagoCardForm
-                          key={`mp-${quote.totalCents}-${payment?.reference || 'new'}`}
-                          publicKey={publicKey}
-                          amountCents={quote.totalCents}
-                          email={email}
-                          cpf={profile.cpf || ''}
-                          onPay={pay}
-                        />
-                      )
+                      <PagSeguroCardForm
+                        key={`ps-${quote.totalCents}-${payment?.reference || 'new'}`}
+                        publicKey={publicKey}
+                        amountCents={quote.totalCents}
+                        email={email}
+                        cpf={profile.cpf || ''}
+                        onPay={pay}
+                      />
                     ) : (
                       <p className="text-sm text-slate-500">Carregando configuração de pagamento…</p>
                     )}
@@ -817,7 +796,7 @@ export const CheckoutPage = () => {
 
                 <div className="flex items-center gap-2 text-xs text-slate-500 pt-2">
                   <ShieldCheck className="h-4 w-4 text-emerald-600" />
-                  <span>Pagamento 100% seguro via Mercado Pago</span>
+                  <span>Pagamento seguro via PagSeguro</span>
                 </div>
               </div>
             ) : purchase ? (

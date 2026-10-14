@@ -7,24 +7,21 @@ use serde_json::Value;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MockProviderKind {
-    MercadoPago,
     PagSeguro,
 }
 
 impl MockProviderKind {
     pub fn parse(value: &str) -> Result<Self, ProviderError> {
         match value {
-            "mercado_pago" => Ok(Self::MercadoPago),
             "pagseguro" => Ok(Self::PagSeguro),
             _ => Err(ProviderError(
-                "PAYMENT_MOCK_PROVIDER must be mercado_pago or pagseguro".into(),
+                "PAYMENT_MOCK_PROVIDER must be pagseguro".into(),
             )),
         }
     }
 
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::MercadoPago => "mercado_pago",
             Self::PagSeguro => "pagseguro",
         }
     }
@@ -138,7 +135,6 @@ impl MockPaymentProvider {
             amount_cents,
             currency,
             external_reference,
-            collector_id: 0,
             payment_type_id: "credit_card".into(),
             card: Some(ProviderCardMetadata {
                 brand: Some(payment_method_id),

@@ -1,37 +1,12 @@
 //! Deployment-managed AES-256-GCM key ring for payment credentials.
 use aes_gcm::{
     Aes256Gcm, KeyInit, Nonce,
-    aead::{Aead, AeadCore, OsRng, Payload},
+    aead::{Aead, Generate, Payload},
 };
 use business::domain::marketplace::PurchaseError;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use utoipa::ToSchema;
-
-#[derive(Clone, Default, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct MercadoPagoCredentials {
-    #[schema(write_only)]
-    pub access_token: String,
-    pub public_key: Option<String>,
-    pub collector_id: Option<i64>,
-    pub webhook_secret: Option<String>,
-}
-
-impl std::fmt::Debug for MercadoPagoCredentials {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("MercadoPagoCredentials([REDACTED])")
-    }
-}
-
-impl MercadoPagoCredentials {
-    pub fn validate(&self) -> Result<(), PurchaseError> {
-        if self.access_token.trim().is_empty() || self.access_token.len() > 512 {
-            return Err(PurchaseError::Validation("Mercado Pago access token is required"));
-        }
-        Ok(())
-    }
-}
 
 #[derive(Clone, Default, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -60,7 +35,6 @@ impl PagSeguroCredentials {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "provider", rename_all = "snake_case")]
 pub enum TenantCredentialsPayload {
-    MercadoPago(MercadoPagoCredentials),
     PagSeguro(PagSeguroCredentials),
 }
 
@@ -122,7 +96,8 @@ impl PaymentKeyRing {
         payload: &TenantCredentialsPayload,
     ) -> Result<(String, Vec<u8>), PurchaseError> {
         let cipher = self.cipher(&self.active)?;
-        let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
+        let nonce = aes_gcm::aead::Nonce::<Aes256Gcm>::try_generate()
+            .map_err(|_| PurchaseError::ShippingUnavailable)?;
         let plaintext =
             serde_json::to_vec(payload).map_err(|_| PurchaseError::ShippingUnavailable)?;
         let aad = Self::aad(tenant_id, &self.active);

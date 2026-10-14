@@ -228,7 +228,7 @@ describe('CheckoutPage', () => {
   it('calculates server quote with seller breakdown, shipping, and coupons', async () => {
     vi.spyOn(authService, 'me').mockResolvedValue(mockCustomer);
     vi.spyOn(checkoutService, 'quote').mockResolvedValue(mockQuote);
-    vi.spyOn(checkoutService, 'paymentConfig').mockResolvedValue({ publicKey: 'TEST_MP_PUBLIC_KEY' });
+    vi.spyOn(checkoutService, 'paymentConfig').mockResolvedValue({ provider: 'pagseguro', publicKey: 'TEST_PS_PUBLIC_KEY' });
 
     const store = createTestStore({
       auth: { token: 'mock-jwt-token', user: null, customer: null, isAuthenticated: true, loading: false },
@@ -371,7 +371,7 @@ describe('CheckoutPage', () => {
     vi.spyOn(authService, 'me').mockResolvedValue(mockCustomer);
     vi.spyOn(checkoutService, 'quote').mockResolvedValue(mockQuote);
     vi.spyOn(checkoutService, 'selectShipping').mockResolvedValue(updatedQuote);
-    vi.spyOn(checkoutService, 'paymentConfig').mockResolvedValue({ publicKey: 'TEST_MP_PUBLIC_KEY' });
+    vi.spyOn(checkoutService, 'paymentConfig').mockResolvedValue({ provider: 'pagseguro', publicKey: 'TEST_PS_PUBLIC_KEY' });
 
     const store = createTestStore({
       auth: { token: 'mock-jwt-token', user: null, customer: null, isAuthenticated: true, loading: false },

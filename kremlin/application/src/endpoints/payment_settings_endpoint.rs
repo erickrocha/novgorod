@@ -3,7 +3,7 @@ use crate::{
     AppState,
     commons::{exception_response::HttpResponse, i18n::Locale},
     infrastructure::payment_credentials::{
-        MercadoPagoCredentials, PagSeguroCredentials, TenantCredentialsPayload,
+        PagSeguroCredentials, TenantCredentialsPayload,
     },
 };
 use axum::{
@@ -20,16 +20,6 @@ use utoipa::ToSchema;
 
 #[derive(Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct MercadoPagoCredentialsUpdate {
-    #[schema(write_only)]
-    pub access_token: Option<String>,
-    pub public_key: Option<String>,
-    pub collector_id: Option<i64>,
-    pub webhook_secret: Option<String>,
-}
-
-#[derive(Deserialize, ToSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PagSeguroCredentialsUpdate {
     #[schema(write_only)]
     pub token: Option<String>,
@@ -40,14 +30,13 @@ pub struct PagSeguroCredentialsUpdate {
 #[derive(Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PaymentCredentialsUpdate {
-    pub mercado_pago: Option<MercadoPagoCredentialsUpdate>,
     pub pagseguro: Option<PagSeguroCredentialsUpdate>,
 }
 
 #[derive(Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PaymentSettingsUpdate {
-    pub provider: String, // "mercado_pago" | "pagseguro"
+    pub provider: String, // "pagseguro"
     #[schema(write_only)]
     pub credentials: Option<PaymentCredentialsUpdate>,
 }
@@ -118,7 +107,7 @@ pub async fn get(
             }))
         } else {
             Ok(Json(PaymentSettingsResponse {
-                provider: "mercado_pago".into(),
+                provider: "pagseguro".into(),
                 version: 0,
                 credentials_configured: false,
                 public_key: None,
@@ -155,7 +144,7 @@ pub async fn put(
     async {
         authorize(&user, id)?;
         let provider = input.provider.to_lowercase();
-        if provider != "mercado_pago" && provider != "pagseguro" {
+        if provider != "pagseguro" {
             return Err(PurchaseError::Validation("provedor de pagamento inválido"));
         }
 
@@ -185,56 +174,29 @@ pub async fn put(
 
         let changed = input.credentials.is_some();
         if let Some(cred_update) = input.credentials {
-            if provider == "pagseguro" {
-                let mut current = match (&bytes, &key) {
-                    (Some(b), Some(k)) => match state.payment_keys.decrypt_payload(id, k, b) {
-                        Ok(TenantCredentialsPayload::PagSeguro(ps)) => ps,
-                        _ => PagSeguroCredentials::default(),
-                    },
+            let mut current = match (&bytes, &key) {
+                (Some(b), Some(k)) => match state.payment_keys.decrypt_payload(id, k, b) {
+                    Ok(TenantCredentialsPayload::PagSeguro(ps)) => ps,
                     _ => PagSeguroCredentials::default(),
-                };
-                if let Some(ps_upd) = cred_update.pagseguro {
-                    if let Some(token) = ps_upd.token { current.token = token; }
-                    if let Some(pk) = ps_upd.public_key {
-                        current.public_key = Some(pk.clone());
-                        new_config["publicKey"] = serde_json::Value::String(pk);
-                    }
-                    if let Some(env) = ps_upd.environment {
-                        current.environment = Some(env.clone());
-                        new_config["environment"] = serde_json::Value::String(env);
-                    }
+                },
+                _ => PagSeguroCredentials::default(),
+            };
+            if let Some(ps_upd) = cred_update.pagseguro {
+                if let Some(token) = ps_upd.token { current.token = token; }
+                if let Some(pk) = ps_upd.public_key {
+                    current.public_key = Some(pk.clone());
+                    new_config["publicKey"] = serde_json::Value::String(pk);
                 }
-                current.validate()?;
-                let payload = TenantCredentialsPayload::PagSeguro(current);
-                let (active_key, encrypted_bytes) = state.payment_keys.encrypt_payload(id, &payload)?;
-                key = Some(active_key);
-                bytes = Some(encrypted_bytes);
-            } else {
-                let mut current = match (&bytes, &key) {
-                    (Some(b), Some(k)) => match state.payment_keys.decrypt_payload(id, k, b) {
-                        Ok(TenantCredentialsPayload::MercadoPago(mp)) => mp,
-                        _ => MercadoPagoCredentials::default(),
-                    },
-                    _ => MercadoPagoCredentials::default(),
-                };
-                if let Some(mp_upd) = cred_update.mercado_pago {
-                    if let Some(token) = mp_upd.access_token { current.access_token = token; }
-                    if let Some(pk) = mp_upd.public_key {
-                        current.public_key = Some(pk.clone());
-                        new_config["publicKey"] = serde_json::Value::String(pk);
-                    }
-                    if let Some(cid) = mp_upd.collector_id {
-                        current.collector_id = Some(cid);
-                        new_config["collectorId"] = serde_json::json!(cid);
-                    }
-                    if let Some(ws) = mp_upd.webhook_secret { current.webhook_secret = Some(ws); }
+                if let Some(env) = ps_upd.environment {
+                    current.environment = Some(env.clone());
+                    new_config["environment"] = serde_json::Value::String(env);
                 }
-                current.validate()?;
-                let payload = TenantCredentialsPayload::MercadoPago(current);
-                let (active_key, encrypted_bytes) = state.payment_keys.encrypt_payload(id, &payload)?;
-                key = Some(active_key);
-                bytes = Some(encrypted_bytes);
             }
+            current.validate()?;
+            let payload = TenantCredentialsPayload::PagSeguro(current);
+            let (active_key, encrypted_bytes) = state.payment_keys.encrypt_payload(id, &payload)?;
+            key = Some(active_key);
+            bytes = Some(encrypted_bytes);
         }
 
         tx.execute_raw(Statement::from_sql_and_values(

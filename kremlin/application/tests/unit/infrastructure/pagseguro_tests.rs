@@ -141,7 +141,6 @@ fn parse_payment_paid_maps_to_captured_with_card_metadata() {
     assert_eq!(result.amount_cents, 25000);
     assert_eq!(result.currency, "BRL");
     assert_eq!(result.external_reference, "torg-42-uuid-test");
-    assert_eq!(result.collector_id, 0);
     assert_eq!(result.payment_type_id, "credit_card");
 
     let card = result.card.expect("card metadata present");
@@ -229,53 +228,44 @@ fn test_with_credentials_validation() {
     assert_eq!(ps_prod.base_url, "https://api.pagseguro.com");
 }
 
+#[test]
+fn raw_card_data_is_rejected_in_any_form() {
+    for token in [
+        r#"{"number":"4539620659922097","exp_month":"12","exp_year":"2028","security_code":"123"}"#,
+        r#" {"number":"4539620659922097"}"#,
+        r#"[{"number":"4539620659922097"}]"#,
+        "4539620659922097",
+        "4539 6206 5992 2097",
+        "4539-6206-5992-2097",
+    ] {
+        assert!(reject_raw_card_data(token).is_err(), "{token}");
+    }
+    for token in ["tok-123", "mock:approved", "CARD_E1F2A3B4-0000-1111-2222-333344445555", &"A".repeat(300)] {
+        assert!(reject_raw_card_data(token).is_ok(), "{token}");
+    }
+}
+
 #[tokio::test]
-#[ignore]
-async fn live_sandbox_pagseguro_charge_and_status() {
-    let token = std::env::var("PAGSEGURO_TOKEN").expect("PAGSEGURO_TOKEN env variable required");
-    let provider =
-        PagSeguro::with_credentials(token, Some("sandbox")).expect("valid sandbox credentials");
-
-    let card_json = json!({
-        "number": "4539620659922097",
-        "exp_month": "12",
-        "exp_year": "2028",
-        "security_code": "123",
-        "holder": { "name": "PAGSEGURO TESTE" }
-    })
-    .to_string();
-
-    let attempt_uuid = uuid::Uuid::new_v4().to_string();
-    let external_ref = format!("torg-999-{attempt_uuid}");
-
-    let result = provider
+async fn charge_refuses_raw_card_data_without_calling_the_provider() {
+    // the base URL is unreachable: a call would fail with a transport error, not with the card message
+    let provider = PagSeguro::with_base_url_for_test("t".into(), "http://127.0.0.1:1".into()).unwrap();
+    let error = provider
         .charge(ChargeRequest {
-            payment_id: 999,
+            payment_id: 1,
             amount_cents: 2500,
             currency: "BRL".into(),
-            idempotency_key: format!("live-idemp-{attempt_uuid}"),
-            provider_token: card_json,
-            external_reference: external_ref.clone(),
-            payer_email: "erick.teste@novgorod.com".into(),
+            idempotency_key: "k".into(),
+            provider_token: r#"{"number":"4539620659922097","security_code":"123"}"#.into(),
+            external_reference: "torg-1-k".into(),
+            payer_email: "a@b.c".into(),
             payer_tax_id: "12345678909".into(),
             payment_method_id: "visa".into(),
             issuer_id: None,
             installments: 1,
         })
-        .await
-        .expect("charge against PagSeguro sandbox should succeed");
-
-    println!("Live Sandbox Charge Success: ID={}", result.reference);
-    assert_eq!(result.status, ProviderStatus::Captured);
-    assert_eq!(result.amount_cents, 2500);
-    assert_eq!(result.currency, "BRL");
-
-    // Status / Re-fetch
-    let fetched = provider
-        .status(&result.reference)
-        .await
-        .expect("status lookup should succeed");
-    println!("Live Sandbox Status Success: Status={:?}", fetched.status);
-    assert_eq!(fetched.status, ProviderStatus::Captured);
-    assert_eq!(fetched.reference, result.reference);
+        .await;
+    match error {
+        Err(e) => assert!(e.0.contains("encrypted"), "{}", e.0),
+        Ok(_) => panic!("raw card data must be refused"),
+    }
 }

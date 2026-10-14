@@ -4,7 +4,6 @@ use super::{
     payment_allocation::PaymentAllocation, purchase::Purchase,
 };
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 
 #[derive(Debug)]
@@ -152,9 +151,8 @@ impl CreatePurchaseInput {
         })
     }
     pub fn request_hash(&self) -> String {
-        format!(
-            "{:x}",
-            Sha256::digest(serde_json::to_vec(self).expect("serializable purchase input"))
+        crate::commons::functions::sha256_hex(
+            serde_json::to_vec(self).expect("serializable purchase input"),
         )
     }
 }

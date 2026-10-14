@@ -2,14 +2,14 @@
 """HTTP test kit for NOV-3 (T-CHK-01..03). Python 3 stdlib only; run from the host while the stack is up.
 
   ./kit.py seed                      fixtures E1 through the HTTP API (SQL only where the API cannot: see SQL_FALLBACK)
-  ./kit.py reset                     back to the seeded state between cases (rows, stock, coupons, MPD)
+  ./kit.py reset                     back to the seeded state between cases (rows, stock, coupons, provider double)
   ./kit.py ids                       fixtures: ids of tenants, users, SKUs, addresses, coupons
   ./kit.py call METHOD PATH [--as WHO] [--json BODY] [-H 'K: V']   one request, prints status + body
   ./kit.py burst --repeat N METHOD PATH [...]  |  burst --spec '[{...},{...}]'   simultaneous requests
   ./kit.py coupon CODE TYPE VALUE [--tenant T1] [--field k=v ...]   POST /coupons as the tenant owner
-  ./kit.py mpd approved|rejected|pending|authorized|error [--amount-cents N]   set the Mercado Pago double
-  ./kit.py mpd-calls | mpd-payments | mpd-reset
-  ./kit.py webhook PAYMENT_ID [--request-id X] [--bad]     signed POST /webhooks/mercado-pago
+  ./kit.py psd approved|rejected|pending|authorized|error [--amount-cents N]   set the PagSeguro double
+  ./kit.py psd-calls | psd-payments | psd-reset
+  ./kit.py webhook PAYMENT_ID [--bad]     signed POST /webhooks/pagseguro
   ./kit.py evidence [purchase|orders|payment|allocation|coupon-reservation|redemption|stock|stock-reservation|quote|address|all] [PURCHASE_ID]
   ./kit.py db "SELECT ..."           read-only SQL (the session is read-only)
   ./kit.py shift quote|purchase|attempt|reservation ID MINUTES   age a row: its time column moves MINUTES into the past
@@ -19,13 +19,14 @@ WHO: sysadmin, s1 (TenantOwner T1), s2 (TenantOwner T2), u1 (TenantUser T1), c1,
 Body, path and headers may use {{NAME}} for any fixture (A1, AD1, T1, C1, CP10 ...; see `ids`).
 Values are throwaway and match docker-compose.yml; override with the TEST_* environment variables it reads.
 """
-import argparse, concurrent.futures, hashlib, hmac, json, os, re, subprocess, sys, threading, time, urllib.error, urllib.request
+import argparse, concurrent.futures, hashlib, json, os, re, subprocess, sys, threading, time, urllib.error, urllib.request
 from datetime import datetime, timedelta, timezone
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 BASE = os.environ.get("KIT_BASE_URL", f"http://localhost:{os.environ.get('TEST_KREMLIN_PORT', '8080')}")
-MPD = os.environ.get("KIT_MPD_URL", f"http://localhost:{os.environ.get('TEST_MPD_PORT', '8099')}")
-WEBHOOK_SECRET = os.environ.get("TEST_MP_WEBHOOK_SECRET", "test-mp-webhook-3a9c5e7b1d2f4860")
+PSD = os.environ.get("KIT_PSD_URL", f"http://localhost:{os.environ.get('TEST_PSD_PORT', '8099')}")
+# PagSeguro credentials the seed puts on the tenants (the psd double accepts any token)
+PS_TOKEN = os.environ.get("TEST_PSD_TOKEN", "psd-test-token")
 DB = (os.environ.get("TEST_DATABASE_USER", "novgorod_test"), os.environ.get("TEST_DATABASE_NAME", "novgorod_test"))
 FIX = os.path.join(HERE, ".kit-fixtures.json")  # git-ignored
 
@@ -160,6 +161,9 @@ def seed(args):
         f["users"][owner.upper()] = ok(f"owner {owner}", api("POST", "/user", "sysadmin", dict(name=f"Owner {t}", email=email, password=pw, enabled=True,
                                        role="TenantOwner", tenantId=r["id"])))["id"]
     ok("list T1", api("PUT", f"/tenant/{f['tenants']['T1']}/listing", "sysadmin", {"listed": True}))
+    for t, tid in f["tenants"].items():
+        ok(f"payment settings {t}", api("PUT", f"/tenants/{tid}/payment-settings", "sysadmin", dict(provider="pagseguro", credentials=dict(
+            pagseguro=dict(token=PS_TOKEN, publicKey="psd-public-key", environment="sandbox")))))
     for who in ("c1", "c2", "c3"):
         email, pw = USERS[who]
         ok(f"signup {who}", api("POST", "/signup", None, dict(name=f"Customer {who.upper()}", email=email, password=pw, cpf=CPF[who], phone="11988887777")))
@@ -212,8 +216,8 @@ def reset(args):
     f["coupons"] = {}
     _tokens.clear()
     make_coupons(f)
-    http("DELETE", "/_mpd/calls", base=MPD)
-    print("reset: purchases, quotes, carts, coupons, reservations cleared; stock restored; coupons recreated; MPD reset")
+    http("DELETE", "/_psd/calls", base=PSD)
+    print("reset: purchases, quotes, carts, coupons, reservations cleared; stock restored; coupons recreated; provider double reset")
 
 
 def tchk08(args):
@@ -272,7 +276,7 @@ def tchk08(args):
     require(code == 201 and body["totalCents"] > 0, f"payment quote: HTTP {code} {body}")
     code, body, _ = purchase(body["id"], "tchk08-payment")
     require(code == 201 and body["status"] == "pending_payment", f"pending purchase: HTTP {code} {body}")
-    http("POST", "/_mpd/config", {"mode": "approved"}, base=MPD)
+    http("POST", "/_psd/config", {"mode": "approved"}, base=PSD)
     code, body, _ = api("POST", f"/purchases/{body['id']}/payments/submit", "c1", dict(
         token="tok-tchk08-approved", paymentMethodId="visa", installments=1,
     ))
@@ -325,7 +329,7 @@ def tchk11(args):
 
     reset(args)
     purchase_id = create_purchase("tchk11-captured")
-    http("POST", "/_mpd/config", {"mode": "approved"}, base=MPD)
+    http("POST", "/_psd/config", {"mode": "approved"}, base=PSD)
     code, body, _ = api("POST", f"/purchases/{purchase_id}/payments/submit", "c1", dict(
         token="tok-tchk11-approved", paymentMethodId="visa", installments=1,
     ))
@@ -339,7 +343,7 @@ def tchk11(args):
 
     reset(args)
     purchase_id = create_purchase("tchk11-failed")
-    http("POST", "/_mpd/config", {"mode": "rejected"}, base=MPD)
+    http("POST", "/_psd/config", {"mode": "rejected"}, base=PSD)
     code, body, _ = api("POST", f"/purchases/{purchase_id}/payments/submit", "c1", dict(
         token="tok-tchk11-rejected", paymentMethodId="visa", installments=1,
     ))
@@ -348,15 +352,9 @@ def tchk11(args):
     require(inventory(purchase_id) == expected, f"failed inventory: {inventory(purchase_id)}")
     code, body, _ = api("GET", f"/purchases/{purchase_id}/payments/status", "c1")
     require(code == 200 and body["status"] == "failed", f"failed status replay: HTTP {code} {body}")
-    provider_payments = http("GET", "/_mpd/payments", base=MPD)[1]
+    provider_payments = http("GET", "/_psd/payments", base=PSD)[1]
     payment_id = provider_payments[-1]["id"]
-    request_id = f"tchk11-{payment_id}"
-    signature = sign(payment_id, request_id)
-    code, body, _ = http(
-        "POST", f"/webhooks/mercado-pago?data.id={payment_id}",
-        {"action": "payment.updated", "type": "payment", "data": {"id": str(payment_id)}},
-        {"x-signature": signature, "x-request-id": request_id},
-    )
+    code, body, _ = ps_webhook(payment_id)
     require(code == 200, f"failed webhook replay: HTTP {code} {body}")
     require(inventory(purchase_id) == expected, "failed replay changed stock")
     print("T-CHK-11 PASS: captured stock consumed once; failed stock released once across status and webhook replays")
@@ -466,7 +464,7 @@ def tchk13(args):
         ))
 
     def calls():
-        return len(http("GET", "/_mpd/calls", base=MPD)[1])
+        return len(http("GET", "/_psd/calls", base=PSD)[1])
 
     def state(purchase_id):
         return psql(
@@ -479,7 +477,7 @@ def tchk13(args):
 
     reset(args)
     purchase_id = create_purchase("tchk13-expired", 3)
-    http("POST", "/_mpd/config", {"mode": "rejected"}, base=MPD)
+    http("POST", "/_psd/config", {"mode": "rejected"}, base=PSD)
     code, body, _ = submit(purchase_id, "tok-tchk13-reject")
     require(code == 200 and body["status"] == "failed", f"initial failed attempt: HTTP {code} {body}")
     require(state(purchase_id) == "failed|10|0|released", f"initial failure state: {state(purchase_id)}")
@@ -488,25 +486,25 @@ def tchk13(args):
     before_calls = calls()
     code, body, _ = submit(purchase_id, "tok-tchk13-expired")
     require(code == 409, f"expired retry: HTTP {code} {body}")
-    require(calls() == before_calls, "expired retry reached MPD")
+    require(calls() == before_calls, "expired retry reached the provider double")
     require(state(purchase_id) == "failed|10|0|released", f"expired retry changed state: {state(purchase_id)}")
 
     psql(f"UPDATE purchase SET created_at=CURRENT_TIMESTAMP-interval '5 minutes' WHERE id={purchase_id}")
-    http("POST", "/_mpd/config", {"mode": "approved"}, base=MPD)
+    http("POST", "/_psd/config", {"mode": "approved"}, base=PSD)
     code, body, _ = submit(purchase_id, "tok-tchk13-retry-approved")
     require(code == 200 and body["status"] == "captured", f"retry capture: HTTP {code} {body}")
     require(state(purchase_id) == "captured|7|0|consumed", f"retry capture state: {state(purchase_id)}")
 
     insufficient = create_purchase("tchk13-insufficient", 3)
-    http("POST", "/_mpd/config", {"mode": "rejected"}, base=MPD)
+    http("POST", "/_psd/config", {"mode": "rejected"}, base=PSD)
     code, body, _ = submit(insufficient, "tok-tchk13-reject-b")
     require(code == 200 and body["status"] == "failed", f"second initial failure: HTTP {code} {body}")
     psql(f"UPDATE sku_stock SET quantity=2 WHERE sku_id={a1}; UPDATE purchase SET created_at=CURRENT_TIMESTAMP-interval '5 minutes' WHERE id={insufficient}")
-    http("POST", "/_mpd/config", {"mode": "approved"}, base=MPD)
+    http("POST", "/_psd/config", {"mode": "approved"}, base=PSD)
     before_calls = calls()
     code, body, _ = submit(insufficient, "tok-tchk13-insufficient-retry")
     require(code == 409, f"insufficient retry: HTTP {code} {body}")
-    require(calls() == before_calls, "insufficient retry reached MPD")
+    require(calls() == before_calls, "insufficient retry reached the provider double")
     require(state(insufficient) == "failed|2|0|released", f"insufficient retry changed state: {state(insufficient)}")
 
     in_flight = create_purchase("tchk13-in-flight", 1)
@@ -516,7 +514,7 @@ def tchk13(args):
     before_calls = calls()
     code, body, _ = submit(in_flight, "pending-tchk13-replay")
     require(code == 200 and body["status"] == "pending", f"in-flight replay: HTTP {code} {body}")
-    require(calls() == before_calls, "in-flight replay reached MPD again")
+    require(calls() == before_calls, "in-flight replay reached the provider double again")
     require(state(in_flight) == "pending|2|1|reserved", f"in-flight reservation changed: {state(in_flight)}")
     print("T-CHK-13 PASS: 15-minute window, released-stock retry, insufficient-stock refusal, and in-flight attempt")
 
@@ -544,22 +542,17 @@ def tchk14(args):
         return body["id"]
 
     def fail_payment(purchase_id):
-        http("POST", "/_mpd/config", {"mode": "rejected"}, base=MPD)
+        http("POST", "/_psd/config", {"mode": "rejected"}, base=PSD)
         code, body, _ = api("POST", f"/purchases/{purchase_id}/payments/submit", "c1", dict(
             token=f"tok-tchk14-reject-{purchase_id}", paymentMethodId="visa", installments=1,
         ))
         require(code == 200 and body["status"] == "failed", f"initial reject: HTTP {code} {body}")
-        payment = http("GET", "/_mpd/payments", base=MPD)[1][-1]
+        payment = http("GET", "/_psd/payments", base=PSD)[1][-1]
         return payment["id"]
 
     def approve_late(payment_id, purchase_id):
-        http("POST", f"/_mpd/payments/{payment_id}", {"status": "approved"}, base=MPD)
-        request_id = f"tchk14-{payment_id}"
-        code, body, _ = http(
-            "POST", f"/webhooks/mercado-pago?data.id={payment_id}",
-            {"action": "payment.updated", "type": "payment", "data": {"id": str(payment_id)}},
-            {"x-signature": sign(payment_id, request_id), "x-request-id": request_id},
-        )
+        http("POST", f"/_psd/payments/{payment_id}", {"status": "approved"}, base=PSD)
+        code, body, _ = ps_webhook(payment_id)
         require(code == 200, f"late approved webhook: HTTP {code} {body}")
         state = psql(
             f"SELECT (SELECT status FROM purchase WHERE id={purchase_id}) || '|' || "
@@ -586,7 +579,7 @@ def tchk14(args):
     other_purchase = create_purchase("c2", "AD9", "tchk14-other-buyer")
     require(psql(f"SELECT quantity||'|'||reserved FROM sku_stock WHERE sku_id={a1}", tuples=True).strip() == "3|3",
             "second customer did not reserve all available stock")
-    marker = f"late payment capture oversold, purchase_id={failed_purchase}, sku_id={a1}, quantity=3, manual refund"
+    marker = f"late_capture_unfulfillable: stock unavailable, no refund attempted, manual follow-up, purchase_id={failed_purchase}, sku_id={a1}, quantity=3"
     logs_before = subprocess.run(
         ["docker", "compose", "logs", "--since=1m", "kremlin"], cwd=HERE,
         capture_output=True, text=True, check=False,
@@ -720,19 +713,18 @@ def burst(requests):
     return out
 
 
-# ---------------------------------------------------------------- Mercado Pago: webhook signing
-def sign(data_id, request_id, secret=WEBHOOK_SECRET, ts=None):
-    """x-signature as checkout_payment_endpoint::verify_signature expects: HMAC-SHA256 over id:{data_id};request-id:{request_id};ts:{ts};"""
-    ts = str(ts or int(time.time() * 1000))
-    mac = hmac.new(secret.encode(), f"id:{data_id};request-id:{request_id};ts:{ts};".encode(), hashlib.sha256).hexdigest()
-    return f"ts={ts},v1={mac}"
+# ---------------------------------------------------------------- PagSeguro: webhook
+def ps_webhook(payment_id, bad=False):
+    """POST /webhooks/pagseguro as PagBank does: x-authenticity-token is sha256("{token}-{body}") (token of the tenant);
+    the body only names the charge, kremlin refreshes it from the provider (SR-PAY-017)."""
+    payment = next(p for p in http("GET", "/_psd/payments", base=PSD)[1] if p["id"] == payment_id)
+    raw = json.dumps({"id": payment_id, "reference_id": payment["reference_id"]})
+    signature = hashlib.sha256(f"{'wrong-token' if bad else PS_TOKEN}-{raw}".encode()).hexdigest()
+    return http("POST", "/webhooks/pagseguro", raw, {"x-authenticity-token": signature})
 
 
 def webhook(args):
-    rid = args.request_id or f"kit-{int(time.time() * 1000)}"
-    sig = sign(args.payment_id, rid, "wrong-secret" if args.bad else WEBHOOK_SECRET)
-    body = {"action": "payment.updated", "type": "payment", "data": {"id": str(args.payment_id)}}
-    show(http("POST", f"/webhooks/mercado-pago?data.id={args.payment_id}", body, {"x-signature": sig, "x-request-id": rid}))
+    show(ps_webhook(args.payment_id, args.bad))
 
 
 # ---------------------------------------------------------------- evidence (read-only)
@@ -786,7 +778,7 @@ def shift(args):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sp = ap.add_subparsers(dest="cmd", required=True)
-    for n in ("seed", "reset", "ids", "mpd-calls", "mpd-payments", "mpd-reset", "tchk08", "tchk11"):
+    for n in ("seed", "reset", "ids", "psd-calls", "psd-payments", "psd-reset", "tchk08", "tchk11"):
         sp.add_parser(n)
     p = sp.add_parser("tchk12"); p.add_argument("--expect-disabled", action="store_true")
     sp.add_parser("tchk13")
@@ -797,8 +789,8 @@ def main():
     p = sp.add_parser("burst"); p.add_argument("method", nargs="?"); p.add_argument("path", nargs="?"); p.add_argument("--repeat", type=int, default=1)
     p.add_argument("--as", dest="who"); p.add_argument("--json"); p.add_argument("-H", action="append"); p.add_argument("--spec")
     p = sp.add_parser("coupon"); p.add_argument("code"); p.add_argument("type"); p.add_argument("value", type=int); p.add_argument("--tenant", default="T1"); p.add_argument("--field", action="append")
-    p = sp.add_parser("mpd"); p.add_argument("mode"); p.add_argument("--amount-cents", type=int)
-    p = sp.add_parser("webhook"); p.add_argument("payment_id"); p.add_argument("--request-id"); p.add_argument("--bad", action="store_true")
+    p = sp.add_parser("psd"); p.add_argument("mode"); p.add_argument("--amount-cents", type=int)
+    p = sp.add_parser("webhook"); p.add_argument("payment_id"); p.add_argument("--bad", action="store_true")
     p = sp.add_parser("evidence"); p.add_argument("what", nargs="?", default="all", choices=list(EVIDENCE) + ["stock-reservation", "all"]); p.add_argument("id", nargs="?")
     p = sp.add_parser("db"); p.add_argument("sql")
     p = sp.add_parser("sql"); p.add_argument("sql")
@@ -825,13 +817,13 @@ def main():
     elif a.cmd == "coupon":
         body = {"code": a.code, "couponType": a.type, "value": a.value, **{k: json.loads(v) if v[:1] in '[{"0123456789-tfn' else v for k, v in (x.split("=", 1) for x in a.field or [])}}
         show(api("POST", "/coupons", OWNER_OF[a.tenant], body))
-    elif a.cmd == "mpd":
+    elif a.cmd == "psd":
         cfg = {"mode": a.mode}
         if a.amount_cents is not None: cfg["amount_cents"] = a.amount_cents
-        show(http("POST", "/_mpd/config", cfg, base=MPD))
-    elif a.cmd == "mpd-calls": show(http("GET", "/_mpd/calls", base=MPD))
-    elif a.cmd == "mpd-payments": show(http("GET", "/_mpd/payments", base=MPD))
-    elif a.cmd == "mpd-reset": show(http("DELETE", "/_mpd/calls", base=MPD))
+        show(http("POST", "/_psd/config", cfg, base=PSD))
+    elif a.cmd == "psd-calls": show(http("GET", "/_psd/calls", base=PSD))
+    elif a.cmd == "psd-payments": show(http("GET", "/_psd/payments", base=PSD))
+    elif a.cmd == "psd-reset": show(http("DELETE", "/_psd/calls", base=PSD))
     elif a.cmd == "webhook": webhook(a)
     elif a.cmd == "evidence": evidence(a)
     elif a.cmd == "db": print(psql(a.sql, readonly=True))

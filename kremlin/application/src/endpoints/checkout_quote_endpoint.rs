@@ -6,7 +6,7 @@ use crate::commons::{
 use axum::{
     Json,
     extract::{Extension, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode, header::ACCEPT_LANGUAGE},
 };
 use business::{
     domain::{enums::Role, marketplace::PurchaseError, user::User},
@@ -105,10 +105,16 @@ pub(crate) async fn ensure_quote_tenant(
 #[utoipa::path(post, path="/api/public/shipping/estimate", tag="WebStore", request_body=ShippingEstimateRequest, responses((status=200, body=ShippingEstimate), (status=400, description="Invalid CEP, item or seller"), (status=503, description="Shipping provider unavailable")))]
 pub async fn estimate(
     State(state): State<AppState>,
-    Extension(locale): Extension<Locale>,
+    headers: HeaderMap,
     Extension(context): Extension<crate::commons::tenant_context::TenantContext>,
     Json(input): Json<ShippingEstimateRequest>,
 ) -> HttpResponse<Json<ShippingEstimate>> {
+    // public route: no authentication middleware, so no `Locale` extension
+    let locale = Locale::from_accept_language(
+        headers
+            .get(ACCEPT_LANGUAGE)
+            .and_then(|value| value.to_str().ok()),
+    );
     let result =
         CheckoutQuoteUseCase::with_provider(state.conn.as_ref().clone(), state.shipping.clone())
             .estimate(input, context.tenant_id())

@@ -30,7 +30,8 @@ async fn payload_outcomes_map_to_normalized_provider_results() {
         ("mock:waiting", ProviderStatus::Pending),
     ];
 
-    for provider_kind in [MockProviderKind::MercadoPago, MockProviderKind::PagSeguro] {
+    {
+        let provider_kind = MockProviderKind::PagSeguro;
         let provider = MockPaymentProvider::new(provider_kind);
         for (payload, expected_status) in outcomes {
             let charge = provider.charge(charge_request(payload)).await.unwrap();
@@ -61,7 +62,7 @@ async fn json_payload_selects_mock_outcome() {
 
 #[tokio::test]
 async fn error_and_unrecognized_payloads_fail_closed() {
-    let provider = MockPaymentProvider::new(MockProviderKind::MercadoPago);
+    let provider = MockPaymentProvider::new(MockProviderKind::PagSeguro);
     assert!(provider.charge(charge_request("mock:error")).await.is_err());
     assert!(provider.charge(charge_request("real-card-token")).await.is_err());
     assert!(provider.status("not-a-mock-reference").await.is_err());
@@ -69,7 +70,7 @@ async fn error_and_unrecognized_payloads_fail_closed() {
 
 #[tokio::test]
 async fn search_does_not_invent_an_existing_charge() {
-    let provider = MockPaymentProvider::new(MockProviderKind::MercadoPago);
+    let provider = MockPaymentProvider::new(MockProviderKind::PagSeguro);
     assert!(provider
         .search("torg-42-no-previous-charge")
         .await

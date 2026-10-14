@@ -26,19 +26,19 @@ declare global {
   }
 }
 
+const SDK_ERROR = 'Não foi possível carregar o ambiente seguro de pagamento. Recarregue a página e tente novamente.';
+
+// The card is only ever sent encrypted by the PagSeguro SDK: if the SDK cannot load, the form stays disabled.
 const loadPagSeguroScript = () =>
-  new Promise<void>((resolve) => {
+  new Promise<void>((resolve, reject) => {
     if (window.PagSeguro) {
       resolve();
       return;
     }
     const script = document.createElement('script');
-    script.src = 'https://assets.pagseguro.com.br/checkout-sdk-js/rc/dist/pagseguro.min.js';
-    script.onload = () => resolve();
-    script.onerror = () => {
-      // If CDN is blocked or unavailable in local testing, continue gracefully
-      resolve();
-    };
+    script.src = 'https://assets.pagseguro.com.br/checkout-sdk-js/rc/dist/browser/pagseguro.min.js';
+    script.onload = () => (window.PagSeguro ? resolve() : reject(new Error(SDK_ERROR)));
+    script.onerror = () => reject(new Error(SDK_ERROR));
     document.head.appendChild(script);
   });
 
@@ -85,7 +85,7 @@ export default function PagSeguroCardForm({
         if (mounted) setReady(true);
       })
       .catch(() => {
-        if (mounted) setReady(true);
+        if (mounted) setError(SDK_ERROR);
       });
     return () => {
       mounted = false;
@@ -138,36 +138,19 @@ export default function PagSeguroCardForm({
 
     setSubmitting(true);
     try {
-      let token = '';
-
-      if (window.PagSeguro && typeof window.PagSeguro.encryptCard === 'function' && publicKey) {
-        try {
-          const res = window.PagSeguro.encryptCard({
-            publicKey,
-            holder: cardholderName.trim(),
-            number: rawNumber,
-            expMonth,
-            expYear,
-            securityCode: cleanCvv,
-          });
-          if (res?.encryptedCard) {
-            token = res.encryptedCard;
-          }
-        } catch {
-          // fallback below
-        }
+      const res = window.PagSeguro?.encryptCard({
+        publicKey,
+        holder: cardholderName.trim(),
+        number: rawNumber,
+        expMonth,
+        expYear,
+        securityCode: cleanCvv,
+      });
+      if (!res?.encryptedCard || res.hasErrors) {
+        setError(res?.hasErrors ? 'Dados do cartão inválidos. Confira número, validade e CVV.' : SDK_ERROR);
+        return;
       }
-
-      if (!token) {
-        // Fallback card payload for server-side / sandbox proxy
-        token = JSON.stringify({
-          number: rawNumber,
-          holder: { name: cardholderName.trim() },
-          exp_month: Number(expMonth),
-          exp_year: Number(expYear),
-          security_code: cleanCvv,
-        });
-      }
+      const token = res.encryptedCard;
 
       await onPayRef.current({
         token,

@@ -11,7 +11,8 @@ import cartReducer, {
   estimateShipping,
   type CartState,
 } from '../cartSlice';
-import type { Product, Coupon } from '../../../types';
+import type { Product, Coupon, CartItem } from '../../../types';
+import cartService from '../../../services/cartService';
 
 vi.mock('../../../services/catalogService');
 vi.mock('../../../services/cartService');
@@ -227,5 +228,14 @@ describe('cartSlice', () => {
     expect(nextState.shippingAmount).toBe(35.0);
     expect(nextState.shippingCep).toBe('01310-100');
     expect(nextState.shippingDetails?.service).toBe('Express');
+  });
+
+  it('rejects estimateShipping with the backend message', async () => {
+    vi.mocked(cartService.estimateShipping).mockRejectedValueOnce({ message: 'O vendedor 2 não entrega no RJ' });
+    const item = { id: 'i', product: mockProduct, variant: { id: '7', name: 'v', sku: 's', price: 1, stock: 1 }, quantity: 1, unitPrice: 1, totalPrice: 1 } as CartItem;
+    const result = await estimateShipping({ cep: '20040-020', items: [item] })(vi.fn(), () => ({}), undefined);
+    expect(result.type).toBe(estimateShipping.rejected.type);
+    expect(result.payload).toBe('O vendedor 2 não entrega no RJ');
+    expect(cartService.estimateShipping).toHaveBeenCalledWith('20040-020', [{ skuId: 7, quantity: 1 }]);
   });
 });

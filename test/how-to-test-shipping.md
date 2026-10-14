@@ -190,7 +190,7 @@ Simular o fluxo de compra de um cliente, calculando o frete via Correios e selec
        Total a pagar: [novo total recalculado com o frete do SEDEX]
        ```
 9. **Passo 5: Pagamento**:
-   - O formulário de pagamento com cartão de crédito (Mercado Pago) ou conclusão de pedido é exibido com o valor total atualizado correspondente à opção escolhida.
+   - O formulário de pagamento com cartão de crédito (PagSeguro) ou conclusão de pedido é exibido com o valor total atualizado correspondente à opção escolhida.
 
 ---
 

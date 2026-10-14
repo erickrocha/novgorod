@@ -9,17 +9,17 @@ Este documento descreve detalhadamente a arquitetura de **abstração de gateway
 A integração com o **PagSeguro (PagBank)** e o sistema de seleção de gateway por lojista (*tenant*) estão totalmente implementados:
 
 1. **Abstração Multi-Tenant no Backend (`kremlin`)**:
-   - `tenant_payment_settings`: Tabela com isolamento por tenant contendo provedor ativo (`mercado_pago` ou `pagseguro`), credenciais criptografadas via **AES-256-GCM** com chave de chaveiro versionada (`payment:{tenant_id}:{version}`) e metadados.
-   - `PaymentProviderGateway`: Trait comum implementada para `MercadoPago` e `PagSeguro`, padronizando `charge`, `status`, `search` e validação.
-   - `GET /tenants/{tenantId}/payment-settings` e `PUT /tenants/{tenantId}/payment-settings`: Endpoints para gestão de credenciais e seleção de gateway com controle de acesso RBAC (`SysAdmin` ou `TenantOwner`).
-   - `GET /checkout/payment-config?tenantId=X`: Retorna dinamicamente o provedor ativo do lojista (`pagseguro` ou `mercado_pago`) e a chave pública correspondente.
+   - `tenant_payment_settings`: Tabela com isolamento por tenant contendo provedor (`pagseguro`, o único suportado), credenciais criptografadas via **AES-256-GCM** com chave de chaveiro versionada (`payment:{tenant_id}:{version}`) e metadados.
+   - `PaymentProviderGateway`: Trait implementada por `PagSeguro` (e pelo mock de testes), padronizando `charge`, `status`, `search` e validação.
+   - `GET /tenants/{tenantId}/payment-settings` e `PUT /tenants/{tenantId}/payment-settings`: Endpoints para gestão das credenciais do PagSeguro com controle de acesso RBAC (`SysAdmin` ou `TenantOwner`).
+   - `GET /checkout/payment-config?tenantId=X`: Retorna o provedor (`pagseguro`) e a chave pública do lojista. O parâmetro `tenantId` é obrigatório.
    - `POST /purchases/{id}/payments/submit`: Submissão de pagamento agnóstica a gateway (suporta tokens de cartão criptografados do PagSeguro / PagBank).
    - `POST /webhooks/pagseguro`: Endpoint para recebimento de notificações assíncronas do PagBank.
-   - `spawn_payment_reconciliation`: Rotina periódica em background que consulta e concilia pagamentos pendentes para ambos os provedores.
+   - `spawn_payment_reconciliation`: Rotina periódica em background que consulta e concilia pagamentos pendentes.
 
 2. **Storefront (`torg`)**:
    - `PagSeguroCardForm.tsx`: Componente com integração transparente do SDK do PagBank (`window.PagSeguro.encryptCard`), seleção de parcelas e criptografia de ponta a ponta de dados sensíveis de cartão de crédito.
-   - `CheckoutPage.tsx`: Alternância dinâmica entre formulários (`MercadoPagoCardForm` vs `PagSeguroCardForm`) baseada na configuração retornada pelo lojista.
+   - `CheckoutPage.tsx`: Exibe o `PagSeguroCardForm`, único formulário de cartão. O cartão só sai do navegador criptografado pelo SDK do PagBank; se o SDK não carregar, o formulário fica desabilitado e nada é enviado.
 
 3. **Painel do Lojista (`veche`)**:
    - Menu **Operações > Configurações de Pagamento** (`/operations/payment-settings`).
@@ -51,11 +51,7 @@ cd infra/test
 ```
 > **Esperado**: Suíte completa aprovada no banco descartável, usando mocks e chaves locais de teste. O teste que cria uma cobrança Sandbox fica fora da suíte padrão.
 
-Para executar explicitamente a cobrança real de teste e consultar seu status no PagSeguro Sandbox:
-```bash
-./run.sh pagseguro
-```
-> Requer `PAGSEGURO_TOKEN` Sandbox em `infra/test/.env`. O teste cria uma transação no Sandbox; nunca use credenciais de produção.
+Para exercitar uma cobrança real no PagSeguro Sandbox, use o teste de tela com o SDK real (o servidor não aceita dados de cartão em texto puro, em nenhum ambiente: só o `encryptedCard` gerado pelo SDK no navegador). Passos em `torg/e2e/README.md`: subir o stack com `TEST_PAGSEGURO_API_BASE_URL=https://sandbox.api.pagseguro.com`, rodar `infra/test/pagseguro_tenants.py` (credenciais Sandbox de `infra/test/.env`) e `E2E_PAGSEGURO_SANDBOX=1 npm run e2e -- checkout-sandbox`. Nunca use credenciais de produção.
 
 ### 1.2 Storefront (`torg`)
 ```bash
@@ -82,10 +78,10 @@ npm test -- --run
    - **Chave Pública** (utilizada pelo SDK de criptografia de cartão no frontend)
 
 ### 2.2 Variáveis de Ambiente no Backend (`kremlin/.env`)
-Adicione ou configure no arquivo `kremlin/.env` (o backend possui fallback para variáveis de ambiente caso o tenant ainda não tenha configurado credenciais personalizadas no banco):
+As credenciais do PagSeguro são sempre as do tenant (`PUT /tenants/{id}/payment-settings`); não existe fallback para variáveis de ambiente da plataforma (SR-PAY-015). As variáveis abaixo só servem como origem dos valores para o script `infra/test/pagseguro_tenants.py` (`infra/test/.env`):
 
 ```dotenv
-# PagSeguro Sandbox Padrão (Opcional - fallback)
+# PagSeguro Sandbox (origem para pagseguro_tenants.py; não é fallback do backend)
 PAGSEGURO_TOKEN=seu_token_sandbox_pagseguro
 PAGSEGURO_PUBLIC_KEY=sua_chave_publica_pagseguro
 PAGSEGURO_ENVIRONMENT=sandbox
@@ -108,7 +104,7 @@ PAYMENT_MOCK_PROVIDER=pagseguro
 
 No payload de `POST /purchases/{id}/payments/submit`, use `token` com o cenário desejado: `mock:approved`, `mock:authorized`, `mock:pending`, `mock:declined` ou `mock:error`. Aliases como `mock:paid`, `mock:waiting` e `mock:rejected` também são aceitos. Um token JSON como `{"mockOutcome":"in_analysis"}` simula status pendente. A referência `mock:` retornada permite testar a consulta de status sem rede.
 
-O mock é ativado somente com `PAYMENT_PROVIDER_MODE=mock`; sem essa variável, o backend mantém a resolução real. `PAYMENT_MOCK_PROVIDER` aceita `pagseguro` ou `mercado_pago`. Use somente em desenvolvimento/testes. O modo simula o backend do gateway, não a tokenização do SDK PagBank no navegador; para o checkout web, configure as chaves Sandbox do SDK.
+O mock é ativado somente com `PAYMENT_PROVIDER_MODE=mock`; sem essa variável, o backend mantém a resolução real. `PAYMENT_MOCK_PROVIDER` aceita `pagseguro`. Use somente em desenvolvimento/testes. O modo simula o backend do gateway, não a tokenização do SDK PagBank no navegador; para o checkout web, configure as chaves Sandbox do SDK.
 
 ### 2.4 Iniciar os Serviços
 Em terminais separados:

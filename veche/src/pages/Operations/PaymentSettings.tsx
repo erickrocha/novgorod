@@ -28,14 +28,9 @@ import {
   updatePaymentSettings,
 } from "@/store/paymentSettingsSlice";
 import { ROLES } from "@/utils/enums";
-import type { PaymentProvider, PaymentSettingsUpdate, Tenant } from "@/services/types";
+import type { PaymentSettingsUpdate, Tenant } from "@/services/types";
 
 const paymentSettingsSchema = yup.object({
-  provider: yup.string().oneOf(["mercado_pago", "pagseguro"]).required(),
-  mpAccessToken: yup.string().default(""),
-  mpPublicKey: yup.string().default(""),
-  mpCollectorId: yup.string().default(""),
-  mpWebhookSecret: yup.string().default(""),
   psToken: yup.string().default(""),
   psPublicKey: yup.string().default(""),
   psEnvironment: yup.string().oneOf(["sandbox", "production"]).default("sandbox"),
@@ -61,24 +56,16 @@ export default function PaymentSettings() {
   const {
     register,
     handleSubmit,
-    watch,
     reset,
     formState: { isDirty },
   } = useForm<PaymentSettingsFormData>({
     resolver: yupResolver(paymentSettingsSchema),
     defaultValues: {
-      provider: "mercado_pago",
-      mpAccessToken: "",
-      mpPublicKey: "",
-      mpCollectorId: "",
-      mpWebhookSecret: "",
       psToken: "",
       psPublicKey: "",
       psEnvironment: "sandbox",
     },
   });
-
-  const selectedProvider = watch("provider") as PaymentProvider;
 
   useEffect(() => {
     if (isSysAdmin && tenants.length === 0) {
@@ -95,13 +82,8 @@ export default function PaymentSettings() {
   useEffect(() => {
     if (settings) {
       reset({
-        provider: settings.provider,
-        mpAccessToken: "",
-        mpPublicKey: settings.provider === "mercado_pago" ? (settings.publicKey ?? "") : "",
-        mpCollectorId: "",
-        mpWebhookSecret: "",
         psToken: "",
-        psPublicKey: settings.provider === "pagseguro" ? (settings.publicKey ?? "") : "",
+        psPublicKey: settings.publicKey ?? "",
         psEnvironment: (settings.environment as "sandbox" | "production") ?? "sandbox",
       });
     }
@@ -112,41 +94,14 @@ export default function PaymentSettings() {
 
     dispatch(clearPaymentSettingsStatus());
 
-    const updatePayload: PaymentSettingsUpdate = {
-      provider: data.provider as PaymentProvider,
+    const updatePayload: PaymentSettingsUpdate = { provider: "pagseguro" };
+    updatePayload.credentials = {
+      pagseguro: {
+        token: data.psToken.trim() ? data.psToken.trim() : undefined,
+        publicKey: data.psPublicKey.trim() ? data.psPublicKey.trim() : undefined,
+        environment: data.psEnvironment || "sandbox",
+      },
     };
-
-    if (data.provider === "pagseguro") {
-      const hasPsChanges = Boolean(
-        data.psToken.trim() || data.psPublicKey.trim() || data.psEnvironment
-      );
-      if (hasPsChanges) {
-        updatePayload.credentials = {
-          pagseguro: {
-            token: data.psToken.trim() ? data.psToken.trim() : undefined,
-            publicKey: data.psPublicKey.trim() ? data.psPublicKey.trim() : undefined,
-            environment: data.psEnvironment || "sandbox",
-          },
-        };
-      }
-    } else {
-      const hasMpChanges = Boolean(
-        data.mpAccessToken.trim() ||
-          data.mpPublicKey.trim() ||
-          data.mpCollectorId.trim() ||
-          data.mpWebhookSecret.trim()
-      );
-      if (hasMpChanges) {
-        updatePayload.credentials = {
-          mercadoPago: {
-            accessToken: data.mpAccessToken.trim() ? data.mpAccessToken.trim() : undefined,
-            publicKey: data.mpPublicKey.trim() ? data.mpPublicKey.trim() : undefined,
-            collectorId: data.mpCollectorId.trim() ? Number(data.mpCollectorId.trim()) : undefined,
-            webhookSecret: data.mpWebhookSecret.trim() ? data.mpWebhookSecret.trim() : undefined,
-          },
-        };
-      }
-    }
 
     await dispatch(
       updatePaymentSettings({
@@ -165,7 +120,7 @@ export default function PaymentSettings() {
     <>
       <PageMeta
         title="Configurações de Pagamento | Veche"
-        description="Configure o provedor de pagamento (Mercado Pago ou PagSeguro) para o checkout multitenant."
+        description="Configure as credenciais do PagSeguro para o checkout multitenant."
       />
       <PageBreadcrumb pageTitle={t("paymentSettings.title", "Configurações de Pagamento")} />
 
@@ -208,67 +163,15 @@ export default function PaymentSettings() {
 
             <ComponentCard title={t("paymentSettings.providerSelection", "Provedor de Pagamento")}>
               <div className="space-y-4">
-                <p className="text-sm text-gray-500 dark:text-gray-400">
-                  {t(
-                    "paymentSettings.providerDescription",
-                    "Escolha qual gateway de pagamento será utilizado nas vendas deste lojista."
-                  )}
-                </p>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <label
-                    className={`flex items-start gap-4 p-4 rounded-2xl border cursor-pointer transition ${
-                      selectedProvider === "mercado_pago"
-                        ? "border-brand-500 bg-brand-50/20 dark:bg-brand-500/10"
-                        : "border-gray-200 dark:border-gray-800 hover:border-gray-300"
-                    }`}
-                  >
-                    <input
-                      type="radio"
-                      value="mercado_pago"
-                      {...register("provider")}
-                      className="mt-1 text-brand-600 focus:ring-brand-500"
-                    />
-                    <div>
-                      <p className="font-semibold text-gray-900 dark:text-white">
-                        Mercado Pago
-                      </p>
-                      <p className="text-xs text-gray-500 mt-1">
-                        {t(
-                          "paymentSettings.mercadoPagoDesc",
-                          "Checkout transparente via cartão com conciliação automática."
-                        )}
-                      </p>
-                    </div>
-                  </label>
-
-                  <label
-                    className={`flex items-start gap-4 p-4 rounded-2xl border cursor-pointer transition ${
-                      selectedProvider === "pagseguro"
-                        ? "border-brand-500 bg-brand-50/20 dark:bg-brand-500/10"
-                        : "border-gray-200 dark:border-gray-800 hover:border-gray-300"
-                    }`}
-                  >
-                    <input
-                      type="radio"
-                      value="pagseguro"
-                      {...register("provider")}
-                      className="mt-1 text-brand-600 focus:ring-brand-500"
-                    />
-                    <div>
-                      <p className="font-semibold text-gray-900 dark:text-white">
-                        PagSeguro / PagBank
-                      </p>
-                      <p className="text-xs text-gray-500 mt-1">
-                        {t(
-                          "paymentSettings.pagseguroDesc",
-                          "Gateway PagBank com criptografia no navegador e conciliação direta."
-                        )}
-                      </p>
-                    </div>
-                  </label>
+                <div>
+                  <p className="font-semibold text-gray-900 dark:text-white">PagSeguro / PagBank</p>
+                  <p className="text-xs text-gray-500 mt-1">
+                    {t(
+                      "paymentSettings.pagseguroDesc",
+                      "Gateway PagBank com criptografia no navegador e conciliação direta."
+                    )}
+                  </p>
                 </div>
-
                 <div className="flex items-center gap-3 pt-2">
                   {settings?.credentialsConfigured ? (
                     <div className="flex items-center gap-2 text-xs font-medium text-emerald-700 bg-emerald-50 px-3 py-1.5 rounded-full border border-emerald-200">
@@ -278,62 +181,13 @@ export default function PaymentSettings() {
                   ) : (
                     <div className="flex items-center gap-2 text-xs font-medium text-amber-700 bg-amber-50 px-3 py-1.5 rounded-full border border-amber-200">
                       <ShieldAlert className="w-4 h-4" />
-                      <span>{t("paymentSettings.credentialsNotConfigured", "Nenhuma credencial cadastrada para este tenant (usando padrão global)")}</span>
+                      <span>{t("paymentSettings.credentialsNotConfigured", "Nenhuma credencial cadastrada para este tenant: o checkout fica indisponível")}</span>
                     </div>
                   )}
                 </div>
               </div>
             </ComponentCard>
 
-            {selectedProvider === "mercado_pago" ? (
-              <ComponentCard title="Credenciais Mercado Pago">
-                <div className="space-y-4 max-w-xl">
-                  <div>
-                    <Label htmlFor="mpAccessToken">Access Token (Chave Secreta)</Label>
-                    <Input
-                      id="mpAccessToken"
-                      type="password"
-                      placeholder={
-                        settings?.credentialsConfigured && settings.provider === "mercado_pago"
-                          ? "•••••••••••••••• (deixe em branco para manter)"
-                          : "TEST-XXXXX ou APP_USR-XXXXX"
-                      }
-                      {...register("mpAccessToken")}
-                    />
-                  </div>
-
-                  <div>
-                    <Label htmlFor="mpPublicKey">Public Key (Chave Pública)</Label>
-                    <Input
-                      id="mpPublicKey"
-                      type="text"
-                      placeholder="TEST-XXXXX ou APP_USR-XXXXX"
-                      {...register("mpPublicKey")}
-                    />
-                  </div>
-
-                  <div>
-                    <Label htmlFor="mpCollectorId">Collector ID (ID da Conta Mercado Pago)</Label>
-                    <Input
-                      id="mpCollectorId"
-                      type="text"
-                      placeholder="Ex: 123456789"
-                      {...register("mpCollectorId")}
-                    />
-                  </div>
-
-                  <div>
-                    <Label htmlFor="mpWebhookSecret">Webhook Secret (Opcional)</Label>
-                    <Input
-                      id="mpWebhookSecret"
-                      type="password"
-                      placeholder="Segredo para validação de assinaturas de webhook"
-                      {...register("mpWebhookSecret")}
-                    />
-                  </div>
-                </div>
-              </ComponentCard>
-            ) : (
               <ComponentCard title="Credenciais PagSeguro / PagBank">
                 <div className="space-y-4 max-w-xl">
                   <div>
@@ -342,7 +196,7 @@ export default function PaymentSettings() {
                       id="psToken"
                       type="password"
                       placeholder={
-                        settings?.credentialsConfigured && settings.provider === "pagseguro"
+                        settings?.credentialsConfigured
                           ? "•••••••••••••••• (deixe em branco para manter)"
                           : "Token PagBank gerado no painel"
                       }
@@ -373,7 +227,6 @@ export default function PaymentSettings() {
                   </div>
                 </div>
               </ComponentCard>
-            )}
 
             <div className="flex items-center gap-4">
               <Button
@@ -392,11 +245,6 @@ export default function PaymentSettings() {
                 onClick={() => {
                   if (settings) {
                     reset({
-                      provider: settings.provider,
-                      mpAccessToken: "",
-                      mpPublicKey: settings.publicKey ?? "",
-                      mpCollectorId: "",
-                      mpWebhookSecret: "",
                       psToken: "",
                       psPublicKey: settings.publicKey ?? "",
                       psEnvironment: (settings.environment as "sandbox" | "production") ?? "sandbox",

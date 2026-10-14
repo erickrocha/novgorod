@@ -1,7 +1,6 @@
 use crate::{
     AppState,
     infrastructure::{
-        mercado_pago::MercadoPago,
         mock_payment::{MockPaymentProvider, MockProviderKind},
         pagseguro::PagSeguro,
         payment_credentials::TenantCredentialsPayload,
@@ -108,7 +107,6 @@ pub struct PaymentState {
 }
 
 enum ResolvedProvider {
-    MercadoPago(MercadoPago),
     PagSeguro(PagSeguro),
     Mock(MockPaymentProvider),
 }
@@ -116,23 +114,13 @@ enum ResolvedProvider {
 impl ResolvedProvider {
     fn name(&self) -> &'static str {
         match self {
-            Self::MercadoPago(_) => "mercado_pago",
             Self::PagSeguro(_) => "pagseguro",
             Self::Mock(mock) => mock.name(),
         }
     }
 
-    fn collector_id(&self) -> i64 {
-        match self {
-            Self::MercadoPago(mp) => mp.collector_id,
-            Self::PagSeguro(_) => 0,
-            Self::Mock(_) => 0,
-        }
-    }
-
     async fn charge(&self, request: ChargeRequest) -> Result<ProviderResult, ProviderError> {
         match self {
-            Self::MercadoPago(mp) => mp.charge(request).await,
             Self::PagSeguro(ps) => ps.charge(request).await,
             Self::Mock(mock) => mock.charge(request).await,
         }
@@ -140,7 +128,6 @@ impl ResolvedProvider {
 
     async fn status(&self, reference: &str) -> Result<ProviderResult, ProviderError> {
         match self {
-            Self::MercadoPago(mp) => mp.status(reference).await,
             Self::PagSeguro(ps) => ps.status(reference).await,
             Self::Mock(mock) => mock.status(reference).await,
         }
@@ -148,7 +135,6 @@ impl ResolvedProvider {
 
     async fn search(&self, external_reference: &str) -> Result<Option<ProviderResult>, ProviderError> {
         match self {
-            Self::MercadoPago(mp) => mp.search(external_reference).await,
             Self::PagSeguro(ps) => ps.search(external_reference).await,
             Self::Mock(mock) => mock.search(external_reference).await,
         }
@@ -156,7 +142,6 @@ impl ResolvedProvider {
 
     async fn cancel(&self, reference: &str) -> Result<ProviderResult, ProviderError> {
         match self {
-            Self::MercadoPago(mp) => mp.cancel(reference).await,
             Self::PagSeguro(ps) => ps.cancel(reference).await,
             Self::Mock(mock) => mock.cancel(reference).await,
         }
@@ -203,14 +188,6 @@ fn build_tenant_provider(
     payload: TenantCredentialsPayload,
 ) -> Result<ResolvedProvider, &'static str> {
     match payload {
-        TenantCredentialsPayload::MercadoPago(mp) => {
-            if column != "mercado_pago" {
-                return Err("provider column does not match credentials");
-            }
-            MercadoPago::with_credentials(mp.access_token, mp.collector_id)
-                .map(ResolvedProvider::MercadoPago)
-                .map_err(|_| "invalid Mercado Pago credentials")
-        }
         TenantCredentialsPayload::PagSeguro(ps) => {
             if column != "pagseguro" {
                 return Err("provider column does not match credentials");
@@ -329,7 +306,6 @@ fn validate_provider(
     result: &ProviderResult,
     purchase: &purchase_entity::Model,
     payment: &payment_entity::Model,
-    collector_id: i64,
 ) -> Result<(), ApiError> {
     if result.external_reference
         != format!(
@@ -339,7 +315,6 @@ fn validate_provider(
         )
         || result.amount_cents != payment.amount_cents
         || result.currency != "BRL"
-        || (collector_id != 0 && result.collector_id != collector_id)
         || result.payment_type_id != "credit_card"
     {
         return Err(bad(
@@ -355,10 +330,9 @@ async fn apply_result(
     purchase: &purchase_entity::Model,
     payment: &payment_entity::Model,
     result: ProviderResult,
-    collector_id: i64,
     provider_name: &str,
 ) -> Result<PaymentState, ApiError> {
-    validate_provider(&result, purchase, payment, collector_id)?;
+    validate_provider(&result, purchase, payment)?;
     let tx = state.conn.begin().await.map_err(|_| unavailable())?;
     tx.query_one_raw(Statement::from_sql_and_values(
         DbBackend::Postgres,
@@ -676,6 +650,13 @@ pub async fn submit(
     {
         return Err(bad(StatusCode::BAD_REQUEST, "Dados do cartão inválidos"));
     }
+    // Never accept card fields from the client, in any environment (SR-PAY-030).
+    if crate::infrastructure::pagseguro::reject_raw_card_data(&card.token).is_err() {
+        return Err(bad(
+            StatusCode::BAD_REQUEST,
+            "Os dados do cartão devem ser enviados criptografados",
+        ));
+    }
     let (purchase, payment) = owned(&app, &user, id, context.tenant_id()).await?;
     if purchase.total_cents == 0 {
         return Ok(Json(state(id, &payment)));
@@ -844,7 +825,6 @@ pub async fn submit(
                 &purchase,
                 &saved,
                 result,
-                provider.collector_id(),
                 provider_name,
             )
             .await?,
@@ -891,7 +871,6 @@ pub async fn status(
                 &purchase,
                 &payment,
                 outcome,
-                provider.collector_id(),
                 provider.name(),
             )
             .await?,
@@ -899,136 +878,6 @@ pub async fn status(
     } else {
         Ok(Json(state(id, &payment)))
     }
-}
-
-#[derive(Deserialize, Default)]
-pub struct NotificationQuery {
-    #[serde(rename = "data.id")]
-    pub data_id: Option<String>,
-    pub id: Option<String>,
-}
-
-pub fn verify_signature(
-    secret: &str,
-    signature: &str,
-    request_id: &str,
-    data_id: &str,
-) -> Result<(), &'static str> {
-    use hmac::{Hmac, Mac};
-    use sha2::Sha256;
-    let mut ts = None;
-    let mut v1 = None;
-    for part in signature.split(',') {
-        if let Some((k, v)) = part.trim().split_once('=') {
-            match k {
-                "ts" => ts = Some(v),
-                "v1" => v1 = Some(v),
-                _ => {}
-            }
-        }
-    }
-    let ts = ts.ok_or("Assinatura inválida")?;
-    let expected = v1.ok_or("Assinatura inválida")?;
-    let bytes = (0..expected.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(expected.get(i..i + 2).unwrap_or(""), 16))
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| "Assinatura inválida")?;
-    let manifest = format!("id:{data_id};request-id:{request_id};ts:{ts};");
-    let mut mac =
-        Hmac::<Sha256>::new_from_slice(secret.as_bytes()).map_err(|_| "Assinatura inválida")?;
-    mac.update(manifest.as_bytes());
-    mac.verify_slice(&bytes).map_err(|_| "Assinatura inválida")?;
-    Ok(())
-}
-
-fn json_id(v: &serde_json::Value) -> Option<String> {
-    v.as_str().map(str::to_owned).or_else(|| v.as_i64().map(|n| n.to_string()))
-}
-
-fn notification_data_id(query_id: Option<String>, body: &[u8]) -> Option<String> {
-    if query_id.is_some() || body.is_empty() {
-        return query_id;
-    }
-    let json: serde_json::Value = serde_json::from_slice(body).ok()?;
-    json.get("data")
-        .and_then(|d| d.get("id"))
-        .and_then(json_id)
-        .or_else(|| json.get("id").and_then(json_id))
-}
-
-pub async fn webhook(
-    State(app): State<AppState>,
-    headers: HeaderMap,
-    Query(query): Query<NotificationQuery>,
-    body_bytes: Bytes,
-) -> Result<StatusCode, ApiError> {
-    let signature = headers
-        .get("x-signature")
-        .and_then(|v| v.to_str().ok())
-        .ok_or_else(|| bad(StatusCode::UNAUTHORIZED, "Assinatura ausente"))?;
-    let request_id = headers
-        .get("x-request-id")
-        .and_then(|v| v.to_str().ok())
-        .ok_or_else(|| bad(StatusCode::UNAUTHORIZED, "Identificador ausente"))?;
-    let data_id = notification_data_id(query.data_id.or(query.id), &body_bytes)
-        .ok_or_else(|| bad(StatusCode::UNAUTHORIZED, "Pagamento ausente"))?;
-    if !data_id.bytes().all(|b| b.is_ascii_digit()) {
-        return Err(bad(StatusCode::UNAUTHORIZED, "Pagamento inválido"));
-    }
-    // The owner is found by the gateway reference we stored; the notification is not trusted for it.
-    let payment = payment_entity::Entity::find()
-        .filter(payment_entity::Column::GatewayReference.eq(data_id.clone()))
-        .one(app.conn.as_ref())
-        .await
-        .map_err(|_| unavailable())?;
-    let Some(payment) = payment else {
-        log::warn!("mercado pago webhook: no payment with gateway reference {data_id}");
-        return Ok(StatusCode::OK);
-    };
-    let purchase = purchase_entity::Entity::find_by_id(payment.purchase_id)
-        .one(app.conn.as_ref())
-        .await
-        .map_err(|_| unavailable())?;
-    let Some(purchase) = purchase else { return Ok(StatusCode::OK); };
-    let Ok(tid) = purchase_tenant(&app, purchase.id).await else {
-        log::warn!("mercado pago webhook: purchase {} has no order tenant", purchase.id);
-        return Ok(StatusCode::OK);
-    };
-    let (column, payload) = match load_tenant_credentials(&app, tid).await {
-        Ok(found) => found,
-        Err(reason) => {
-            log::warn!("mercado pago webhook: tenant {tid}: {reason}");
-            return Ok(StatusCode::OK);
-        }
-    };
-    let secret = match &payload {
-        TenantCredentialsPayload::MercadoPago(mp) => {
-            mp.webhook_secret.clone().filter(|s| !s.is_empty())
-        }
-        TenantCredentialsPayload::PagSeguro(_) => None,
-    };
-    let Some(secret) = secret else {
-        log::warn!("mercado pago webhook: tenant {tid} has no Mercado Pago webhook secret");
-        return Err(bad(StatusCode::UNAUTHORIZED, "Assinatura inválida"));
-    };
-    verify_signature(&secret, signature, request_id, &data_id)
-        .map_err(|msg| bad(StatusCode::UNAUTHORIZED, msg))?;
-    let provider = build_tenant_provider(&column, payload).map_err(|reason| {
-        log::warn!("mercado pago webhook: tenant {tid}: {reason}");
-        unavailable()
-    })?;
-    let outcome = provider.status(&data_id).await.map_err(|_| unavailable())?;
-    apply_result(
-        &app,
-        &purchase,
-        &payment,
-        outcome,
-        provider.collector_id(),
-        provider.name(),
-    )
-    .await?;
-    Ok(StatusCode::OK)
 }
 
 fn pagseguro_notification_reference(body: &[u8]) -> Option<String> {
@@ -1211,7 +1060,7 @@ pub async fn pagseguro_webhook(
             .map_err(|_| unavailable())?
     };
     let Some(outcome) = outcome else { return Ok(StatusCode::OK); };
-    apply_result(&app, &purchase, &payment, outcome, provider.collector_id(), provider.name()).await?;
+    apply_result(&app, &purchase, &payment, outcome, provider.name()).await?;
     Ok(StatusCode::OK)
 }
 
@@ -1297,7 +1146,7 @@ async fn cancel_unresolved(
             }
         }
     };
-    apply_result(state, purchase, payment, result, provider.collector_id(), provider.name())
+    apply_result(state, purchase, payment, result, provider.name())
         .await
         .map_err(|e| log::warn!("payment {} cancel not applied: {}", payment.id, e.0))
         .is_ok()
@@ -1342,7 +1191,7 @@ pub async fn reconcile_unresolved(state: &AppState) -> Result<usize, String> {
         };
         match outcome {
             Ok(Some(outcome)) => {
-                if apply_result(state, &purchase, &payment, outcome, provider.collector_id(), provider.name())
+                if apply_result(state, &purchase, &payment, outcome, provider.name())
                     .await
                     .map_err(|e| log::warn!("reconciliation: payment {payment_id} not applied: {}", e.0))
                     .is_ok()

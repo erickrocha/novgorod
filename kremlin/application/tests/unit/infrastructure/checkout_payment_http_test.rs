@@ -2,7 +2,7 @@ use crate::{
     AppState,
     commons::{i18n::Locale, tenant_context::TenantContext},
     endpoints::{
-        checkout_payment_endpoint::{config as payment_config, pagseguro_webhook, status, submit, webhook},
+        checkout_payment_endpoint::{config as payment_config, pagseguro_webhook, status, submit},
         checkout_quote_endpoint::{quote, select_shipping},
         payment_settings_endpoint::{get as get_payment_settings, put as put_payment_settings},
         orders_endpoint::{
@@ -12,8 +12,7 @@ use crate::{
     infrastructure::{
         correios::Correios,
         payment_credentials::{
-            MercadoPagoCredentials, PagSeguroCredentials, PaymentKeyRing,
-            TenantCredentialsPayload,
+            PagSeguroCredentials, PaymentKeyRing, TenantCredentialsPayload,
         },
         shipping_credentials::ShippingKeyRing,
     },
@@ -238,7 +237,6 @@ fn router(state: AppState) -> Router {
         .route("/purchases/{id}/payments/status", get(status))
         .route("/checkout/payment-config", get(payment_config))
         .route("/webhooks/pagseguro", post(pagseguro_webhook))
-        .route("/webhooks/mercadopago", post(webhook))
         .route("/orders/{id}", get(get_by_id))
         .route("/orders/{id}/status-history", get(history))
         .route("/payments/{id}/transactions", get(transactions))
@@ -340,46 +338,12 @@ async fn webhook_request_with_headers(
     Ok(app.oneshot(request).await?.status())
 }
 
-async fn mercado_pago_webhook_request(
-    app: Router,
-    body: &[u8],
-    request_id: &str,
-    signature: &str,
-) -> anyhow::Result<StatusCode> {
-    mercado_pago_webhook_request_with_optional_id(
-        app,
-        body,
-        Some(request_id),
-        signature,
-    )
-    .await
-}
-
-async fn mercado_pago_webhook_request_with_optional_id(
-    app: Router,
-    body: &[u8],
-    request_id: Option<&str>,
-    signature: &str,
-) -> anyhow::Result<StatusCode> {
-    let mut builder = Request::builder()
-        .method(Method::POST)
-        .uri("/webhooks/mercadopago")
-        .header("content-type", "application/json");
-    if let Some(request_id) = request_id {
-        builder = builder.header("x-request-id", request_id);
-    }
-    let request = builder
-        .header("x-signature", signature)
-        .body(Body::from(body.to_vec()))?;
-    Ok(app.oneshot(request).await?.status())
-}
-
 fn pagbank_signature(token: &str, body: &[u8]) -> String {
     let mut digest = Sha256::new();
     digest.update(token.as_bytes());
     digest.update(b"-");
     digest.update(body);
-    format!("{:x}", digest.finalize())
+    digest.finalize().iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 struct EnvironmentRestore(Vec<(&'static str, Option<std::ffi::OsString>)>);
@@ -407,18 +371,6 @@ impl Drop for EnvironmentRestore {
             }
         }
     }
-}
-
-fn mercado_pago_signature(secret: &str, timestamp: &str, request_id: &str, data_id: &str) -> String {
-    use hmac::{Hmac, Mac};
-    use sha2::Sha256;
-
-    let manifest = format!("id:{data_id};request-id:{request_id};ts:{timestamp};");
-    let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).unwrap();
-    mac.update(manifest.as_bytes());
-    let digest = mac.finalize().into_bytes();
-    let hex = digest.iter().map(|byte| format!("{byte:02x}")).collect::<String>();
-    format!("ts={timestamp},v1={hex}")
 }
 
 #[derive(Clone)]
@@ -476,39 +428,24 @@ async fn pagbank_status_double(
 }
 
 #[derive(Clone)]
-struct MercadoPagoDoubleState {
+struct PagBankCancelDoubleState {
     authorization: Arc<std::sync::Mutex<Vec<String>>>,
     amount_cents: i64,
     external_reference: String,
-    collector_id: i64,
-    status: String,
 }
 
-#[derive(Clone)]
-struct Tc08MercadoPagoDoubleState {
-    authorization: Arc<std::sync::Mutex<Vec<String>>>,
-    response: Arc<std::sync::Mutex<Value>>,
+fn pagbank_charge_json(state: &PagBankCancelDoubleState, id: String, status: &str) -> Value {
+    json!({
+        "id": id,
+        "reference_id": state.external_reference,
+        "status": status,
+        "amount": {"value": state.amount_cents, "currency": "BRL"},
+        "payment_method": {"type": "CREDIT_CARD"}
+    })
 }
 
-async fn tc08_mercado_pago_status_double(
-    axum::extract::State(state): axum::extract::State<Tc08MercadoPagoDoubleState>,
-    Path(id): Path<String>,
-    headers: HeaderMap,
-) -> axum::Json<Value> {
-    state.authorization.lock().unwrap().push(
-        headers
-            .get("authorization")
-            .and_then(|value| value.to_str().ok())
-            .unwrap_or_default()
-            .to_owned(),
-    );
-    let mut response = state.response.lock().unwrap().clone();
-    response["id"] = Value::String(id);
-    axum::Json(response)
-}
-
-async fn mercado_pago_status_double(
-    axum::extract::State(state): axum::extract::State<MercadoPagoDoubleState>,
+async fn pagbank_waiting_charge_double(
+    axum::extract::State(state): axum::extract::State<PagBankCancelDoubleState>,
     Path(id): Path<String>,
     headers: HeaderMap,
 ) -> axum::Json<Value> {
@@ -519,20 +456,11 @@ async fn mercado_pago_status_double(
             .unwrap_or_default()
             .to_owned(),
     );
-    axum::Json(json!({
-        "id": id,
-        "status": state.status,
-        "transaction_amount": state.amount_cents as f64 / 100.0,
-        "currency_id": "BRL",
-        "external_reference": state.external_reference,
-        "collector_id": state.collector_id,
-        "payment_type_id": "credit_card",
-        "payment_method_id": "visa"
-    }))
+    axum::Json(pagbank_charge_json(&state, id, "WAITING"))
 }
 
-async fn mercado_pago_cancel_double(
-    axum::extract::State(state): axum::extract::State<MercadoPagoDoubleState>,
+async fn pagbank_cancel_charge_double(
+    axum::extract::State(state): axum::extract::State<PagBankCancelDoubleState>,
     Path(id): Path<String>,
     headers: HeaderMap,
 ) -> axum::Json<Value> {
@@ -543,25 +471,7 @@ async fn mercado_pago_cancel_double(
             .unwrap_or_default()
             .to_owned(),
     );
-    axum::Json(json!({
-        "id": id,
-        "status": "cancelled",
-        "transaction_amount": state.amount_cents as f64 / 100.0,
-        "currency_id": "BRL",
-        "external_reference": state.external_reference,
-        "collector_id": state.collector_id,
-        "payment_type_id": "credit_card",
-        "payment_method_id": "visa"
-    }))
-}
-
-async fn tc28_provider_error_response() -> (StatusCode, axum::Json<Value>) {
-    (
-        StatusCode::BAD_GATEWAY,
-        axum::Json(json!({
-            "message": "token=tc28-token-body-marker tax_id=tc28-tax-body-marker card=tc28-card-body-marker"
-        })),
-    )
+    axum::Json(pagbank_charge_json(&state, id, "CANCELED"))
 }
 
 async fn create_purchase_from_quote(
@@ -659,8 +569,8 @@ async fn checkout_payment_http_enforces_ownership_and_mock_lifecycle() {
     );
     assert_eq!(
         std::env::var("PAYMENT_MOCK_PROVIDER").as_deref().ok(),
-        Some("mercado_pago"),
-        "run this test with PAYMENT_MOCK_PROVIDER=mercado_pago"
+        Some("pagseguro"),
+        "run this test with PAYMENT_MOCK_PROVIDER=pagseguro"
     );
 
     let (root, db, schema) = database().await.unwrap();
@@ -692,7 +602,7 @@ async fn checkout_payment_http_enforces_ownership_and_mock_lifecycle() {
         captured["reference"]
             .as_str()
             .unwrap_or_default()
-            .starts_with("mock:mercado_pago:captured:")
+            .starts_with("mock:pagseguro:captured:")
     );
 
     let (status, purchase_detail) = request(
@@ -872,7 +782,7 @@ async fn checkout_payment_http_enforces_ownership_and_mock_lifecycle() {
     .unwrap();
     assert_eq!(status, StatusCode::OK, "{payment_transactions}");
     assert_eq!(payment_transactions[0]["status"], "captured");
-    assert_eq!(payment_transactions[0]["gatewayProvider"], "mercado_pago");
+    assert_eq!(payment_transactions[0]["gatewayProvider"], "pagseguro");
 
     let (status, purchase_row) = db
         .query_one_raw(Statement::from_sql_and_values(
@@ -1588,7 +1498,6 @@ async fn tc10_pagseguro_webhook_preserves_terminal_state_and_rejects_divergent_r
 #[ignore = "requires isolated PostgreSQL and payment test keyring"]
 async fn tc13_payment_settings_authorize_roles_redact_secrets_and_bind_ciphertext_to_tenant() {
     const ACCESS_TOKEN: &str = "tc13-access-token-secret-marker";
-    const WEBHOOK_SECRET: &str = "tc13-webhook-secret-marker";
     let payment_keys = Arc::new(PaymentKeyRing::from_env().unwrap());
     let (root, db, schema) = database().await.unwrap();
     Migrator::up(&db, None).await.unwrap();
@@ -1606,13 +1515,12 @@ async fn tc13_payment_settings_authorize_roles_redact_secrets_and_bind_ciphertex
     let settings_uri = "/tenants/1/payment-settings";
     let update = || {
         json!({
-            "provider":"mercado_pago",
+            "provider":"pagseguro",
             "credentials":{
-                "mercadoPago":{
-                    "accessToken":ACCESS_TOKEN,
+                "pagseguro":{
+                    "token":ACCESS_TOKEN,
                     "publicKey":"tc13-public-key",
-                    "collectorId":1234,
-                    "webhookSecret":WEBHOOK_SECRET
+                    "environment":"sandbox"
                 }
             }
         })
@@ -1661,15 +1569,13 @@ async fn tc13_payment_settings_authorize_roles_redact_secrets_and_bind_ciphertex
     .await
     .unwrap();
     assert_eq!(status, StatusCode::OK, "{response}");
-    assert_eq!(response["provider"], "mercado_pago");
+    assert_eq!(response["provider"], "pagseguro");
     assert_eq!(response["credentialsConfigured"], true);
     assert_eq!(response["publicKey"], "tc13-public-key");
     let response_text = response.to_string();
     assert!(!response_text.contains(ACCESS_TOKEN));
-    assert!(!response_text.contains(WEBHOOK_SECRET));
     assert!(response.get("credentials").is_none());
     assert!(response.get("accessToken").is_none());
-    assert!(response.get("webhookSecret").is_none());
 
     let stored = db
         .query_one_raw(Statement::from_sql_and_values(
@@ -1685,12 +1591,9 @@ async fn tc13_payment_settings_authorize_roles_redact_secrets_and_bind_ciphertex
     assert!(!encrypted
         .windows(ACCESS_TOKEN.len())
         .any(|window| window == ACCESS_TOKEN.as_bytes()));
-    assert!(!encrypted
-        .windows(WEBHOOK_SECRET.len())
-        .any(|window| window == WEBHOOK_SECRET.as_bytes()));
     assert!(matches!(
         payment_keys.decrypt_payload(1, &key_version, &encrypted),
-        Ok(TenantCredentialsPayload::MercadoPago(_))
+        Ok(TenantCredentialsPayload::PagSeguro(_))
     ));
     assert!(payment_keys
         .decrypt_payload(2, &key_version, &encrypted)
@@ -1758,23 +1661,6 @@ async fn tc14_missing_payment_configuration_returns_unavailable_without_charge()
     cleanup(root, db, schema).await.unwrap();
 }
 
-async fn tc15_platform_mercado_pago_double(
-    axum::extract::State(calls): axum::extract::State<Arc<std::sync::atomic::AtomicUsize>>,
-    axum::Json(request): axum::Json<Value>,
-) -> axum::Json<Value> {
-    calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    axum::Json(json!({
-        "id":"tc15-platform-mp-charge",
-        "status":"approved",
-        "transaction_amount":request["transaction_amount"],
-        "currency_id":"BRL",
-        "external_reference":request["external_reference"],
-        "collector_id":9999,
-        "payment_type_id":"credit_card",
-        "payment_method_id":"visa"
-    }))
-}
-
 async fn tc15_platform_pagbank_double(
     axum::extract::State(calls): axum::extract::State<Arc<std::sync::atomic::AtomicUsize>>,
     axum::Json(request): axum::Json<Value>,
@@ -1794,16 +1680,11 @@ async fn tc15_platform_pagbank_double(
 async fn tc15_invalid_or_missing_tenant_credentials_never_fall_back_to_platform() {
     let _environment_restore = EnvironmentRestore::capture(&[
         "PAYMENT_PROVIDER_MODE",
-        "MP_ACCESS_TOKEN",
-        "MP_COLLECTOR_ID",
-        "MP_API_BASE_URL",
         "PAGSEGURO_TOKEN",
         "PAGSEGURO_API_BASE_URL",
     ]);
     unsafe {
         std::env::set_var("PAYMENT_PROVIDER_MODE", "real");
-        std::env::set_var("MP_ACCESS_TOKEN", "tc15-platform-mp-token");
-        std::env::set_var("MP_COLLECTOR_ID", "9999");
         std::env::set_var("PAGSEGURO_TOKEN", "tc15-platform-pagbank-token");
     }
 
@@ -1816,7 +1697,6 @@ async fn tc15_invalid_or_missing_tenant_credentials_never_fall_back_to_platform(
     let app = router(app_state);
     let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let double = Router::new()
-        .route("/v1/payments", post(tc15_platform_mercado_pago_double))
         .route("/charges", post(tc15_platform_pagbank_double))
         .with_state(calls.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1824,25 +1704,16 @@ async fn tc15_invalid_or_missing_tenant_credentials_never_fall_back_to_platform(
     let server = tokio::spawn(async move { axum::serve(listener, double).await.unwrap() });
     let base_url = format!("http://{address}");
     unsafe {
-        std::env::set_var("MP_API_BASE_URL", &base_url);
         std::env::set_var("PAGSEGURO_API_BASE_URL", &base_url);
     }
 
-    for provider in ["mercado_pago", "pagseguro"] {
-        let credentials = if provider == "mercado_pago" {
-            TenantCredentialsPayload::MercadoPago(MercadoPagoCredentials {
-                access_token: "tc15-tenant-mp-token".into(),
-                public_key: Some("tc15-tenant-mp-public".into()),
-                collector_id: Some(4567),
-                webhook_secret: Some("tc15-tenant-mp-secret".into()),
-            })
-        } else {
-            TenantCredentialsPayload::PagSeguro(PagSeguroCredentials {
-                token: "tc15-tenant-pagbank-token".into(),
-                public_key: None,
-                environment: Some("sandbox".into()),
-            })
-        };
+    {
+        let provider = "pagseguro";
+        let credentials = TenantCredentialsPayload::PagSeguro(PagSeguroCredentials {
+            token: "tc15-tenant-pagbank-token".into(),
+            public_key: None,
+            environment: Some("sandbox".into()),
+        });
         let (key_version, encrypted) = payment_keys.encrypt_payload(1, &credentials).unwrap();
         db.execute_raw(Statement::from_sql_and_values(
             DbBackend::Postgres,
@@ -1920,7 +1791,7 @@ async fn tc16_payment_config_is_tenant_scoped_and_never_falls_back() {
     Migrator::up(&db, None).await.unwrap();
     fixtures(&db).await.unwrap();
     for (tenant_id, provider, public_key) in [
-        (1_i64, "mercado_pago", "tc16-tenant-a-public-key"),
+        (1_i64, "pagseguro", "tc16-tenant-a-public-key"),
         (2_i64, "pagseguro", "tc16-tenant-b-public-key"),
     ] {
         db.execute_raw(Statement::from_sql_and_values(
@@ -1947,7 +1818,7 @@ async fn tc16_payment_config_is_tenant_scoped_and_never_falls_back() {
     .await
     .unwrap();
     assert_eq!(tenant_a_status, StatusCode::OK, "{tenant_a}");
-    assert_eq!(tenant_a["provider"], "mercado_pago");
+    assert_eq!(tenant_a["provider"], "pagseguro");
     assert_eq!(tenant_a["publicKey"], "tc16-tenant-a-public-key");
     assert!(!tenant_a.to_string().contains("tc16-tenant-b-public-key"));
 
@@ -1981,227 +1852,27 @@ async fn tc16_payment_config_is_tenant_scoped_and_never_falls_back() {
 }
 
 #[tokio::test]
-#[ignore = "requires isolated PostgreSQL, test keyring, and PAYMENT_PROVIDER_MODE=mock"]
-async fn mercado_pago_webhook_uses_tenant_secret_and_handles_repeated_ids() {
-    const TENANT_TOKEN: &str = "tenant-mp-token-for-tests-only";
-    const TENANT_SECRET: &str = "tenant-mp-secret-for-tests-only";
-    const OTHER_TENANT_SECRET: &str = "other-tenant-mp-secret";
-    const PLATFORM_SECRET: &str = "platform-mp-secret";
-    const PAYMENT_ID: &str = "987654321";
-    const REQUEST_ID: &str = "mp-request-id-for-tests";
-    const TIMESTAMP: &str = "1727280000";
-
-    assert_eq!(
-        std::env::var("PAYMENT_PROVIDER_MODE").as_deref().ok(),
-        Some("mock")
-    );
-    let _environment_restore = EnvironmentRestore::capture(&["MP_API_BASE_URL", "MP_WEBHOOK_SECRET"]);
-    let payment_keys = Arc::new(PaymentKeyRing::from_env().unwrap());
-    let (root, db, schema) = database().await.unwrap();
-    Migrator::up(&db, None).await.unwrap();
-    fixtures(&db).await.unwrap();
-    let credentials = TenantCredentialsPayload::MercadoPago(MercadoPagoCredentials {
-        access_token: TENANT_TOKEN.into(),
-        public_key: Some("tenant-mp-public-key".into()),
-        collector_id: Some(4567),
-        webhook_secret: Some(TENANT_SECRET.into()),
-    });
-    let (key_version, encrypted) = payment_keys.encrypt_payload(1, &credentials).unwrap();
-    db.execute_raw(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        "INSERT INTO tenant_payment_settings (tenant_id, provider, credentials, key_version) VALUES ($1, 'mercado_pago', $2, $3)",
-        [1_i64.into(), encrypted.into(), key_version.into()],
-    ))
-    .await
-    .unwrap();
-    let mut app_state = state(db.clone());
-    app_state.payment_keys = payment_keys.clone();
-    let app = router(app_state);
-
-    cart_fixture(&db, Some(1), 1, &[1]).await.unwrap();
-    let purchase_id = create_purchase_from_quote(app.clone(), "mp-webhook-mock", &[1])
-        .await
-        .unwrap();
-    let (status, submitted) = request(
-        app.clone(),
-        Method::POST,
-        &format!("/purchases/{purchase_id}/payments/submit"),
-        Some(json!({
-            "token":"mock:pending",
-            "paymentMethodId":"visa",
-            "installments":1
-        })),
-        None,
-    )
-    .await
-    .unwrap();
-    assert_eq!(status, StatusCode::OK, "{submitted}");
-    assert_eq!(submitted["status"], "pending");
-    let payment = db
-        .query_one_raw(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            "SELECT amount_cents,attempt_key FROM payment WHERE purchase_id=$1",
-            [purchase_id.into()],
-        ))
-        .await
-        .unwrap()
-        .unwrap();
-    let amount_cents: i64 = payment.try_get("", "amount_cents").unwrap();
-    let attempt_key: String = payment.try_get("", "attempt_key").unwrap();
-    let external_reference = format!("torg-{purchase_id}-{attempt_key}");
-    db.execute_raw(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        "UPDATE payment SET gateway_provider='mercado_pago',gateway_reference=$1 WHERE purchase_id=$2",
-        [PAYMENT_ID.into(), purchase_id.into()],
-    ))
-    .await
-    .unwrap();
-
-    let authorization = Arc::new(std::sync::Mutex::new(Vec::new()));
-    let double = Router::new()
-        .route("/v1/payments/{id}", get(mercado_pago_status_double))
-        .with_state(MercadoPagoDoubleState {
-            authorization: authorization.clone(),
-            amount_cents,
-            external_reference,
-            collector_id: 4567,
-            status: "rejected".into(),
-        });
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let address = listener.local_addr().unwrap();
-    let server = tokio::spawn(async move { axum::serve(listener, double).await.unwrap() });
-    unsafe {
-        std::env::set_var("MP_API_BASE_URL", format!("http://{address}"));
-        std::env::set_var("MP_WEBHOOK_SECRET", PLATFORM_SECRET);
-    }
-
-    let body = format!(r#"{{"data":{{"id":"{PAYMENT_ID}"}}}}"#);
-    for secret in [PLATFORM_SECRET, OTHER_TENANT_SECRET] {
-        let signature = mercado_pago_signature(secret, TIMESTAMP, REQUEST_ID, PAYMENT_ID);
-        let rejected = mercado_pago_webhook_request(
-            app.clone(),
-            body.as_bytes(),
-            REQUEST_ID,
-            &signature,
-        )
-        .await
-        .unwrap();
-        assert_eq!(rejected, StatusCode::UNAUTHORIZED);
-    }
-    assert!(authorization.lock().unwrap().is_empty());
-    let pending_status: String = db
-        .query_one_raw(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            "SELECT status FROM payment WHERE purchase_id=$1",
-            [purchase_id.into()],
-        ))
-        .await
-        .unwrap()
-        .unwrap()
-        .try_get("", "status")
-        .unwrap();
-    assert_eq!(pending_status, "pending");
-
-    let valid_signature = mercado_pago_signature(TENANT_SECRET, TIMESTAMP, REQUEST_ID, PAYMENT_ID);
-    let accepted = mercado_pago_webhook_request(
-        app.clone(),
-        body.as_bytes(),
-        REQUEST_ID,
-        &valid_signature,
-    )
-    .await
-    .unwrap();
-    assert_eq!(accepted, StatusCode::OK);
-    assert_eq!(
-        authorization.lock().unwrap().as_slice(),
-        &[format!("Bearer {TENANT_TOKEN}")]
-    );
-
-    for index in 0..10_000 {
-        let data_id = (1_000_000_000_i64 + index).to_string();
-        let request_id = format!("tc22-request-{index}");
-        let body = format!(r#"{{"data":{{"id":{data_id}}}}}"#);
-        let signature = mercado_pago_signature(TENANT_SECRET, TIMESTAMP, &request_id, &data_id);
-        let response = mercado_pago_webhook_request(
-            app.clone(),
-            body.as_bytes(),
-            &request_id,
-            &signature,
-        )
-        .await
-        .unwrap();
-        assert_eq!(response, StatusCode::OK, "notification {index}");
-    }
-    assert_eq!(authorization.lock().unwrap().len(), 1);
-
-    let secretless = TenantCredentialsPayload::MercadoPago(MercadoPagoCredentials {
-        access_token: TENANT_TOKEN.into(),
-        public_key: Some("tenant-mp-public-key".into()),
-        collector_id: Some(4567),
-        webhook_secret: None,
-    });
-    let (key_version, encrypted) = payment_keys.encrypt_payload(1, &secretless).unwrap();
-    db.execute_raw(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        "UPDATE tenant_payment_settings SET credentials=$1,key_version=$2 WHERE tenant_id=1",
-        [encrypted.into(), key_version.into()],
-    ))
-    .await
-    .unwrap();
-    let rejected = mercado_pago_webhook_request(
-        app,
-        body.as_bytes(),
-        REQUEST_ID,
-        &valid_signature,
-    )
-    .await
-    .unwrap();
-    assert_eq!(rejected, StatusCode::UNAUTHORIZED);
-    assert_eq!(authorization.lock().unwrap().len(), 1);
-    let unchanged_status: String = db
-        .query_one_raw(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            "SELECT status FROM payment WHERE purchase_id=$1",
-            [purchase_id.into()],
-        ))
-        .await
-        .unwrap()
-        .unwrap()
-        .try_get("", "status")
-        .unwrap();
-    assert_eq!(unchanged_status, "failed");
-
-    server.abort();
-    cleanup(root, db, schema).await.unwrap();
-}
-
-#[tokio::test]
 #[ignore = "requires isolated PostgreSQL, payment test keyring, and PAYMENT_PROVIDER_MODE=mock"]
 async fn late_captured_webhook_reconsumes_available_stock_or_logs_manual_followup() {
-    const TENANT_TOKEN: &str = "tc27-tenant-mp-token";
-    const TENANT_SECRET: &str = "tc27-tenant-mp-secret";
-    const PLATFORM_SECRET: &str = "tc27-platform-mp-secret";
-    const TIMESTAMP: &str = "1727280000";
+    const TENANT_TOKEN: &str = "tc27-tenant-pagbank-token";
 
     assert_eq!(
         std::env::var("PAYMENT_PROVIDER_MODE").as_deref().ok(),
         Some("mock")
     );
-    let _environment_restore = EnvironmentRestore::capture(&["MP_API_BASE_URL", "MP_WEBHOOK_SECRET"]);
     let payment_keys = Arc::new(PaymentKeyRing::from_env().unwrap());
     let (root, db, schema) = database().await.unwrap();
     Migrator::up(&db, None).await.unwrap();
     fixtures(&db).await.unwrap();
-    let credentials = TenantCredentialsPayload::MercadoPago(MercadoPagoCredentials {
-        access_token: TENANT_TOKEN.into(),
+    let credentials = TenantCredentialsPayload::PagSeguro(PagSeguroCredentials {
+        token: TENANT_TOKEN.into(),
         public_key: Some("tc27-tenant-public-key".into()),
-        collector_id: Some(4567),
-        webhook_secret: Some(TENANT_SECRET.into()),
+        environment: Some("sandbox".into()),
     });
     let (key_version, encrypted) = payment_keys.encrypt_payload(1, &credentials).unwrap();
     db.execute_raw(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "INSERT INTO tenant_payment_settings (tenant_id,provider,credentials,key_version) VALUES (1,'mercado_pago',$1,$2)",
+        "INSERT INTO tenant_payment_settings (tenant_id,provider,credentials,key_version) VALUES (1,'pagseguro',$1,$2)",
         [encrypted.into(), key_version.into()],
     ))
     .await
@@ -2209,9 +1880,6 @@ async fn late_captured_webhook_reconsumes_available_stock_or_logs_manual_followu
     let mut app_state = state(db.clone());
     app_state.payment_keys = payment_keys.clone();
     let app = router(app_state);
-    unsafe {
-        std::env::set_var("MP_WEBHOOK_SECRET", PLATFORM_SECRET);
-    }
     crate::test_log_capture::install();
 
     for (index, stock_available) in [true, false].into_iter().enumerate() {
@@ -2261,11 +1929,11 @@ async fn late_captured_webhook_reconsumes_available_stock_or_logs_manual_followu
             .unwrap()
             .try_get("", "id")
             .unwrap();
-        let provider_id = format!("98765432{index}");
+        let provider_id = format!("tc27-charge-{index}");
         let external_reference = format!("torg-{purchase_id}-{attempt_key}");
         db.execute_raw(Statement::from_sql_and_values(
             DbBackend::Postgres,
-            "UPDATE payment SET gateway_provider='mercado_pago',gateway_reference=$1 WHERE id=$2",
+            "UPDATE payment SET gateway_provider='pagseguro',gateway_reference=$1 WHERE id=$2",
             [provider_id.clone().into(), payment_id.into()],
         ))
         .await
@@ -2326,36 +1994,31 @@ async fn late_captured_webhook_reconsumes_available_stock_or_logs_manual_followu
 
         let authorization = Arc::new(std::sync::Mutex::new(Vec::new()));
         let double = Router::new()
-            .route("/v1/payments/{id}", get(mercado_pago_status_double))
-            .with_state(MercadoPagoDoubleState {
+            .route("/charges/{reference}", get(pagbank_webhook_status_double))
+            .with_state(PagBankWebhookDoubleState {
                 authorization: authorization.clone(),
-                amount_cents,
-                external_reference,
-                collector_id: 4567,
-                status: "approved".into(),
+                response: Arc::new(std::sync::Mutex::new(json!({
+                    "reference_id": external_reference,
+                    "status": "PAID",
+                    "amount": {"value": amount_cents, "currency": "BRL"},
+                    "payment_method": {"type": "CREDIT_CARD"}
+                }))),
+                reference_override: Arc::new(std::sync::Mutex::new(None)),
             });
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let server = tokio::spawn(async move { axum::serve(listener, double).await.unwrap() });
-        unsafe {
-            std::env::set_var("MP_API_BASE_URL", format!("http://{address}"));
-        }
+        let provider_base_url = format!("http://{address}");
 
-        let body = format!(r#"{{"data":{{"id":{provider_id}}}}}"#);
-        let request_id = format!("tc27-request-{index}");
-        let signature = mercado_pago_signature(
-            TENANT_SECRET,
-            TIMESTAMP,
-            &request_id,
-            &provider_id,
-        );
+        let body = json!({"reference_id": format!("torg-{purchase_id}-{attempt_key}"), "status": "PAID"}).to_string();
+        let signature = pagbank_signature(TENANT_TOKEN, body.as_bytes());
         crate::test_log_capture::install();
         crate::test_log_capture::clear();
-        let response = mercado_pago_webhook_request(
+        let response = webhook_request_with_provider_base(
             app.clone(),
             body.as_bytes(),
-            &request_id,
             &signature,
+            Some(&provider_base_url),
         )
         .await
         .unwrap();
@@ -2446,11 +2109,11 @@ async fn late_captured_webhook_reconsumes_available_stock_or_logs_manual_followu
         if stock_available {
             assert_eq!(reservation_status, "consumed");
             assert_eq!(quantity, 9);
-            let replay = mercado_pago_webhook_request(
+            let replay = webhook_request_with_provider_base(
                 app.clone(),
                 body.as_bytes(),
-                &request_id,
                 &signature,
+                Some(&provider_base_url),
             )
             .await
             .unwrap();
@@ -2494,13 +2157,12 @@ async fn late_captured_webhook_reconsumes_available_stock_or_logs_manual_followu
 
 #[tokio::test]
 #[ignore = "requires isolated PostgreSQL, payment test keyring, and mock setup for initial submit"]
-async fn expired_payment_cancel_uses_tenant_mercado_pago_credentials() {
+async fn expired_payment_cancel_uses_tenant_pagseguro_credentials() {
     const TENANT_TOKEN: &str = "tc27-cancel-tenant-token";
-    const TENANT_SECRET: &str = "tc27-cancel-tenant-secret";
 
     let _environment_restore = EnvironmentRestore::capture(&[
         "PAYMENT_PROVIDER_MODE",
-        "MP_API_BASE_URL",
+        "PAGSEGURO_API_BASE_URL",
         "PAYMENT_RECONCILIATION_WINDOW_HOURS",
     ]);
     unsafe {
@@ -2511,16 +2173,15 @@ async fn expired_payment_cancel_uses_tenant_mercado_pago_credentials() {
     let (root, db, schema) = database().await.unwrap();
     Migrator::up(&db, None).await.unwrap();
     fixtures(&db).await.unwrap();
-    let credentials = TenantCredentialsPayload::MercadoPago(MercadoPagoCredentials {
-        access_token: TENANT_TOKEN.into(),
+    let credentials = TenantCredentialsPayload::PagSeguro(PagSeguroCredentials {
+        token: TENANT_TOKEN.into(),
         public_key: Some("tc27-cancel-public-key".into()),
-        collector_id: Some(4567),
-        webhook_secret: Some(TENANT_SECRET.into()),
+        environment: Some("sandbox".into()),
     });
     let (key_version, encrypted) = payment_keys.encrypt_payload(1, &credentials).unwrap();
     db.execute_raw(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "INSERT INTO tenant_payment_settings (tenant_id,provider,credentials,key_version) VALUES (1,'mercado_pago',$1,$2)",
+        "INSERT INTO tenant_payment_settings (tenant_id,provider,credentials,key_version) VALUES (1,'pagseguro',$1,$2)",
         [encrypted.into(), key_version.into()],
     ))
     .await
@@ -2594,11 +2255,11 @@ async fn expired_payment_cancel_uses_tenant_mercado_pago_credentials() {
     ))
     .await
     .unwrap();
-    let provider_id = "987650001";
+    let provider_id = "tc27-cancel-charge";
     let external_reference = format!("torg-{purchase_id}-{attempt_key}");
     db.execute_raw(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "UPDATE payment SET gateway_provider='mercado_pago',gateway_reference=$1,created_at=now()-interval '4 hours',updated_at=now()-interval '11 minutes' WHERE id=$2",
+        "UPDATE payment SET gateway_provider='pagseguro',gateway_reference=$1,created_at=now()-interval '4 hours',updated_at=now()-interval '11 minutes' WHERE id=$2",
         [provider_id.into(), payment_id.into()],
     ))
     .await
@@ -2606,22 +2267,18 @@ async fn expired_payment_cancel_uses_tenant_mercado_pago_credentials() {
 
     let authorization = Arc::new(std::sync::Mutex::new(Vec::new()));
     let double = Router::new()
-        .route(
-            "/v1/payments/{id}",
-            get(mercado_pago_status_double).put(mercado_pago_cancel_double),
-        )
-        .with_state(MercadoPagoDoubleState {
+        .route("/charges/{id}", get(pagbank_waiting_charge_double))
+        .route("/charges/{id}/cancel", post(pagbank_cancel_charge_double))
+        .with_state(PagBankCancelDoubleState {
             authorization: authorization.clone(),
             amount_cents,
             external_reference,
-            collector_id: 4567,
-            status: "pending".into(),
         });
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let server = tokio::spawn(async move { axum::serve(listener, double).await.unwrap() });
     unsafe {
-        std::env::set_var("MP_API_BASE_URL", format!("http://{address}"));
+        std::env::set_var("PAGSEGURO_API_BASE_URL", format!("http://{address}"));
         std::env::set_var("PAYMENT_PROVIDER_MODE", "real");
     }
 
@@ -2635,10 +2292,7 @@ async fn expired_payment_cancel_uses_tenant_mercado_pago_credentials() {
     assert_eq!(handled, 1);
     assert_eq!(
         authorization.lock().unwrap().as_slice(),
-        &[
-            format!("Bearer {TENANT_TOKEN}"),
-            format!("Bearer {TENANT_TOKEN}")
-        ]
+        &[format!("Bearer {TENANT_TOKEN}"), format!("Bearer {TENANT_TOKEN}"), format!("Bearer {TENANT_TOKEN}")]
     );
     let payment_status: String = db
         .query_one_raw(Statement::from_sql_and_values(
@@ -2704,179 +2358,6 @@ async fn expired_payment_cancel_uses_tenant_mercado_pago_credentials() {
     cleanup(root, db, schema).await.unwrap();
 }
 
-#[tokio::test]
-#[ignore = "requires isolated PostgreSQL, payment test keyring, and local provider double"]
-async fn mercado_pago_provider_error_logs_redact_bodies_across_payment_flows() {
-    const TENANT_TOKEN: &str = "tc28-tenant-mp-token";
-    const TENANT_SECRET: &str = "tc28-tenant-mp-secret";
-    const PROVIDER_ID: &str = "987650028";
-    const REQUEST_ID: &str = "tc28-request-id";
-    const TIMESTAMP: &str = "1727280000";
-    let markers = [
-        "tc28-token-body-marker",
-        "tc28-tax-body-marker",
-        "tc28-card-body-marker",
-    ];
-
-    let _environment_restore = EnvironmentRestore::capture(&[
-        "PAYMENT_PROVIDER_MODE",
-        "MP_API_BASE_URL",
-        "PAYMENT_RECONCILIATION_WINDOW_HOURS",
-    ]);
-    unsafe {
-        std::env::set_var("PAYMENT_PROVIDER_MODE", "real");
-        std::env::set_var("PAYMENT_RECONCILIATION_WINDOW_HOURS", "3");
-    }
-    let payment_keys = Arc::new(PaymentKeyRing::from_env().unwrap());
-    let (root, db, schema) = database().await.unwrap();
-    Migrator::up(&db, None).await.unwrap();
-    fixtures(&db).await.unwrap();
-    let credentials = TenantCredentialsPayload::MercadoPago(MercadoPagoCredentials {
-        access_token: TENANT_TOKEN.into(),
-        public_key: Some("tc28-tenant-public-key".into()),
-        collector_id: Some(4567),
-        webhook_secret: Some(TENANT_SECRET.into()),
-    });
-    let (key_version, encrypted) = payment_keys.encrypt_payload(1, &credentials).unwrap();
-    db.execute_raw(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        "INSERT INTO tenant_payment_settings (tenant_id,provider,credentials,key_version) VALUES (1,'mercado_pago',$1,$2)",
-        [encrypted.into(), key_version.into()],
-    ))
-    .await
-    .unwrap();
-    let mut app_state = state(db.clone());
-    app_state.payment_keys = payment_keys.clone();
-    let app = router(app_state);
-
-    let double = Router::new()
-        .route("/v1/payments", post(tc28_provider_error_response))
-        .route("/v1/payments/search", get(tc28_provider_error_response))
-        .route("/v1/payments/{id}", get(tc28_provider_error_response));
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let address = listener.local_addr().unwrap();
-    let server = tokio::spawn(async move { axum::serve(listener, double).await.unwrap() });
-    unsafe {
-        std::env::set_var("MP_API_BASE_URL", format!("http://{address}"));
-    }
-    crate::test_log_capture::install();
-
-    cart_fixture(&db, Some(1), 1, &[1]).await.unwrap();
-    let purchase_id = create_purchase_from_quote(app.clone(), "tc28-redaction", &[1])
-        .await
-        .unwrap();
-    crate::test_log_capture::clear();
-    let (submit_status, submitted) = request(
-        app.clone(),
-        Method::POST,
-        &format!("/purchases/{purchase_id}/payments/submit"),
-        Some(json!({
-            "token":"tc28-input-card-token-marker",
-            "paymentMethodId":"visa",
-            "installments":1
-        })),
-        None,
-    )
-    .await
-    .unwrap();
-    assert_eq!(submit_status, StatusCode::OK, "{submitted}");
-    let submit_logs = crate::test_log_capture::contents();
-    for marker in markers.iter().chain(["tc28-input-card-token-marker"].iter()) {
-        assert!(!submit_logs.contains(marker), "{submit_logs}");
-    }
-
-    let payment_id: i64 = db
-        .query_one_raw(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            "SELECT id FROM payment WHERE purchase_id=$1",
-            [purchase_id.into()],
-        ))
-        .await
-        .unwrap()
-        .unwrap()
-        .try_get("", "id")
-        .unwrap();
-    crate::test_log_capture::clear();
-    let (status_code, _) = request(
-        app.clone(),
-        Method::GET,
-        &format!("/purchases/{purchase_id}/payments/status"),
-        None,
-        None,
-    )
-    .await
-    .unwrap();
-    assert_eq!(status_code, StatusCode::SERVICE_UNAVAILABLE);
-    let status_logs = crate::test_log_capture::contents();
-    for marker in markers {
-        assert!(!status_logs.contains(marker), "{status_logs}");
-    }
-
-    db.execute_raw(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        "UPDATE payment SET gateway_provider='mercado_pago',gateway_reference=$1 WHERE id=$2",
-        [PROVIDER_ID.into(), payment_id.into()],
-    ))
-    .await
-    .unwrap();
-    let body = format!(r#"{{"data":{{"id":"{PROVIDER_ID}"}}}}"#);
-    let signature = mercado_pago_signature(
-        TENANT_SECRET,
-        TIMESTAMP,
-        REQUEST_ID,
-        PROVIDER_ID,
-    );
-    crate::test_log_capture::clear();
-    let webhook_status = mercado_pago_webhook_request(
-        app.clone(),
-        body.as_bytes(),
-        REQUEST_ID,
-        &signature,
-    )
-    .await
-    .unwrap();
-    assert_eq!(webhook_status, StatusCode::SERVICE_UNAVAILABLE);
-    let webhook_logs = crate::test_log_capture::contents();
-    for marker in markers {
-        assert!(!webhook_logs.contains(marker), "{webhook_logs}");
-    }
-
-    db.execute_raw(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        "UPDATE payment SET created_at=now()-interval '1 hour',updated_at=now()-interval '11 minutes' WHERE id=$1",
-        [payment_id.into()],
-    ))
-    .await
-    .unwrap();
-    crate::test_log_capture::clear();
-    let mut reconciliation_state = state(db.clone());
-    reconciliation_state.payment_keys = payment_keys;
-    assert_eq!(
-        crate::endpoints::checkout_payment_endpoint::reconcile_unresolved(&reconciliation_state)
-            .await
-            .unwrap(),
-        0
-    );
-    let reconciliation_logs = crate::test_log_capture::contents();
-    assert!(reconciliation_logs.contains("WARN reconciliation: payment"));
-    for marker in markers {
-        assert!(!reconciliation_logs.contains(marker), "{reconciliation_logs}");
-    }
-    assert_payment_markers_absent(
-        &db,
-        &[
-            "tc28-token-body-marker",
-            "tc28-tax-body-marker",
-            "tc28-card-body-marker",
-            "tc28-input-card-token-marker",
-        ],
-    )
-    .await;
-
-    server.abort();
-    cleanup(root, db, schema).await.unwrap();
-}
-
 async fn tc28_pagbank_error_response() -> (StatusCode, axum::Json<Value>) {
     (
         StatusCode::BAD_GATEWAY,
@@ -2893,14 +2374,11 @@ async fn tc01_non_card_charge_response(
     axum::Json(request): axum::Json<Value>,
 ) -> axum::Json<Value> {
     axum::Json(json!({
-        "id": "123456789",
-        "status": "approved",
-        "transaction_amount": request.get("transaction_amount").cloned().unwrap_or(Value::Null),
-        "currency_id": "BRL",
-        "external_reference": request.get("external_reference").cloned().unwrap_or(Value::Null),
-        "collector_id": 4567,
-        "payment_type_id": "debit_card",
-        "payment_method_id": "visa"
+        "id": "CHAR_TC01_001",
+        "reference_id": request.get("reference_id").cloned().unwrap_or(Value::Null),
+        "status": "PAID",
+        "amount": request.get("amount").cloned().unwrap_or(Value::Null),
+        "payment_method": {"type": "DEBIT_CARD"}
     }))
 }
 
@@ -3065,7 +2543,7 @@ async fn pagbank_provider_error_logs_redact_bodies_across_payment_flows() {
 #[ignore = "requires isolated PostgreSQL and payment test keyring"]
 async fn tc01_card_submit_rejects_invalid_input_and_non_card_provider() {
     let _environment_restore =
-        EnvironmentRestore::capture(&["PAYMENT_PROVIDER_MODE", "MP_API_BASE_URL"]);
+        EnvironmentRestore::capture(&["PAYMENT_PROVIDER_MODE", "PAGSEGURO_API_BASE_URL"]);
     unsafe {
         std::env::set_var("PAYMENT_PROVIDER_MODE", "real");
     }
@@ -3073,16 +2551,15 @@ async fn tc01_card_submit_rejects_invalid_input_and_non_card_provider() {
     let (root, db, schema) = database().await.unwrap();
     Migrator::up(&db, None).await.unwrap();
     fixtures(&db).await.unwrap();
-    let credentials = TenantCredentialsPayload::MercadoPago(MercadoPagoCredentials {
-        access_token: "tc01-tenant-mp-token".into(),
+    let credentials = TenantCredentialsPayload::PagSeguro(PagSeguroCredentials {
+        token: "tc01-tenant-pagbank-token".into(),
         public_key: Some("tc01-tenant-public-key".into()),
-        collector_id: Some(4567),
-        webhook_secret: Some("tc01-tenant-mp-secret".into()),
+        environment: Some("sandbox".into()),
     });
     let (key_version, encrypted) = payment_keys.encrypt_payload(1, &credentials).unwrap();
     db.execute_raw(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "INSERT INTO tenant_payment_settings (tenant_id,provider,credentials,key_version) VALUES (1,'mercado_pago',$1,$2)",
+        "INSERT INTO tenant_payment_settings (tenant_id,provider,credentials,key_version) VALUES (1,'pagseguro',$1,$2)",
         [encrypted.into(), key_version.into()],
     ))
     .await
@@ -3106,6 +2583,10 @@ async fn tc01_card_submit_rejects_invalid_input_and_non_card_provider() {
         json!({"token":"card-token","paymentMethodId":"visa","installments":0}),
         json!({"token":"card-token","paymentMethodId":"visa","installments":25}),
         json!({"token":"x".repeat(1025),"paymentMethodId":"visa","installments":1}),
+        // SR-PAY-030: card fields are refused in any form, before an attempt exists
+        json!({"token":r#"{"number":"4111111111111111","exp_month":"12","exp_year":"2030","security_code":"123"}"#,
+               "paymentMethodId":"visa","installments":1}),
+        json!({"token":"4111 1111 1111 1111","paymentMethodId":"visa","installments":1}),
     ] {
         let status = request_in(
             app.clone(),
@@ -3132,12 +2613,12 @@ async fn tc01_card_submit_rejects_invalid_input_and_non_card_provider() {
     assert_eq!(attempts, 0);
 
     let double = Router::new()
-        .route("/v1/payments", post(tc01_non_card_charge_response));
+        .route("/charges", post(tc01_non_card_charge_response));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let server = tokio::spawn(async move { axum::serve(listener, double).await.unwrap() });
     unsafe {
-        std::env::set_var("MP_API_BASE_URL", format!("http://{address}"));
+        std::env::set_var("PAGSEGURO_API_BASE_URL", format!("http://{address}"));
     }
     let status = request_in(
         app,
@@ -3189,19 +2670,19 @@ async fn tc04_charge_double(
 ) -> axum::Json<Value> {
     state.requests.lock().unwrap().push(request.clone());
     axum::Json(json!({
-        "id": "987654321",
-        "status": "approved",
-        "transaction_amount": request["transaction_amount"],
-        "currency_id": "BRL",
-        "external_reference": request["external_reference"],
-        "collector_id": 4567,
-        "payment_type_id": "credit_card",
-        "payment_method_id": "visa",
-        "card": {
-            "last_four_digits": "4242",
-            "expiration_month": 12,
-            "expiration_year": 2030,
-            "cardholder": {"name": "Mock Test Card"}
+        "id": "CHAR_TC04_001",
+        "reference_id": request["reference_id"],
+        "status": "PAID",
+        "amount": request["amount"],
+        "payment_method": {
+            "type": "CREDIT_CARD",
+            "card": {
+                "brand": "visa",
+                "last_digits": "4242",
+                "exp_month": 12,
+                "exp_year": 2030,
+                "holder": {"name": "Mock Test Card"}
+            }
         }
     }))
 }
@@ -3213,41 +2694,6 @@ struct Tc05BlockingChargeState {
     authorization: Arc<std::sync::Mutex<Vec<String>>>,
     entered: Arc<tokio::sync::Notify>,
     release: Arc<tokio::sync::Notify>,
-}
-
-async fn tc05_mercado_pago_charge_double(
-    axum::extract::State(state): axum::extract::State<Tc05BlockingChargeState>,
-    headers: HeaderMap,
-    axum::Json(request): axum::Json<Value>,
-) -> axum::Json<Value> {
-    state.requests.lock().unwrap().push(request.clone());
-    state.authorization.lock().unwrap().push(
-        headers
-            .get("authorization")
-            .and_then(|value| value.to_str().ok())
-            .unwrap_or_default()
-            .to_owned(),
-    );
-    state.idempotency_keys.lock().unwrap().push(
-        headers
-            .get("x-idempotency-key")
-            .and_then(|value| value.to_str().ok())
-            .unwrap_or_default()
-            .to_owned(),
-    );
-    state.entered.notify_one();
-    state.release.notified().await;
-    axum::Json(json!({
-        "id": "987650500",
-        "status": "approved",
-        "transaction_amount": request["transaction_amount"],
-        "currency_id": "BRL",
-        "external_reference": request["external_reference"],
-        "collector_id": 4567,
-        "payment_type_id": "credit_card",
-        "payment_method_id": "visa",
-        "card": {"last_four_digits":"4242"}
-    }))
 }
 
 async fn tc05_pagbank_charge_double(
@@ -3312,15 +2758,12 @@ async fn tc07_search_finds_approved_payment(
         .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     let request = state.charge_request.lock().unwrap().clone().unwrap();
     axum::Json(json!({
-        "results": [{
-            "id": "987650700",
-            "status": "approved",
-            "transaction_amount": request["transaction_amount"],
-            "currency_id": "BRL",
-            "external_reference": request["external_reference"],
-            "collector_id": 4567,
-            "payment_type_id": "credit_card",
-            "payment_method_id": "visa"
+        "charges": [{
+            "id": "CHAR_TC07_001",
+            "reference_id": request["reference_id"],
+            "status": "PAID",
+            "amount": request["amount"],
+            "payment_method": {"type": "CREDIT_CARD"}
         }]
     }))
 }
@@ -3329,7 +2772,7 @@ async fn tc07_search_finds_approved_payment(
 #[ignore = "requires isolated PostgreSQL and payment test keyring"]
 async fn tc04_charge_uses_purchase_amount_and_payer_and_skips_zero_total() {
     let _environment_restore =
-        EnvironmentRestore::capture(&["PAYMENT_PROVIDER_MODE", "MP_API_BASE_URL"]);
+        EnvironmentRestore::capture(&["PAYMENT_PROVIDER_MODE", "PAGSEGURO_API_BASE_URL"]);
     unsafe {
         std::env::set_var("PAYMENT_PROVIDER_MODE", "real");
     }
@@ -3337,16 +2780,15 @@ async fn tc04_charge_uses_purchase_amount_and_payer_and_skips_zero_total() {
     let (root, db, schema) = database().await.unwrap();
     Migrator::up(&db, None).await.unwrap();
     fixtures(&db).await.unwrap();
-    let credentials = TenantCredentialsPayload::MercadoPago(MercadoPagoCredentials {
-        access_token: "tc04-tenant-mp-token".into(),
+    let credentials = TenantCredentialsPayload::PagSeguro(PagSeguroCredentials {
+        token: "tc04-tenant-pagbank-token".into(),
         public_key: Some("tc04-tenant-public-key".into()),
-        collector_id: Some(4567),
-        webhook_secret: Some("tc04-tenant-mp-secret".into()),
+        environment: Some("sandbox".into()),
     });
     let (key_version, encrypted) = payment_keys.encrypt_payload(1, &credentials).unwrap();
     db.execute_raw(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "INSERT INTO tenant_payment_settings (tenant_id,provider,credentials,key_version) VALUES (1,'mercado_pago',$1,$2)",
+        "INSERT INTO tenant_payment_settings (tenant_id,provider,credentials,key_version) VALUES (1,'pagseguro',$1,$2)",
         [encrypted.into(), key_version.into()],
     ))
     .await
@@ -3356,7 +2798,7 @@ async fn tc04_charge_uses_purchase_amount_and_payer_and_skips_zero_total() {
     let app = router(app_state);
     let requests = Arc::new(std::sync::Mutex::new(Vec::new()));
     let double = Router::new()
-        .route("/v1/payments", post(tc04_charge_double))
+        .route("/charges", post(tc04_charge_double))
         .with_state(Tc04ChargeDoubleState {
             requests: requests.clone(),
         });
@@ -3364,7 +2806,7 @@ async fn tc04_charge_uses_purchase_amount_and_payer_and_skips_zero_total() {
     let address = listener.local_addr().unwrap();
     let server = tokio::spawn(async move { axum::serve(listener, double).await.unwrap() });
     unsafe {
-        std::env::set_var("MP_API_BASE_URL", format!("http://{address}"));
+        std::env::set_var("PAGSEGURO_API_BASE_URL", format!("http://{address}"));
     }
 
     cart_fixture(&db, Some(1), 1, &[1]).await.unwrap();
@@ -3432,17 +2874,11 @@ async fn tc04_charge_uses_purchase_amount_and_payer_and_skips_zero_total() {
         let captured_requests = requests.lock().unwrap();
         assert_eq!(captured_requests.len(), 1);
         let provider_request = &captured_requests[0];
-        assert_eq!(
-            provider_request["transaction_amount"],
-            payment_amount_cents as f64 / 100.0
-        );
+        assert_eq!(provider_request["amount"]["value"], payment_amount_cents);
         assert_eq!(payment_amount_cents, expected_amount_cents);
-        assert_eq!(provider_request["payer"]["email"], expected_email);
-        assert_eq!(
-            provider_request["payer"]["identification"]["number"],
-            expected_tax_id
-        );
-        assert_eq!(provider_request["installments"], 3);
+        assert_eq!(provider_request["customer"]["email"], expected_email);
+        assert_eq!(provider_request["customer"]["tax_id"], expected_tax_id);
+        assert_eq!(provider_request["payment_method"]["installments"], 3);
     }
 
     db.execute_unprepared(
@@ -3487,20 +2923,15 @@ async fn tc04_charge_uses_purchase_amount_and_payer_and_skips_zero_total() {
 }
 
 #[tokio::test]
-#[ignore = "requires isolated PostgreSQL, payment test keyring and local provider doubles"]
-async fn tc05_persists_attempt_before_provider_and_reuses_it_for_both_providers() {
+#[ignore = "requires isolated PostgreSQL, payment test keyring and local provider double"]
+async fn tc05_persists_attempt_before_provider_and_reuses_it() {
     let _environment_restore = EnvironmentRestore::capture(&[
         "PAYMENT_PROVIDER_MODE",
-        "MP_API_BASE_URL",
-        "MP_ACCESS_TOKEN",
-        "MP_COLLECTOR_ID",
         "PAGSEGURO_API_BASE_URL",
         "PAGSEGURO_TOKEN",
     ]);
     unsafe {
         std::env::set_var("PAYMENT_PROVIDER_MODE", "real");
-        std::env::set_var("MP_ACCESS_TOKEN", "tc05-platform-mp-token");
-        std::env::set_var("MP_COLLECTOR_ID", "9999");
         std::env::set_var("PAGSEGURO_TOKEN", "tc05-platform-pagbank-token");
     }
     let payment_keys = Arc::new(PaymentKeyRing::from_env().unwrap());
@@ -3511,21 +2942,13 @@ async fn tc05_persists_attempt_before_provider_and_reuses_it_for_both_providers(
     app_state.payment_keys = payment_keys.clone();
     let app = router(app_state);
 
-    for provider_name in ["mercado_pago", "pagseguro"] {
-        let credentials = if provider_name == "mercado_pago" {
-            TenantCredentialsPayload::MercadoPago(MercadoPagoCredentials {
-                access_token: "tc05-tenant-mp-token".into(),
-                public_key: Some("tc05-tenant-mp-public".into()),
-                collector_id: Some(4567),
-                webhook_secret: Some("tc05-tenant-mp-secret".into()),
-            })
-        } else {
-            TenantCredentialsPayload::PagSeguro(PagSeguroCredentials {
-                token: "tc05-tenant-pagbank-token".into(),
-                public_key: None,
-                environment: Some("sandbox".into()),
-            })
-        };
+    {
+        let provider_name = "pagseguro";
+        let credentials = TenantCredentialsPayload::PagSeguro(PagSeguroCredentials {
+            token: "tc05-tenant-pagbank-token".into(),
+            public_key: None,
+            environment: Some("sandbox".into()),
+        });
         let (key_version, encrypted) = payment_keys.encrypt_payload(1, &credentials).unwrap();
         db.execute_raw(Statement::from_sql_and_values(
             DbBackend::Postgres,
@@ -3545,24 +2968,14 @@ async fn tc05_persists_attempt_before_provider_and_reuses_it_for_both_providers(
         .unwrap();
         let submit_uri = format!("/purchases/{purchase_id}/payments/submit");
         let charge_state = Tc05BlockingChargeState::default();
-        let double = if provider_name == "mercado_pago" {
-            Router::new()
-                .route("/v1/payments", post(tc05_mercado_pago_charge_double))
-                .with_state(charge_state.clone())
-        } else {
-            Router::new()
-                .route("/charges", post(tc05_pagbank_charge_double))
-                .with_state(charge_state.clone())
-        };
+        let double = Router::new()
+            .route("/charges", post(tc05_pagbank_charge_double))
+            .with_state(charge_state.clone());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let server = tokio::spawn(async move { axum::serve(listener, double).await.unwrap() });
         unsafe {
-            if provider_name == "mercado_pago" {
-                std::env::set_var("MP_API_BASE_URL", format!("http://{address}"));
-            } else {
-                std::env::set_var("PAGSEGURO_API_BASE_URL", format!("http://{address}"));
-            }
+            std::env::set_var("PAGSEGURO_API_BASE_URL", format!("http://{address}"));
         }
 
         let first_app = app.clone();
@@ -3601,14 +3014,9 @@ async fn tc05_persists_attempt_before_provider_and_reuses_it_for_both_providers(
         assert!(!attempt_key.is_empty());
         assert_eq!(transaction_key, attempt_key);
         assert_eq!(charge_state.requests.lock().unwrap().len(), 1);
-        let expected_token = if provider_name == "mercado_pago" {
-            "tc05-tenant-mp-token"
-        } else {
-            "tc05-tenant-pagbank-token"
-        };
         assert_eq!(
             charge_state.authorization.lock().unwrap().as_slice(),
-            &[format!("Bearer {expected_token}")]
+            &["Bearer tc05-tenant-pagbank-token".to_owned()]
         );
         assert_eq!(
             charge_state.idempotency_keys.lock().unwrap().as_slice(),
@@ -3673,7 +3081,8 @@ async fn tc06_maps_provider_results_and_rolls_back_atomic_failure() {
     fixtures(&db).await.unwrap();
     let app = router(state(db.clone()));
 
-    for provider_name in ["mercado_pago", "pagseguro"] {
+    {
+        let provider_name = "pagseguro";
         unsafe {
             std::env::set_var("PAYMENT_MOCK_PROVIDER", provider_name);
         }
@@ -3824,7 +3233,7 @@ async fn tc06_maps_provider_results_and_rolls_back_atomic_failure() {
     }
 
     unsafe {
-        std::env::set_var("PAYMENT_MOCK_PROVIDER", "mercado_pago");
+        std::env::set_var("PAYMENT_MOCK_PROVIDER", "pagseguro");
     }
     cart_fixture(&db, Some(1), 1, &[1]).await.unwrap();
     let rollback_purchase_id = create_purchase_from_quote(app.clone(), "tc06-rollback", &[1])
@@ -3966,7 +3375,7 @@ async fn tc06_maps_provider_results_and_rolls_back_atomic_failure() {
 #[ignore = "requires isolated PostgreSQL, payment test keyring, and local timeout double"]
 async fn tc07_provider_timeout_keeps_attempt_pending_then_reconciles() {
     let _environment_restore =
-        EnvironmentRestore::capture(&["PAYMENT_PROVIDER_MODE", "MP_API_BASE_URL"]);
+        EnvironmentRestore::capture(&["PAYMENT_PROVIDER_MODE", "PAGSEGURO_API_BASE_URL"]);
     unsafe {
         std::env::set_var("PAYMENT_PROVIDER_MODE", "real");
     }
@@ -3974,16 +3383,15 @@ async fn tc07_provider_timeout_keeps_attempt_pending_then_reconciles() {
     let (root, db, schema) = database().await.unwrap();
     Migrator::up(&db, None).await.unwrap();
     fixtures(&db).await.unwrap();
-    let credentials = TenantCredentialsPayload::MercadoPago(MercadoPagoCredentials {
-        access_token: "tc07-tenant-mp-token".into(),
+    let credentials = TenantCredentialsPayload::PagSeguro(PagSeguroCredentials {
+        token: "tc07-tenant-pagbank-token".into(),
         public_key: Some("tc07-tenant-public-key".into()),
-        collector_id: Some(4567),
-        webhook_secret: Some("tc07-tenant-mp-secret".into()),
+        environment: Some("sandbox".into()),
     });
     let (key_version, encrypted) = payment_keys.encrypt_payload(1, &credentials).unwrap();
     db.execute_raw(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "INSERT INTO tenant_payment_settings (tenant_id,provider,credentials,key_version) VALUES (1,'mercado_pago',$1,$2)",
+        "INSERT INTO tenant_payment_settings (tenant_id,provider,credentials,key_version) VALUES (1,'pagseguro',$1,$2)",
         [encrypted.into(), key_version.into()],
     ))
     .await
@@ -3993,14 +3401,16 @@ async fn tc07_provider_timeout_keeps_attempt_pending_then_reconciles() {
     let app = router(app_state);
     let double_state = Tc07TimeoutDoubleState::default();
     let double = Router::new()
-        .route("/v1/payments", post(tc07_charge_never_responds))
-        .route("/v1/payments/search", get(tc07_search_finds_approved_payment))
+        .route(
+            "/charges",
+            post(tc07_charge_never_responds).get(tc07_search_finds_approved_payment),
+        )
         .with_state(double_state.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let server = tokio::spawn(async move { axum::serve(listener, double).await.unwrap() });
     unsafe {
-        std::env::set_var("MP_API_BASE_URL", format!("http://{address}"));
+        std::env::set_var("PAGSEGURO_API_BASE_URL", format!("http://{address}"));
     }
 
     cart_fixture(&db, Some(1), 1, &[1]).await.unwrap();
@@ -4115,7 +3525,7 @@ async fn tc03_persists_only_accepted_card_metadata() {
     ]);
     unsafe {
         std::env::set_var("PAYMENT_PROVIDER_MODE", "mock");
-        std::env::set_var("PAYMENT_MOCK_PROVIDER", "mercado_pago");
+        std::env::set_var("PAYMENT_MOCK_PROVIDER", "pagseguro");
     }
     let (root, db, schema) = database().await.unwrap();
     Migrator::up(&db, None).await.unwrap();
@@ -4174,183 +3584,6 @@ async fn tc03_persists_only_accepted_card_metadata() {
         .unwrap();
     assert_eq!(forbidden_columns, 0);
 
-    cleanup(root, db, schema).await.unwrap();
-}
-
-#[tokio::test]
-#[ignore = "requires isolated PostgreSQL, payment test keyring, and local Mercado Pago double"]
-async fn tc08_mercado_pago_webhook_checks_signature_replay_and_provider_data() {
-    const TENANT_TOKEN: &str = "tc08-tenant-mp-token";
-    const TENANT_SECRET: &str = "tc08-tenant-mp-secret";
-    const PLATFORM_SECRET: &str = "tc08-platform-mp-secret";
-    const PAYMENT_ID: &str = "987650008";
-    const REQUEST_ID: &str = "tc08-request-id";
-    const TIMESTAMP: &str = "1727280000";
-
-    let _environment_restore = EnvironmentRestore::capture(&[
-        "PAYMENT_PROVIDER_MODE",
-        "PAYMENT_MOCK_PROVIDER",
-        "MP_API_BASE_URL",
-        "MP_WEBHOOK_SECRET",
-    ]);
-    unsafe {
-        std::env::set_var("PAYMENT_PROVIDER_MODE", "mock");
-        std::env::set_var("PAYMENT_MOCK_PROVIDER", "mercado_pago");
-    }
-    let payment_keys = Arc::new(PaymentKeyRing::from_env().unwrap());
-    let (root, db, schema) = database().await.unwrap();
-    Migrator::up(&db, None).await.unwrap();
-    fixtures(&db).await.unwrap();
-    let credentials = TenantCredentialsPayload::MercadoPago(MercadoPagoCredentials {
-        access_token: TENANT_TOKEN.into(),
-        public_key: Some("tc08-tenant-public-key".into()),
-        collector_id: Some(4567),
-        webhook_secret: Some(TENANT_SECRET.into()),
-    });
-    let (key_version, encrypted) = payment_keys.encrypt_payload(1, &credentials).unwrap();
-    db.execute_raw(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        "INSERT INTO tenant_payment_settings (tenant_id,provider,credentials,key_version) VALUES (1,'mercado_pago',$1,$2)",
-        [encrypted.into(), key_version.into()],
-    ))
-    .await
-    .unwrap();
-    let mut app_state = state(db.clone());
-    app_state.payment_keys = payment_keys;
-    let app = router(app_state);
-    cart_fixture(&db, Some(1), 1, &[1]).await.unwrap();
-    let purchase_id = create_purchase_from_quote(app.clone(), "tc08-webhook", &[1])
-        .await
-        .unwrap();
-    let (submit_status, submitted) = request(
-        app.clone(),
-        Method::POST,
-        &format!("/purchases/{purchase_id}/payments/submit"),
-        Some(json!({"token":"mock:pending","paymentMethodId":"visa","installments":1})),
-        None,
-    )
-    .await
-    .unwrap();
-    assert_eq!(submit_status, StatusCode::OK, "{submitted}");
-    let payment = db
-        .query_one_raw(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            "SELECT id,amount_cents,attempt_key FROM payment WHERE purchase_id=$1",
-            [purchase_id.into()],
-        ))
-        .await
-        .unwrap()
-        .unwrap();
-    let payment_id: i64 = payment.try_get("", "id").unwrap();
-    let amount_cents: i64 = payment.try_get("", "amount_cents").unwrap();
-    let attempt_key: String = payment.try_get("", "attempt_key").unwrap();
-    let external_reference = format!("torg-{purchase_id}-{attempt_key}");
-    db.execute_raw(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        "UPDATE payment SET gateway_provider='mercado_pago',gateway_reference=$1 WHERE id=$2",
-        [PAYMENT_ID.into(), payment_id.into()],
-    ))
-    .await
-    .unwrap();
-
-    let authorization = Arc::new(std::sync::Mutex::new(Vec::new()));
-    let provider_response = Arc::new(std::sync::Mutex::new(json!({
-        "status":"in_process",
-        "transaction_amount":amount_cents as f64 / 100.0,
-        "currency_id":"BRL",
-        "external_reference":external_reference,
-        "collector_id":4567,
-        "payment_type_id":"credit_card",
-        "payment_method_id":"visa"
-    })));
-    let double = Router::new()
-        .route("/v1/payments/{id}", get(tc08_mercado_pago_status_double))
-        .with_state(Tc08MercadoPagoDoubleState {
-            authorization: authorization.clone(),
-            response: provider_response.clone(),
-        });
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let address = listener.local_addr().unwrap();
-    let server = tokio::spawn(async move { axum::serve(listener, double).await.unwrap() });
-    unsafe {
-        std::env::set_var("MP_API_BASE_URL", format!("http://{address}"));
-        std::env::set_var("MP_WEBHOOK_SECRET", PLATFORM_SECRET);
-    }
-
-    let body = format!(r#"{{"data":{{"id":"{PAYMENT_ID}"}}}}"#);
-    let valid_signature = mercado_pago_signature(TENANT_SECRET, TIMESTAMP, REQUEST_ID, PAYMENT_ID);
-    let invalid_requests = [
-        (
-            Some(REQUEST_ID),
-            mercado_pago_signature(TENANT_SECRET, TIMESTAMP, REQUEST_ID, "987650000"),
-        ),
-        (
-            Some(REQUEST_ID),
-            valid_signature.replace(TIMESTAMP, "1727280001"),
-        ),
-        (Some(REQUEST_ID), "malformed-signature".to_owned()),
-        (None, valid_signature.clone()),
-    ];
-    for (request_id, signature) in invalid_requests {
-        let response = mercado_pago_webhook_request_with_optional_id(
-            app.clone(),
-            body.as_bytes(),
-            request_id,
-            &signature,
-        )
-        .await
-        .unwrap();
-        assert_eq!(response, StatusCode::UNAUTHORIZED);
-    }
-    assert!(authorization.lock().unwrap().is_empty());
-
-    // The signed timestamp is from 2024; replay remains accepted because there is no freshness check.
-    for _ in 0..2 {
-        assert_eq!(
-            mercado_pago_webhook_request(
-                app.clone(),
-                body.as_bytes(),
-                REQUEST_ID,
-                &valid_signature,
-            )
-            .await
-            .unwrap(),
-            StatusCode::OK
-        );
-    }
-    assert_eq!(authorization.lock().unwrap().len(), 2);
-
-    for (field, mismatch) in [
-        ("external_reference", json!("different-purchase")),
-        ("transaction_amount", json!(amount_cents as f64 / 100.0 + 1.0)),
-        ("currency_id", json!("USD")),
-        ("collector_id", json!(9999)),
-    ] {
-        provider_response.lock().unwrap()[field] = mismatch;
-        let response = mercado_pago_webhook_request(
-            app.clone(),
-            body.as_bytes(),
-            REQUEST_ID,
-            &valid_signature,
-        )
-        .await
-        .unwrap();
-        assert_eq!(response, StatusCode::BAD_GATEWAY, "mismatch {field}");
-        let current_status: String = db
-            .query_one_raw(Statement::from_sql_and_values(
-                DbBackend::Postgres,
-                "SELECT status FROM payment WHERE id=$1",
-                [payment_id.into()],
-            ))
-            .await
-            .unwrap()
-            .unwrap()
-            .try_get("", "status")
-            .unwrap();
-        assert_eq!(current_status, "pending");
-    }
-
-    server.abort();
     cleanup(root, db, schema).await.unwrap();
 }
 
@@ -4967,7 +4200,7 @@ async fn reconciliation_covers_pending_authorized_backoff_locking_and_cancellati
     let attempt_key: String = payment_row.try_get("", "attempt_key").unwrap();
     let payment_amount_cents: i64 = payment_row.try_get("", "amount_cents").unwrap();
     let captured_reference = format!(
-        "mock:mercado_pago:captured:{payment_amount_cents}:BRL:torg-{purchase_id}-{attempt_key}"
+        "mock:pagseguro:captured:{payment_amount_cents}:BRL:torg-{purchase_id}-{attempt_key}"
     );
     db.execute_raw(Statement::from_sql_and_values(
         DbBackend::Postgres,

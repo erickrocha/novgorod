@@ -111,11 +111,12 @@ export const CartPage: React.FC = () => {
           message: `Frete calculado: ${result.quote.service} - R$ ${result.quote.cost.toFixed(2)}`,
         })
       );
-    } catch {
+    } catch (error) {
+      // unwrap() rejects with the thunk's rejectWithValue payload: the backend message
       dispatch(
         addToast({
           type: 'error',
-          message: 'Falha ao calcular frete para este CEP.',
+          message: typeof error === 'string' ? error : 'Falha ao calcular frete para este CEP.',
         })
       );
     }
@@ -173,7 +174,7 @@ export const CartPage: React.FC = () => {
         <div className="lg:col-span-8 bg-white rounded-3xl border border-slate-200/80 shadow-xs overflow-hidden">
           <div className="p-6 divide-y divide-slate-100">
             {groups.map(group => <section key={group.key}>
-              <CartTenantHeading {...group} />
+              <CartTenantHeading name={group.name} subtotal={group.subtotal} unresolved={group.unresolved} items={group.items} />
               {group.items.map((item) => (
               <div key={item.id} className="py-5 first:pt-0 last:pb-0 flex flex-col sm:flex-row gap-5 items-center">
                 <img
