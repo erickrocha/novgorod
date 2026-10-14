@@ -245,7 +245,7 @@ async fn live_sandbox_pagseguro_charge_and_status() {
     })
     .to_string();
 
-    let attempt_uuid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
+    let attempt_uuid = uuid::Uuid::new_v4().to_string();
     let external_ref = format!("torg-999-{attempt_uuid}");
 
     let result = provider
@@ -253,7 +253,7 @@ async fn live_sandbox_pagseguro_charge_and_status() {
             payment_id: 999,
             amount_cents: 2500,
             currency: "BRL".into(),
-            idempotency_key: format!("live-idemp-{}", &attempt_uuid[..8]),
+            idempotency_key: format!("live-idemp-{attempt_uuid}"),
             provider_token: card_json,
             external_reference: external_ref.clone(),
             payer_email: "erick.teste@novgorod.com".into(),
@@ -279,4 +279,3 @@ async fn live_sandbox_pagseguro_charge_and_status() {
     assert_eq!(fetched.status, ProviderStatus::Captured);
     assert_eq!(fetched.reference, result.reference);
 }
-

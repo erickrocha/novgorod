@@ -29,10 +29,24 @@ services:
     # The Postgres tests are #[ignore]d and refuse any database whose name does not end in _test.
     environment:
       - KREMLIN_TEST_DATABASE_URL=postgres://${TEST_DATABASE_USER:-novgorod_test}:${TEST_DATABASE_PASSWORD:-novgorod_test}@postgres:5432/${TEST_DATABASE_NAME:-novgorod_test}
+      - PAGSEGURO_TOKEN=${PAGSEGURO_TOKEN:-}
+      - MP_SANDBOX_ACCESS_TOKEN=${MP_SANDBOX_ACCESS_TOKEN:-}
+      - MP_SANDBOX_PUBLIC_KEY=${MP_SANDBOX_PUBLIC_KEY:-}
+      - MP_SANDBOX_COLLECTOR_ID=${MP_SANDBOX_COLLECTOR_ID:-}
+      - MP_SANDBOX_BUYER_EMAIL=${MP_SANDBOX_BUYER_EMAIL:-}
+      - MP_SANDBOX_TEST_CARDS_FILE=/test-cards.yaml
+      - PAYMENT_PROVIDER_MODE=mock
+      - PAYMENT_MOCK_ALLOWED=true
+      - PAYMENT_MOCK_PROVIDER=mercado_pago
+      - 'PAYMENT_ENCRYPTION_KEYS={"test-payment-v1":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}'
+      - PAYMENT_ACTIVE_KEY_VERSION=test-payment-v1
+      - 'SHIPPING_ENCRYPTION_KEYS={"test-shipping-v1":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}'
+      - SHIPPING_ACTIVE_KEY_VERSION=test-shipping-v1
       - CARGO_TARGET_DIR=/cargo-target
     volumes:
       - ../../kremlin:/work/kremlin
       - ../../data:/work/data:ro # a kremlin unit test reads data/wines/wine_catalog.csv
+      - ./cards.yaml:/test-cards.yaml:ro
       - cargo_registry:/usr/local/cargo/registry
       - cargo_target:/cargo-target
     networks:
@@ -85,8 +99,7 @@ services:
       - SHIPPING_ACTIVE_KEY_VERSION=test-only-v1
       - STOCK_EXPIRY_JOB_ENABLED=${TEST_STOCK_EXPIRY_JOB_ENABLED:-true}
       - CARGO_TARGET_DIR=/cargo-target
-      # No SQS_QUEUE_URL (consumer off), no AWS_* (storage only touches S3 for images), no encryption keys
-      # (shipping/payment credentials are not used; the tenants use fixed shipping, see seed.py).
+      # No SQS_QUEUE_URL (consumer off), no AWS_* (storage only touches S3 for images); test key rings only.
     volumes:
       - ../../kremlin:/work/kremlin
       - ../../data:/work/data:ro

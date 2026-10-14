@@ -73,6 +73,30 @@ impl MercadoPago {
         Self::normalized_response(response)
     }
 
+    fn error_codes(body: &str) -> String {
+        serde_json::from_str::<serde_json::Value>(body)
+            .ok()
+            .and_then(|value| value.get("cause").and_then(|cause| cause.as_array().cloned()))
+            .map(|causes| {
+                causes
+                    .iter()
+                    .filter_map(|cause| cause.get("code"))
+                    .filter_map(|code| match code {
+                        serde_json::Value::String(code) => Some(code.clone()),
+                        serde_json::Value::Number(code) => Some(code.to_string()),
+                        _ => None,
+                    })
+                    .filter(|code| {
+                        !code.is_empty()
+                            && code.len() <= 24
+                            && code.bytes().all(|byte| byte.is_ascii_alphanumeric())
+                    })
+                    .collect::<Vec<_>>()
+                    .join(",")
+            })
+            .unwrap_or_default()
+    }
+
     pub async fn search(&self, external_reference: &str) -> Result<Option<ProviderResult>, ProviderError> {
         let response = self.client.get(format!("{}/v1/payments/search", self.base_url))
             .bearer_auth(&self.access_token).query(&[("external_reference", external_reference)])
@@ -102,7 +126,14 @@ impl PaymentProviderGateway for MercadoPago {
         let response = self.client.post(format!("{}/v1/payments", self.base_url))
             .bearer_auth(&self.access_token).header("X-Idempotency-Key", request.idempotency_key)
             .json(&body).send().await.map_err(|e| ProviderError(e.to_string()))?;
-        if !response.status().is_success() { return Err(ProviderError(format!("provider charge returned {}", response.status()))); }
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(ProviderError(format!(
+                "provider charge returned {status} codes [{}]",
+                Self::error_codes(&body)
+            )));
+        }
         let body = response.json().await.map_err(|e| ProviderError(e.to_string()))?;
         self.normalized(body)
     }

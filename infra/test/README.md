@@ -3,7 +3,9 @@
 Disposable PostgreSQL plus a Rust container that runs the kremlin tests. Same Postgres image as `../dev`, but nothing persists (tmpfs) and it listens on port 5433, so it never touches the dev database.
 
 ```
-./run.sh                      # cargo test --workspace -- --include-ignored
+./run.sh                      # full suite; excludes live PagSeguro Sandbox transaction
+./run.sh pagseguro             # live PagSeguro Sandbox charge + status check
+./run.sh mercadopago           # live Mercado Pago Sandbox charge + status check
 ./run.sh clippy               # cargo clippy --workspace --all-targets
 ./run.sh cargo test -p business --test cart_cleanup_postgres -- --ignored --nocapture
 ```
@@ -12,6 +14,9 @@ Requires Docker with the compose plugin. The first run downloads the images and 
 
 - The Postgres tests are `#[ignore]d`, read `KREMLIN_TEST_DATABASE_URL`, and refuse a database whose name does not end in `_test`. The compose file sets both. Each test creates its own schema and runs the migrations in it.
 - Credentials are throwaway defaults for a local, non-persistent database. Override with `TEST_DATABASE_NAME`, `TEST_DATABASE_USER`, `TEST_DATABASE_PASSWORD`, `TEST_DATABASE_PORT`.
+- `infra/test/.env` is loaded by Compose when `run.sh` starts from this directory. `PAGSEGURO_TOKEN` is passed only to `kremlin-tests`; `./run.sh pagseguro` explicitly runs a sandbox charge and status lookup. The default suite skips that networked, transaction-creating test.
+- `MP_SANDBOX_ACCESS_TOKEN`, `MP_SANDBOX_PUBLIC_KEY`, `MP_SANDBOX_COLLECTOR_ID` and `MP_SANDBOX_BUYER_EMAIL` are passed only to `kremlin-tests`; the buyer email must belong to a Mercado Pago test-buyer account in the same country as the seller. `./run.sh mercadopago` loads the Visa test-card details from the ignored `cards.yaml` and validates APRO (approved), OTHE (rejected) and CONT (pending), including status lookup. The default suite skips these networked Sandbox payments.
+- The default suite runs tests serially because several tests alter process-wide environment variables.
 - The source is mounted from `../../kremlin`; build output goes to the `cargo_target` volume, not into the repo.
 
 ## HTTP kit (NOV-3 T-CHK-01..03)
@@ -33,7 +38,7 @@ docker compose up -d --build --wait kremlin mpd   # app on :8080, Mercado Pago d
 docker compose down -v                             # always tear down; the database is gone with it
 ```
 
-Stack (`docker-compose.yml`): `kremlin` runs `cargo run -p application --bin kremlin` (migrations and the SysAdmin seed happen at boot; healthy when the port answers; the first start compiles for a few minutes, `down -v` also drops the cargo cache volumes), `mpd` is `mpd.py` in `python:3-alpine`. Every env var the app needs is set in the compose file with a made-up local-only value (JWT secrets, SysAdmin password, `MP_*`, `GATEWAY_TOKEN`); override with `TEST_ACCESS_TOKEN_SECRET`, `TEST_REFRESH_TOKEN_SECRET`, `TEST_SYSADMIN_PASSWORD`, `TEST_MP_WEBHOOK_SECRET`, `TEST_GATEWAY_TOKEN`, `TEST_KREMLIN_PORT`, `TEST_MPD_PORT`, `TEST_KREMLIN_LOG`, `TEST_STOCK_EXPIRY_JOB_ENABLED`. No `.env` file is read. SQS, S3 and the shipping/payment encryption keys are not configured (the consumer is off, tenants use fixed shipping, the provider comes from the `MP_*` variables).
+Stack (`docker-compose.yml`): `kremlin` runs `cargo run -p application --bin kremlin` (migrations and the SysAdmin seed happen at boot; healthy when the port answers; the first start compiles for a few minutes, `down -v` also drops the cargo cache volumes), `mpd` is `mpd.py` in `python:3-alpine`. Every env var the app needs is set in the compose file with a made-up local-only value (JWT secrets, SysAdmin password, `MP_*`, `GATEWAY_TOKEN`); override with `TEST_ACCESS_TOKEN_SECRET`, `TEST_REFRESH_TOKEN_SECRET`, `TEST_SYSADMIN_PASSWORD`, `TEST_MP_WEBHOOK_SECRET`, `TEST_GATEWAY_TOKEN`, `TEST_KREMLIN_PORT`, `TEST_MPD_PORT`, `TEST_KREMLIN_LOG`, `TEST_STOCK_EXPIRY_JOB_ENABLED`. Compose loads `.env` for interpolation; only explicitly referenced values are passed to containers. SQS and S3 are not configured for the HTTP app (the consumer is off, storage touches S3 only for images); it uses a fake shipping key ring and tenant payment settings. The test runner uses local-only payment/shipping key rings and mock payment mode.
 
 ### Fixtures (`kit.py seed`, test-cases.md environment E1)
 

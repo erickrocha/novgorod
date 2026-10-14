@@ -1,2 +1,5 @@
 .kit-fixtures.json
 __pycache__/
+
+.cards.yaml
+cards.yaml

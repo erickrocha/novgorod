@@ -1027,6 +1027,12 @@ async fn checkout_payment_http_enforces_ownership_and_mock_lifecycle() {
 #[ignore = "requires isolated PostgreSQL, PagBank test keyring, and PAYMENT_PROVIDER_MODE=mock"]
 async fn pagseguro_webhook_authenticates_then_refreshes_through_mock_provider() {
     const TOKEN: &str = "pagbank-account-token-for-tests-only";
+    let _environment_restore =
+        EnvironmentRestore::capture(&["PAYMENT_PROVIDER_MODE", "PAYMENT_MOCK_PROVIDER"]);
+    unsafe {
+        std::env::set_var("PAYMENT_PROVIDER_MODE", "mock");
+        std::env::set_var("PAYMENT_MOCK_PROVIDER", "pagseguro");
+    }
     assert_eq!(
         std::env::var("PAYMENT_PROVIDER_MODE").as_deref().ok(),
         Some("mock")

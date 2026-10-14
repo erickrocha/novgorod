@@ -42,14 +42,20 @@ A integração com o **PagSeguro (PagBank)** e o sistema de seleção de gateway
 
 ## 1. Testes Automatizados (Rápido)
 
-Para validar a integridade de todo o código sem necessidade de serviços externos ou navegadores:
+Para validar o backend e as integrações de pagamento:
 
 ### 1.1 Backend (`kremlin`)
 ```bash
-cd kremlin
-cargo test -p application --test pagseguro_tests --test payment_credentials_test --test payment_settings_endpoint_test
+cd infra/test
+./run.sh
 ```
-> **Esperado**: Todos os testes unitários do gateway PagSeguro, do chaveiro AES-256-GCM e dos endpoints de configuração de pagamento aprovados com sucesso.
+> **Esperado**: Suíte completa aprovada no banco descartável, usando mocks e chaves locais de teste. O teste que cria uma cobrança Sandbox fica fora da suíte padrão.
+
+Para executar explicitamente a cobrança real de teste e consultar seu status no PagSeguro Sandbox:
+```bash
+./run.sh pagseguro
+```
+> Requer `PAGSEGURO_TOKEN` Sandbox em `infra/test/.env`. O teste cria uma transação no Sandbox; nunca use credenciais de produção.
 
 ### 1.2 Storefront (`torg`)
 ```bash

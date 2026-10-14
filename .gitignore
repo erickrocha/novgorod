@@ -2,3 +2,4 @@
 __pycache__/
 *.pyc
 infra/dev/.env
+infra/test/.env
