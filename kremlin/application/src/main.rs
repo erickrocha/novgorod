@@ -53,6 +53,7 @@ impl Modify for SecurityAddon {
     paths(
         endpoints::checkout_quote_endpoint::quote,
         endpoints::checkout_quote_endpoint::select_shipping,
+        endpoints::checkout_quote_endpoint::estimate,
         endpoints::shipping_settings_endpoint::get,
         endpoints::shipping_settings_endpoint::put,
         endpoints::payment_settings_endpoint::get,

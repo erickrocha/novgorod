@@ -99,3 +99,16 @@ fn options_are_deterministic() {
         ["D", "A", "B", "C"]
     );
 }
+
+#[test]
+fn uf_from_cep_maps_prefix_ranges() {
+    for (cep, uf) in [
+        ("01001000", "SP"), ("20040020", "RJ"), ("30140071", "MG"), ("40020000", "BA"),
+        ("70040900", "DF"), ("73000000", "DF"), ("74000000", "GO"), ("69300000", "RR"),
+        ("69400000", "AM"), ("78900000", "RO"), ("90010000", "RS"), ("99999999", "RS"),
+    ] {
+        assert_eq!(uf_from_cep(cep), Some(uf), "{cep}");
+    }
+    assert_eq!(uf_from_cep("00500000"), None);
+    assert_eq!(uf_from_cep("123"), None);
+}

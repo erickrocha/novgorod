@@ -1,5 +1,5 @@
 import apiClient from '../api/client';
-import type { CartItem, CartSummary } from '../types';
+import type { CartItem, CartSummary, ShippingQuote } from '../types';
 
 export const cartService = {
   /**
@@ -15,23 +15,25 @@ export const cartService = {
   },
 
   /**
-   * Calculate shipping quote based on postal code
+   * Approximate shipping for an anonymous visitor: cheapest option of each seller, summed.
+   * The delivery time is the slowest seller's. The authenticated checkout recalculates it.
    */
-  async estimateShipping(cep: string, totalWeightKg = 1): Promise<{ cost: number; deliveryDays: number; service: string }> {
-    try {
-      const response = await apiClient.post('/shipping/calculate', { cep, weight: totalWeightKg });
-      return response.data;
-    } catch {
-      // Mock calculation based on CEP
-      const cleanCep = cep.replace(/\D/g, '');
-      const isExpress = cleanCep.endsWith('0') || cleanCep.endsWith('5');
-      return {
-        cost: isExpress ? 35.00 : 22.50,
-        deliveryDays: isExpress ? 2 : 5,
-        service: isExpress ? 'Novgorod Express' : 'Entrega Padrão',
-      };
+  async estimateShipping(cep: string, items: Array<{ skuId: number; quantity: number }>): Promise<ShippingQuote> {
+    const { data } = await apiClient.post<{
+      sellers: Array<{ tenantId: number; options: Array<{ serviceName: string; priceCents: number; transitDays: number | null }> }>;
+    }>('/api/public/shipping/estimate', { cep, items });
+    const cheapest = data.sellers.map(seller =>
+      [...seller.options].sort((a, b) => a.priceCents - b.priceCents || (a.transitDays ?? Infinity) - (b.transitDays ?? Infinity))[0]);
+    if (cheapest.length === 0 || cheapest.some(option => !option)) {
+      throw new Error('Frete indisponível para este CEP');
     }
-  }
+    const days = cheapest.map(option => option.transitDays).filter((d): d is number => d !== null);
+    return {
+      cost: cheapest.reduce((sum, option) => sum + option.priceCents, 0) / 100,
+      deliveryDays: days.length ? Math.max(...days) : null,
+      service: cheapest.length === 1 ? cheapest[0].serviceName : `${cheapest.length} vendedores`,
+    };
+  },
 };
 
 export default cartService;

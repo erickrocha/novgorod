@@ -104,7 +104,7 @@ export const CartPage: React.FC = () => {
 
   const onCalculateShipping = async (data: ShippingFormData) => {
     try {
-      const result = await dispatch(estimateShipping(data.cep)).unwrap();
+      const result = await dispatch(estimateShipping({ cep: data.cep, items })).unwrap();
       dispatch(
         addToast({
           type: 'info',
@@ -336,7 +336,7 @@ export const CartPage: React.FC = () => {
               {shippingDetails && (
                 <p className="text-xs text-slate-600 mt-1 flex items-center gap-1">
                   <Truck className="w-3.5 h-3.5 text-amber-600" />
-                  <span>{shippingDetails.service} (em até {shippingDetails.deliveryDays} dias)</span>
+                  <span>{shippingDetails.service}{shippingDetails.deliveryDays !== null && ` (em até ${shippingDetails.deliveryDays} dias)`}</span>
                 </p>
               )}
             </form>

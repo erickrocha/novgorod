@@ -19,7 +19,7 @@ export interface Coupon {
 
 export interface ShippingQuote {
   cost: number;
-  deliveryDays: number;
+  deliveryDays: number | null;
   service: string;
 }
 

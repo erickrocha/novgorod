@@ -35,6 +35,35 @@ pub struct QuoteRequest {
     pub coupons: Vec<SellerCoupon>,
 }
 
+/// Anonymous cart estimate (NOV-35): items and a destination CEP only.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ShippingEstimateRequest {
+    pub items: Vec<PurchaseItemInput>,
+    pub cep: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EstimateOption {
+    pub service_name: String,
+    pub price_cents: i64,
+    pub transit_days: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SellerEstimate {
+    pub tenant_id: i64,
+    pub options: Vec<EstimateOption>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ShippingEstimate {
+    pub sellers: Vec<SellerEstimate>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct QuoteItem {
@@ -323,6 +352,60 @@ impl CheckoutQuoteUseCase {
         quote.id = record.id;
         quote.expires_at = record.expires_at;
         Ok(quote)
+    }
+
+    /// Read-only estimate for an anonymous buyer: runs the quote calculation for the given CEP
+    /// with a placeholder address (only the CEP and its UF are used by the shipping policies) and
+    /// persists nothing. The authenticated checkout recalculates the exact quote.
+    pub async fn estimate(
+        &self,
+        request: ShippingEstimateRequest,
+        tenant_id: Option<i64>,
+    ) -> Result<ShippingEstimate, PurchaseError> {
+        let cep = normalize_cep(&request.cep)?;
+        let uf = uf_from_cep(&cep).ok_or(PurchaseError::Validation("invalid CEP"))?;
+        let quote_request = QuoteRequest {
+            items: request.items,
+            address_id: None,
+            shipping_address: Some(AddressInput {
+                recipient: "-".into(),
+                address_line1: "-".into(),
+                address_line2: None,
+                locality: "-".into(),
+                administrative_area: uf.into(),
+                postal_code: cep,
+                country_code: "BR".into(),
+            }),
+            coupons: Vec::new(),
+        };
+        // customer id 0: it is only read for saved addresses and coupons, neither used here.
+        let quote =
+            Self::calculate_inner(&self.db, 0, &quote_request, self.provider.as_deref(), None)
+                .await?;
+        if let Some(tenant_id) = tenant_id
+            && quote.items.iter().any(|item| item.tenant_id != tenant_id)
+        {
+            return Err(PurchaseError::Validation("item of another tenant"));
+        }
+        let sellers = quote
+            .sellers
+            .into_iter()
+            .map(|seller| SellerEstimate {
+                tenant_id: seller.tenant_id,
+                options: seller
+                    .shipping
+                    .map(|s| s.options)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|o| EstimateOption {
+                        service_name: o.service_name,
+                        price_cents: o.price_cents,
+                        transit_days: o.transit_days,
+                    })
+                    .collect(),
+            })
+            .collect();
+        Ok(ShippingEstimate { sellers })
     }
 
     pub async fn load<C: ConnectionTrait>(

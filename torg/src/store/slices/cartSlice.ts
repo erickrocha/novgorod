@@ -67,9 +67,16 @@ export const validateAndApplyCoupon = createAsyncThunk(
 
 export const estimateShipping = createAsyncThunk(
   'cart/estimateShipping',
-  async (cep: string, { rejectWithValue }) => {
+  async ({ cep, items }: { cep: string; items: CartItem[] }, { rejectWithValue }) => {
     try {
-      const quote = await cartService.estimateShipping(cep.trim());
+      // The variant id is the SKU id; a product without a variant has a single SKU.
+      const lines = await Promise.all(items.map(async item => {
+        if (item.variant) return { skuId: Number(item.variant.id), quantity: item.quantity };
+        const skus = (await catalogService.getProductBySlug(item.product.slug))?.skus ?? [];
+        if (skus.length !== 1) throw new Error('Escolha a variação do produto para calcular o frete');
+        return { skuId: skus[0].id, quantity: item.quantity };
+      }));
+      const quote = await cartService.estimateShipping(cep.trim(), lines);
       return { quote, cep: cep.trim() };
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Falha ao calcular frete para este CEP';

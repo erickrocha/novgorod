@@ -78,6 +78,22 @@ pub fn normalize_cep(value: &str) -> Result<String, PurchaseError> {
     }
     Ok(digits)
 }
+/// UF of a normalized (eight digits) CEP, from the Correios CEP-prefix ranges. Used where the
+/// buyer gave only a CEP (cart estimate); `None` for a CEP outside every range.
+pub fn uf_from_cep(cep: &str) -> Option<&'static str> {
+    let n: u32 = cep.get(..5)?.parse().ok()?;
+    const RANGES: &[(u32, u32, &str)] = &[
+        (1000, 19999, "SP"), (20000, 28999, "RJ"), (29000, 29999, "ES"), (30000, 39999, "MG"),
+        (40000, 48999, "BA"), (49000, 49999, "SE"), (50000, 56999, "PE"), (57000, 57999, "AL"),
+        (58000, 58999, "PB"), (59000, 59999, "RN"), (60000, 63999, "CE"), (64000, 64999, "PI"),
+        (65000, 65999, "MA"), (66000, 68899, "PA"), (68900, 68999, "AP"), (69000, 69299, "AM"),
+        (69300, 69399, "RR"), (69400, 69899, "AM"), (69900, 69999, "AC"), (70000, 72799, "DF"),
+        (72800, 72999, "GO"), (73000, 73699, "DF"), (73700, 76799, "GO"), (76800, 76999, "RO"),
+        (77000, 77999, "TO"), (78000, 78899, "MT"), (78900, 78999, "RO"), (79000, 79999, "MS"),
+        (80000, 87999, "PR"), (88000, 89999, "SC"), (90000, 99999, "RS"),
+    ];
+    RANGES.iter().find(|(lo, hi, _)| (*lo..=*hi).contains(&n)).map(|r| r.2)
+}
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ShippingConfig {

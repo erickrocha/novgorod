@@ -4,7 +4,9 @@ use business::{
     domain::{enums::Role, marketplace::*, user::User},
     gateway::purchase_gateway::PurchaseGateway,
     use_cases::{
-        checkout_quote_use_case::{CheckoutQuoteUseCase, QuoteRequest},
+        checkout_quote_use_case::{
+            CheckoutQuoteUseCase, QuoteRequest, ShippingEstimateRequest,
+        },
         purchase_use_case::{CheckoutPurchaseInput, PurchaseUseCase},
     },
 };
@@ -542,5 +544,35 @@ async fn legacy_fixed_snapshots_and_migration_roundtrip() {
             .id,
         result.detail.purchase.id
     );
+    cleanup(root, db, schema).await;
+}
+
+#[tokio::test]
+#[ignore = "requires isolated PostgreSQL"]
+async fn anonymous_estimate_returns_options_per_seller_and_persists_nothing() {
+    let (root, db, schema) = database().await;
+    Migrator::up(&db, None).await.unwrap();
+    fixtures(&db).await;
+    db.execute_unprepared(
+        "UPDATE shipping_rate SET price_cents=500, transit_days_min=2, transit_days_max=4 WHERE tenant_id=1",
+    )
+    .await
+    .unwrap();
+    let quotes = CheckoutQuoteUseCase::new(db.clone());
+    let request = |cep: &str| ShippingEstimateRequest {
+        items: input().items,
+        cep: cep.into(),
+    };
+    let estimate = quotes.estimate(request("01001-000"), None).await.unwrap();
+    assert_eq!(estimate.sellers.len(), 2);
+    let first = &estimate.sellers[0];
+    assert_eq!(first.tenant_id, 1);
+    assert_eq!(first.options[0].price_cents, 500);
+    assert_eq!(first.options[0].transit_days, Some(4));
+    assert_eq!(estimate.sellers[1].options[0].price_cents, 0);
+    assert_eq!(count(&db, "checkout_quote").await, 0);
+    assert!(quotes.estimate(request("00500000"), None).await.is_err());
+    assert!(quotes.estimate(request("1234"), None).await.is_err());
+    assert!(quotes.estimate(request("01001000"), Some(1)).await.is_err());
     cleanup(root, db, schema).await;
 }

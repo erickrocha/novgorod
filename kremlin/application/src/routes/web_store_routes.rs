@@ -3,7 +3,8 @@ use crate::endpoints::web_store_endpoint::{
     catalog_attributes, categories, categories_paged, product_categories, product_detail,
     products, query_products, sku_attribute_values, sku_attributes, sku_stocks, skus, skus_paged,
 };
-use axum::routing::get;
+use crate::endpoints::checkout_quote_endpoint::estimate;
+use axum::routing::{get, post};
 use axum::Router;
 
 pub fn web_store_routes() -> Router<AppState> {
@@ -20,4 +21,5 @@ pub fn web_store_routes() -> Router<AppState> {
         .route("/sku-attributes", get(sku_attributes))
         .route("/sku-attribute-values", get(sku_attribute_values))
         .route("/sku-stocks", get(sku_stocks))
+        .route("/shipping/estimate", post(estimate))
 }

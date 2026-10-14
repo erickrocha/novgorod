@@ -10,7 +10,9 @@ use axum::{
 };
 use business::{
     domain::{enums::Role, marketplace::PurchaseError, user::User},
-    use_cases::checkout_quote_use_case::{CheckoutQuoteUseCase, QuoteRequest, QuoteResult},
+    use_cases::checkout_quote_use_case::{
+        CheckoutQuoteUseCase, QuoteRequest, QuoteResult, ShippingEstimate, ShippingEstimateRequest,
+    },
 };
 
 pub(crate) fn error(locale: Locale, error: PurchaseError) -> ExceptionResponse {
@@ -98,4 +100,19 @@ pub(crate) async fn ensure_quote_tenant(
         )),
         _ => Ok(()),
     }
+}
+
+#[utoipa::path(post, path="/api/public/shipping/estimate", tag="WebStore", request_body=ShippingEstimateRequest, responses((status=200, body=ShippingEstimate), (status=400, description="Invalid CEP, item or seller"), (status=503, description="Shipping provider unavailable")))]
+pub async fn estimate(
+    State(state): State<AppState>,
+    Extension(locale): Extension<Locale>,
+    Extension(context): Extension<crate::commons::tenant_context::TenantContext>,
+    Json(input): Json<ShippingEstimateRequest>,
+) -> HttpResponse<Json<ShippingEstimate>> {
+    let result =
+        CheckoutQuoteUseCase::with_provider(state.conn.as_ref().clone(), state.shipping.clone())
+            .estimate(input, context.tenant_id())
+            .await
+            .map_err(|e| error(locale, e))?;
+    Ok(Json(result))
 }
