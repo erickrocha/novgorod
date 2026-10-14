@@ -99,8 +99,8 @@ class H(BaseHTTPRequestHandler):
                 top = int((q.get("max_installments") or ["12"])[0])
                 rows = []
                 for n in range(1, top + 1):
-                    total = value if n <= free else value + value * (n - free) * 35 // 10000
-                    rows.append({"installments": n, "installment_value": total // n, "interest_free": n <= free,
+                    total = value if n == 1 or n <= free else value + value * (n - free) * 35 // 10000
+                    rows.append({"installments": n, "installment_value": total // n, "interest_free": n == 1 or n <= free,
                                  "amount": {"value": total, "currency": "BRL"}})
                 brand = "elo" if q.get("credit_card_bin") else "visa"
                 return self.reply(200, {"payment_methods": {"credit_card": {brand: {"installment_plans": rows}}}})

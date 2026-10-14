@@ -50,6 +50,7 @@ mod m20261007_000001_customer_erasure_constraints;
 mod m20261007_000002_avatar_sanitation_queue;
 mod m20261008_000001_purchase_tenant;
 mod m20261014_000001_payment_pagseguro_only;
+mod m20261015_000001_payment_interest;
 
 pub struct Migrator;
 
@@ -105,6 +106,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261007_000002_avatar_sanitation_queue::Migration),
             Box::new(m20261008_000001_purchase_tenant::Migration),
             Box::new(m20261014_000001_payment_pagseguro_only::Migration),
+            Box::new(m20261015_000001_payment_interest::Migration),
         ]
     }
 }

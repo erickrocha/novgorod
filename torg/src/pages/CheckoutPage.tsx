@@ -240,7 +240,7 @@ export const CheckoutPage = () => {
     }
   }
 
-  async function pay(data: { token: string; paymentMethodId: string; issuerId?: string; installments: number }) {
+  async function pay(data: { token: string; paymentMethodId: string; issuerId?: string; installments: number; bin?: string }) {
     if (!quote) return;
     setBusy(true);
     setError('');

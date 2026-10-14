@@ -31,6 +31,7 @@ impl EntityMapper<Payment, Model, ActiveModel> for PaymentEntityMapper {
             status: Set(d.status),
             installments: Set(d.installments),
             amount_cents: Set(d.amount_cents),
+            interest_cents: NotSet,
             currency: Set(d.currency),
             gateway_provider: Set(d.gateway_provider),
             gateway_reference: Set(d.gateway_reference),

@@ -6,6 +6,8 @@ interface CardData {
   paymentMethodId: string;
   issuerId?: string;
   installments: number;
+  /** First digits of the card; kremlin prices the installments with it. */
+  bin?: string;
 }
 
 interface EncryptCardOptions {
@@ -83,6 +85,7 @@ export default function PagSeguroCardForm({
   // The options come from the provider for this amount (and the card brand once the BIN is typed).
   const bin = cardNumber.replace(/\D/g, '').slice(0, 6);
   const lookupBin = bin.length === 6 ? bin : undefined;
+  const selected = options.find(o => o.installments === installments);
   useEffect(() => {
     let active = true;
     const timer = window.setTimeout(() => {
@@ -184,6 +187,7 @@ export default function PagSeguroCardForm({
         token,
         paymentMethodId: brand,
         installments,
+        bin: lookupBin,
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Não foi possível processar o pagamento com o PagSeguro.');
@@ -276,6 +280,12 @@ export default function PagSeguroCardForm({
             </option>
           ))}
         </select>
+        {selected && (
+          <span id="pagseguro-total" className="block mt-1 text-xs font-medium text-slate-600">
+            Total a pagar: R$ {(selected.totalCents / 100).toFixed(2).replace('.', ',')}
+            {selected.totalCents > amountCents && ` (juros de R$ ${((selected.totalCents - amountCents) / 100).toFixed(2).replace('.', ',')})`}
+          </span>
+        )}
         {optionsError && <span role="alert" className="block mt-1 text-xs font-medium text-rose-700">{optionsError} Apenas à vista está disponível.</span>}
       </label>
 

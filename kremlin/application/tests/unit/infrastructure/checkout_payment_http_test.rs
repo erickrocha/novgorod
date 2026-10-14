@@ -2585,8 +2585,6 @@ async fn tc01_card_submit_rejects_invalid_input_and_non_card_provider() {
         }),
         json!({"token":"card-token","paymentMethodId":"visa","installments":0}),
         json!({"token":"card-token","paymentMethodId":"visa","installments":25}),
-        // above the interest-free limit (default 3): the charge would no longer equal the purchase total
-        json!({"token":"card-token","paymentMethodId":"visa","installments":4}),
         json!({"token":"x".repeat(1025),"paymentMethodId":"visa","installments":1}),
         // SR-PAY-030: card fields are refused in any form, before an attempt exists
         json!({"token":r#"{"number":"4111111111111111","exp_month":"12","exp_year":"2030","security_code":"123"}"#,
@@ -2603,10 +2601,6 @@ async fn tc01_card_submit_rejects_invalid_input_and_non_card_provider() {
         .await
         .unwrap();
         assert!(status.is_client_error(), "{status}");
-        // SR-STO-005: above the interest-free limit it is exactly a bad request
-        if invalid["installments"] == 4 {
-            assert_eq!(status, StatusCode::BAD_REQUEST);
-        }
     }
     let attempts: i64 = db
         .query_one_raw(Statement::from_sql_and_values(
@@ -2808,6 +2802,7 @@ async fn tc04_charge_uses_purchase_amount_and_payer_and_skips_zero_total() {
     let requests = Arc::new(std::sync::Mutex::new(Vec::new()));
     let double = Router::new()
         .route("/charges", post(tc04_charge_double))
+        .route("/charges/fees/calculate", get(fees_double))
         .with_state(Tc04ChargeDoubleState {
             requests: requests.clone(),
         });
@@ -2879,11 +2874,25 @@ async fn tc04_charge_uses_purchase_amount_and_payer_and_skips_zero_total() {
     .await
     .unwrap();
     assert_eq!(status, StatusCode::OK, "{submitted}");
+    // the buyer pays the provider's price for 3 installments (no free ones in the double): purchase total + interest
+    let interest_cents: i64 = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT interest_cents FROM payment WHERE purchase_id=$1",
+            [purchase_id.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "interest_cents")
+        .unwrap();
     {
         let captured_requests = requests.lock().unwrap();
         assert_eq!(captured_requests.len(), 1);
         let provider_request = &captured_requests[0];
-        assert_eq!(provider_request["amount"]["value"], payment_amount_cents);
+        assert_eq!(interest_cents, expected_amount_cents * 3 * 35 / 1000);
+        assert!(interest_cents > 0);
+        assert_eq!(provider_request["amount"]["value"], payment_amount_cents + interest_cents);
         assert_eq!(payment_amount_cents, expected_amount_cents);
         assert_eq!(provider_request["customer"]["email"], expected_email);
         assert_eq!(provider_request["customer"]["tax_id"], expected_tax_id);
@@ -2997,7 +3006,7 @@ async fn tc05_persists_attempt_before_provider_and_reuses_it() {
                 Some(json!({
                     "token":"tc05-provider-token",
                     "paymentMethodId":"visa",
-                    "installments":2
+                    "installments":1
                 })),
                 None,
             )
@@ -4312,8 +4321,8 @@ async fn fees_double(
     let plan = |up_to: i64| -> Vec<Value> {
         (1..=up_to)
             .map(|n| {
-                let total = if n <= free { value } else { value + value * (n - free) * 35 / 1000 };
-                json!({"installments": n, "installment_value": total / n, "interest_free": n <= free,
+                let total = if n == 1 || n <= free { value } else { value + value * (n - free) * 35 / 1000 };
+                json!({"installments": n, "installment_value": total / n, "interest_free": n == 1 || n <= free,
                        "amount": {"value": total, "currency": "BRL"}})
             })
             .collect()
@@ -4329,11 +4338,10 @@ async fn fees_double(
 // SR-STO-004, SR-STO-005 (NOV-37): installment options come from the provider and never change the charged total.
 #[tokio::test]
 #[ignore = "requires isolated PostgreSQL"]
-async fn installments_come_from_the_provider_and_keep_the_charge_unchanged() {
-    let _environment_restore = EnvironmentRestore::capture(&["PAYMENT_PROVIDER_MODE", "PAGSEGURO_API_BASE_URL", "PAYMENT_MAX_INTEREST_FREE_INSTALLMENTS"]);
+async fn installments_come_from_the_provider_with_their_interest() {
+    let _environment_restore = EnvironmentRestore::capture(&["PAYMENT_PROVIDER_MODE", "PAGSEGURO_API_BASE_URL"]);
     unsafe {
         std::env::set_var("PAYMENT_PROVIDER_MODE", "real");
-        std::env::remove_var("PAYMENT_MAX_INTEREST_FREE_INSTALLMENTS");
     }
     let payment_keys = Arc::new(PaymentKeyRing::from_env().unwrap());
     let (root, db, schema) = database().await.unwrap();
@@ -4366,26 +4374,23 @@ async fn installments_come_from_the_provider_and_keep_the_charge_unchanged() {
         body["installments"].as_array().unwrap().iter().map(|o| o["installments"].as_u64().unwrap()).collect()
     };
 
-    // with a BIN: the provider's interest-free options only (1 to 3), each one keeping the total
+    // with a BIN: every option of the provider, 1 to 12, with the interest of the ones after the free ones
     let (status, body) = request(app.clone(), Method::GET, "/checkout/installments?tenantId=1&amountCents=3000&bin=506777", None, None).await.unwrap();
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(counts(&body), vec![1, 2, 3]);
-    assert_eq!(body["installments"][2]["installmentCents"], 1000);
-    assert_eq!(body["installments"][2]["totalCents"], 3000);
-    assert_eq!(body["installments"][2]["interestFree"], true);
-    // a BIN the provider does not know: answered as without a BIN
+    assert_eq!(counts(&body), (1..=12).collect::<Vec<u64>>());
+    assert_eq!(body["installments"][0]["totalCents"], 3000);
+    assert_eq!(body["installments"][0]["interestFree"], true);
+    // the double offers no free installment but the first: 3 installments cost 3000 + 3000*3*35/1000
+    assert_eq!(body["installments"][2]["totalCents"], 3315);
+    assert_eq!(body["installments"][2]["installmentCents"], 1105);
+    assert_eq!(body["installments"][2]["interestFree"], false);
+    // a BIN the provider does not know: answered as without a BIN (the options valid for every brand)
     let (status, body) = request(app.clone(), Method::GET, "/checkout/installments?tenantId=1&amountCents=3000&bin=000000", None, None).await.unwrap();
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(counts(&body), vec![1, 2, 3]);
-    // without a BIN: the options valid for every brand
+    assert_eq!(counts(&body), vec![1, 2, 3, 4, 5]);
     let (status, body) = request(app.clone(), Method::GET, "/checkout/installments?tenantId=1&amountCents=3000", None, None).await.unwrap();
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(counts(&body), vec![1, 2, 3]);
-    // the interest-free limit is configurable
-    unsafe { std::env::set_var("PAYMENT_MAX_INTEREST_FREE_INSTALLMENTS", "2"); }
-    let (_, body) = request(app.clone(), Method::GET, "/checkout/installments?tenantId=1&amountCents=3000", None, None).await.unwrap();
-    assert_eq!(counts(&body), vec![1, 2]);
-    unsafe { std::env::remove_var("PAYMENT_MAX_INTEREST_FREE_INSTALLMENTS"); }
+    assert_eq!(counts(&body), vec![1, 2, 3, 4, 5]);
     // invalid input and unconfigured tenants
     for uri in ["/checkout/installments?tenantId=1&amountCents=0", "/checkout/installments?tenantId=1&amountCents=abc",
                 "/checkout/installments?tenantId=1&amountCents=3000&bin=12", "/checkout/installments?tenantId=1&amountCents=3000&bin=4539x2"] {

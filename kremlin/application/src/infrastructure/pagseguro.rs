@@ -119,19 +119,18 @@ fn parse_int_or_str(v: &serde_json::Value) -> Option<i32> {
 
 impl PagSeguro {
     /// Installment options for `amount_cents` from the provider, for the card `bin` (six to eight digits)
-    /// when known; interest-free up to `max_interest_free` installments, up to 12 in total.
+    /// when known; every plan the provider offers, up to 12 installments, with and without buyer interest.
     pub async fn installments(
         &self,
         amount_cents: i64,
         bin: Option<&str>,
-        max_interest_free: u32,
     ) -> Result<Vec<InstallmentOption>, ProviderError> {
         let url = format!("{}/charges/fees/calculate", self.base_url);
         let mut query = vec![
             ("payment_methods", "CREDIT_CARD".to_owned()),
             ("value", amount_cents.to_string()),
             ("max_installments", "12".to_owned()),
-            ("max_installments_no_interest", max_interest_free.to_string()),
+            ("max_installments_no_interest", "0".to_owned()),
         ];
         if let Some(bin) = bin {
             query.push(("credit_card_bin", bin.to_owned()));
@@ -147,7 +146,7 @@ impl PagSeguro {
         // the provider answers 400 for a BIN it does not know (it does not know the sandbox test cards):
         // ask again without it, which keeps only the options valid for every brand
         if bin.is_some() && response.status() == reqwest::StatusCode::BAD_REQUEST {
-            return Box::pin(self.installments(amount_cents, None, max_interest_free)).await;
+            return Box::pin(self.installments(amount_cents, None)).await;
         }
         if !response.status().is_success() {
             return Err(ProviderError(format!(
