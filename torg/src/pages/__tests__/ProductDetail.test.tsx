@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Provider } from 'react-redux';
 import { configureStore } from '@reduxjs/toolkit';
@@ -130,5 +130,70 @@ describe('ProductDetail Page', () => {
     // Thumbnails for multi-image gallery
     const thumbnails = screen.getAllByRole('button', { name: /ver imagem/i });
     expect(thumbnails).toHaveLength(3);
+  });
+
+  it('uses the selected SKU stock to enable or disable purchase', async () => {
+    const productWithUnavailableSku: Product = {
+      ...mockProduct,
+      variants: [
+        ...mockProduct.variants!,
+        { id: '2', name: '375ml', sku: 'WINE-001-375', price: 129, stock: 0 },
+      ],
+      skus: [
+        ...mockProduct.skus!,
+        {
+          id: 2,
+          uuid: 'uuid-2',
+          code: 'WINE-001-375',
+          variantKey: '375ml',
+          priceCents: 12900,
+          active: true,
+          stock: 0,
+          attributes: [{ attributeId: 1, name: 'Volume', value: '375ml' }],
+        },
+      ],
+    };
+    vi.mocked(catalogService.getProductBySlug).mockResolvedValue(productWithUnavailableSku);
+    const store = createTestStore();
+
+    render(
+      <Provider store={store}>
+        <MemoryRouter initialEntries={['/produto/miolo-lote-43-tinto']}>
+          <Routes>
+            <Route path="/produto/:slug" element={<ProductDetail />} />
+          </Routes>
+        </MemoryRouter>
+      </Provider>
+    );
+
+    await screen.findByRole('heading', { level: 1, name: 'Miolo Lote 43 Tinto' });
+    expect(screen.getByRole('button', { name: 'Adicionar ao Carrinho' })).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: /375ml/ }));
+    expect(screen.getByText('Esgotado')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Item Indisponível' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Comprar Agora com 1 Clique' })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole('button', { name: /750ml/ }));
+    expect(screen.getByText(/Em Estoque \(48 garrafas disponíveis\)/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Adicionar ao Carrinho' })).toBeEnabled();
+  });
+
+  it('does not render a seller card when the product has no seller', async () => {
+    vi.mocked(catalogService.getProductBySlug).mockResolvedValue({ ...mockProduct, seller: null });
+    const store = createTestStore();
+
+    render(
+      <Provider store={store}>
+        <MemoryRouter initialEntries={['/produto/miolo-lote-43-tinto']}>
+          <Routes>
+            <Route path="/produto/:slug" element={<ProductDetail />} />
+          </Routes>
+        </MemoryRouter>
+      </Provider>
+    );
+
+    await screen.findByRole('heading', { level: 1, name: 'Miolo Lote 43 Tinto' });
+    expect(screen.queryByText(/Vendido e entregue por/i)).not.toBeInTheDocument();
+    expect(screen.queryByText('Sr Rocha winery')).not.toBeInTheDocument();
   });
 });

@@ -70,7 +70,7 @@ describe('PagSeguroCardForm card data', () => {
 
   it('lists provider options, shows the selected total, and sends the card BIN', async () => {
     window.PagSeguro = { encryptCard: vi.fn() };
-    const { container, onPay } = setup();
+    const { container, onPay, rerender } = setup();
     await waitFor(() => expect(container.querySelectorAll('#pagseguro-installments option')).toHaveLength(3));
     expect(vi.mocked(checkoutService.installments)).toHaveBeenCalledWith({ tenantId: 7, amountCents: 1000, bin: undefined });
     expect(container.querySelector('#pagseguro-installments')!.textContent).toContain('2x de R$ 5,00 sem juros');
@@ -80,6 +80,8 @@ describe('PagSeguroCardForm card data', () => {
     expect(container.querySelector('p')?.textContent).toContain('(juros de R$ 1,10)');
     fireEvent.change(container.querySelector('#pagseguro-card-number')!, { target: { value: '5067 7667 8388 8311' } });
     await waitFor(() => expect(vi.mocked(checkoutService.installments)).toHaveBeenCalledWith({ tenantId: 7, amountCents: 1000, bin: '506776' }));
+    rerender(<PagSeguroCardForm publicKey="PK" tenantId={7} amountCents={1200} email="a@b.c" cpf="52998224725" onPay={onPay} />);
+    await waitFor(() => expect(vi.mocked(checkoutService.installments)).toHaveBeenCalledWith({ tenantId: 7, amountCents: 1200, bin: '506776' }));
     window.PagSeguro = { encryptCard: vi.fn().mockReturnValue({ encryptedCard: 'ENCRYPTED' }) };
     fill(container);
     fireEvent.submit(container.querySelector('form')!);
