@@ -4584,10 +4584,10 @@ async fn fees_three_installments_double(
     )
 }
 
-// SR-STO-004, SR-STO-005 (NOV-37): installment options come from the provider and never change the charged total.
+// SR-STO-004, SR-STO-005 (NOV-37): installment options include provider-priced buyer interest.
 #[tokio::test]
 #[ignore = "requires isolated PostgreSQL"]
-async fn installments_come_from_the_provider_and_keep_the_charge_unchanged() {
+async fn installments_return_provider_priced_interest_options() {
     let _environment_restore = EnvironmentRestore::capture(&["PAYMENT_PROVIDER_MODE", "PAGSEGURO_API_BASE_URL", "PAYMENT_MAX_INTEREST_FREE_INSTALLMENTS"]);
     unsafe {
         std::env::set_var("PAYMENT_PROVIDER_MODE", "real");
@@ -4658,7 +4658,7 @@ async fn installments_come_from_the_provider_and_keep_the_charge_unchanged() {
     let (status, _) = request(app.clone(), Method::GET, "/checkout/installments?tenantId=2&amountCents=3000", None, None).await.unwrap();
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
     // a missing or invalid tenant id is a bad request; 503 is only for a tenant without payment configuration
-    for uri in ["/checkout/installments?amountCents=3000", "/checkout/installments?tenantId=x&amountCents=3000"] {
+    for uri in ["/checkout/installments?amountCents=3000", "/checkout/installments?tenantId=x&amountCents=3000", "/checkout/installments?tenantId=0&amountCents=3000", "/checkout/installments?tenantId=-1&amountCents=3000"] {
         let (status, _) = request(app.clone(), Method::GET, uri, None, None).await.unwrap();
         assert_eq!(status, StatusCode::BAD_REQUEST, "{uri}");
     }

@@ -89,9 +89,9 @@ pub async fn config(
     }
 }
 
-/// Installments offered without interest (the seller bears the provider fee):
-/// `PAYMENT_MAX_INTEREST_FREE_INSTALLMENTS`, default 3, at most 12. The charge always equals the purchase
-/// total, so options with buyer interest are not offered and not accepted at submit.
+/// Maximum number of installments the provider may price without buyer interest:
+/// `PAYMENT_MAX_INTEREST_FREE_INSTALLMENTS`, default 3, at most 12. Interest-bearing
+/// options are returned too; submit prices the selected plan with the provider.
 pub fn max_interest_free_installments() -> u32 {
     std::env::var("PAYMENT_MAX_INTEREST_FREE_INSTALLMENTS")
         .ok()
@@ -118,6 +118,7 @@ pub async fn installments(
     let tenant_id = params
         .get("tenantId")
         .and_then(|v| v.parse::<i64>().ok())
+        .filter(|tenant_id| *tenant_id > 0)
         .ok_or_else(|| bad(StatusCode::BAD_REQUEST, "Vendedor inválido"))?;
     let amount_cents = params
         .get("amountCents")
