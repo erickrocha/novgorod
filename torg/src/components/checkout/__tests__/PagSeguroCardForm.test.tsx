@@ -8,6 +8,7 @@ vi.mock('../../../services/checkoutService');
 const PLAN = [
   { installments: 1, installmentCents: 1000, totalCents: 1000, interestFree: true },
   { installments: 2, installmentCents: 500, totalCents: 1000, interestFree: true },
+  { installments: 3, installmentCents: 370, totalCents: 1110, interestFree: false },
 ];
 
 const CARD = '4111 1111 1111 1111';
@@ -38,7 +39,8 @@ describe('PagSeguroCardForm card data', () => {
     await waitFor(() => expect(onPay).toHaveBeenCalledTimes(1));
     const payload = JSON.stringify(onPay.mock.calls[0][0]);
     expect(onPay.mock.calls[0][0].token).toBe('ENCRYPTED');
-    expect(payload).not.toContain('4111');
+    expect(onPay.mock.calls[0][0].bin).toBe('411111');
+    expect(payload).not.toContain('4111 1111 1111 1111');
     expect(payload).not.toContain('123');
   });
 
@@ -66,14 +68,22 @@ describe('PagSeguroCardForm card data', () => {
     append.mockRestore();
   });
 
-  it('lists the installment options of the provider, with the card BIN once typed', async () => {
+  it('lists provider options, shows the selected total, and sends the card BIN', async () => {
     window.PagSeguro = { encryptCard: vi.fn() };
-    const { container } = setup();
-    await waitFor(() => expect(container.querySelectorAll('#pagseguro-installments option')).toHaveLength(2));
+    const { container, onPay } = setup();
+    await waitFor(() => expect(container.querySelectorAll('#pagseguro-installments option')).toHaveLength(3));
     expect(vi.mocked(checkoutService.installments)).toHaveBeenCalledWith({ tenantId: 7, amountCents: 1000, bin: undefined });
     expect(container.querySelector('#pagseguro-installments')!.textContent).toContain('2x de R$ 5,00 sem juros');
+    expect(container.querySelector('#pagseguro-installments')!.textContent).toContain('3x de R$ 3,70 (total R$ 11,10)');
+    fireEvent.change(container.querySelector('#pagseguro-installments')!, { target: { value: '3' } });
+    expect(container.querySelector('p')?.textContent).toContain('Total a pagar: R$ 11,10');
+    expect(container.querySelector('p')?.textContent).toContain('(juros de R$ 1,10)');
     fireEvent.change(container.querySelector('#pagseguro-card-number')!, { target: { value: '5067 7667 8388 8311' } });
     await waitFor(() => expect(vi.mocked(checkoutService.installments)).toHaveBeenCalledWith({ tenantId: 7, amountCents: 1000, bin: '506776' }));
+    window.PagSeguro = { encryptCard: vi.fn().mockReturnValue({ encryptedCard: 'ENCRYPTED' }) };
+    fill(container);
+    fireEvent.submit(container.querySelector('form')!);
+    await waitFor(() => expect(onPay).toHaveBeenCalledWith(expect.objectContaining({ installments: 3, bin: '411111' })));
   });
 
   it('offers only the single payment and shows the error when the options cannot be loaded', async () => {

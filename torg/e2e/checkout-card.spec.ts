@@ -64,15 +64,23 @@ test.describe('card payment through the screens (provider double)', () => {
     await stubSdk(page, 'approved-card');
     await addToCart(page, 'product-pro-1');
     await reachPayment(page);
-    // total R$ 30,00 (item R$ 15,00 + shipping R$ 15,00); the double is interest-free up to 3 installments
+    // Total R$ 30,00; the double is interest-free up to 3 installments and prices 4x at R$ 30,10.
     const select = page.locator('#pagseguro-installments');
-    await expect(select.locator('option')).toHaveText(['1x de R$ 30,00 sem juros', '2x de R$ 15,00 sem juros', '3x de R$ 10,00 sem juros']);
+    await expect(select.locator('option')).toHaveCount(12);
+    await expect(select.locator('option').nth(0)).toHaveText('1x de R$ 30,00 sem juros');
+    await expect(select.locator('option').nth(2)).toHaveText('3x de R$ 10,00 sem juros');
+    await expect(select.locator('option').nth(3)).toHaveText('4x de R$ 7,52 (total R$ 30,10)');
     await fillCard(page);
-    await expect(select.locator('option')).toHaveCount(3);
-    await select.selectOption('3');
+    await expect(select.locator('option')).toHaveCount(12);
+    await select.selectOption('4');
+    const total = page.locator('form p').filter({ hasText: 'Total a pagar:' });
+    await expect(total).toContainText('Total a pagar: R$ 30,10');
+    await expect(total).toContainText('juros de R$ 0,10');
     const submit = page.waitForRequest(r => /\/purchases\/\d+\/payments\/submit$/.test(r.url()));
     await page.locator('#pagseguro-submit').click();
-    expect(JSON.parse((await submit).postData() ?? '{}').installments).toBe(3);
+    const body = JSON.parse((await submit).postData() ?? '{}');
+    expect(body.installments).toBe(4);
+    expect(body.bin).toBe('453962');
     await expect(page.getByText('Pagamento confirmado')).toBeVisible();
   });
 

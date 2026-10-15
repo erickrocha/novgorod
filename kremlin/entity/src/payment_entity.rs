@@ -11,6 +11,7 @@ pub struct Model {
     pub status: String,
     pub installments: i32,
     pub amount_cents: i64,
+    pub interest_cents: i64,
     pub currency: String,
     pub gateway_provider: Option<String>,
     pub gateway_reference: Option<String>,

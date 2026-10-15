@@ -88,7 +88,7 @@ const checkoutService = {
   async installments(params: { tenantId: number; amountCents: number; bin?: string }) {
     return (await apiClient.get<{ installments: InstallmentOption[] }>('/checkout/installments', { params })).data.installments;
   },
-  async submit(purchaseId: number, input: { token: string; paymentMethodId: string; issuerId?: string; installments: number }) {
+  async submit(purchaseId: number, input: { token: string; paymentMethodId: string; issuerId?: string; installments: number; bin?: string }) {
     return (await apiClient.post<PaymentState>(`/purchases/${purchaseId}/payments/submit`, input)).data;
   },
   async status(purchaseId: number) {

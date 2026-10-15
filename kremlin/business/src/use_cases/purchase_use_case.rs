@@ -346,6 +346,7 @@ impl PurchaseUseCase {
                 status: Set(if paid { "captured" } else { "pending_provider" }.into()),
                 installments: Set(1),
                 amount_cents: Set(total),
+                interest_cents: Set(0),
                 currency: Set("BRL".into()),
                 gateway_provider: Set(None),
                 gateway_reference: Set(None),

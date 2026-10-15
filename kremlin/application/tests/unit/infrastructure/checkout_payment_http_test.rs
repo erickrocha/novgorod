@@ -2585,8 +2585,7 @@ async fn tc01_card_submit_rejects_invalid_input_and_non_card_provider() {
         }),
         json!({"token":"card-token","paymentMethodId":"visa","installments":0}),
         json!({"token":"card-token","paymentMethodId":"visa","installments":25}),
-        // above the interest-free limit (default 3): the charge would no longer equal the purchase total
-        json!({"token":"card-token","paymentMethodId":"visa","installments":4}),
+        json!({"token":"card-token","paymentMethodId":"visa","installments":13}),
         json!({"token":"x".repeat(1025),"paymentMethodId":"visa","installments":1}),
         // SR-PAY-030: card fields are refused in any form, before an attempt exists
         json!({"token":r#"{"number":"4111111111111111","exp_month":"12","exp_year":"2030","security_code":"123"}"#,
@@ -2603,8 +2602,8 @@ async fn tc01_card_submit_rejects_invalid_input_and_non_card_provider() {
         .await
         .unwrap();
         assert!(status.is_client_error(), "{status}");
-        // SR-STO-005: above the interest-free limit it is exactly a bad request
-        if invalid["installments"] == 4 {
+        // SR-STO-005: above the provider's maximum it is exactly a bad request
+        if invalid["installments"] == 13 {
             assert_eq!(status, StatusCode::BAD_REQUEST);
         }
     }
@@ -2781,9 +2780,14 @@ async fn tc07_search_finds_approved_payment(
 #[ignore = "requires isolated PostgreSQL and payment test keyring"]
 async fn tc04_charge_uses_purchase_amount_and_payer_and_skips_zero_total() {
     let _environment_restore =
-        EnvironmentRestore::capture(&["PAYMENT_PROVIDER_MODE", "PAGSEGURO_API_BASE_URL"]);
+        EnvironmentRestore::capture(&[
+            "PAYMENT_PROVIDER_MODE",
+            "PAGSEGURO_API_BASE_URL",
+            "PAYMENT_MAX_INTEREST_FREE_INSTALLMENTS",
+        ]);
     unsafe {
         std::env::set_var("PAYMENT_PROVIDER_MODE", "real");
+        std::env::set_var("PAYMENT_MAX_INTEREST_FREE_INSTALLMENTS", "3");
     }
     let payment_keys = Arc::new(PaymentKeyRing::from_env().unwrap());
     let (root, db, schema) = database().await.unwrap();
@@ -2807,6 +2811,7 @@ async fn tc04_charge_uses_purchase_amount_and_payer_and_skips_zero_total() {
     let app = router(app_state);
     let requests = Arc::new(std::sync::Mutex::new(Vec::new()));
     let double = Router::new()
+        .route("/charges/fees/calculate", get(fees_double))
         .route("/charges", post(tc04_charge_double))
         .with_state(Tc04ChargeDoubleState {
             requests: requests.clone(),
@@ -2830,7 +2835,8 @@ async fn tc04_charge_uses_purchase_amount_and_payer_and_skips_zero_total() {
         Some(json!({
             "token":"tc04-card-token",
             "paymentMethodId":"visa",
-            "installments":3,
+            "installments":4,
+            "bin":"506777",
             "amount":1,
             "payerEmail":"attacker@example.test",
             "payerTaxId":"00000000000"
@@ -2872,7 +2878,8 @@ async fn tc04_charge_uses_purchase_amount_and_payer_and_skips_zero_total() {
         Some(json!({
             "token":"tc04-card-token",
             "paymentMethodId":"visa",
-            "installments":3
+            "installments":4,
+            "bin":"506777"
         })),
         None,
     )
@@ -2883,12 +2890,37 @@ async fn tc04_charge_uses_purchase_amount_and_payer_and_skips_zero_total() {
         let captured_requests = requests.lock().unwrap();
         assert_eq!(captured_requests.len(), 1);
         let provider_request = &captured_requests[0];
-        assert_eq!(provider_request["amount"]["value"], payment_amount_cents);
+        let expected_interest_cents = payment_amount_cents * 35 / 1000;
+        assert_eq!(provider_request["amount"]["value"], payment_amount_cents + expected_interest_cents);
         assert_eq!(payment_amount_cents, expected_amount_cents);
         assert_eq!(provider_request["customer"]["email"], expected_email);
         assert_eq!(provider_request["customer"]["tax_id"], expected_tax_id);
-        assert_eq!(provider_request["payment_method"]["installments"], 3);
+        assert_eq!(provider_request["payment_method"]["installments"], 4);
     }
+    let payment = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT installments,interest_cents FROM payment WHERE purchase_id=$1",
+            [purchase_id.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(payment.try_get::<i32>("", "installments").unwrap(), 4);
+    let expected_interest_cents = payment_amount_cents * 35 / 1000;
+    assert_eq!(payment.try_get::<i64>("", "interest_cents").unwrap(), expected_interest_cents);
+    let transaction_amount_cents: i64 = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT amount_cents FROM payment_transaction WHERE payment_id=(SELECT id FROM payment WHERE purchase_id=$1)",
+            [purchase_id.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "amount_cents")
+        .unwrap();
+    assert_eq!(transaction_amount_cents, payment_amount_cents + expected_interest_cents);
 
     db.execute_unprepared(
         "UPDATE sku SET price_cents=0 WHERE id=1; UPDATE shipping_rate SET price_cents=0 WHERE tenant_id=1",
@@ -4366,25 +4398,29 @@ async fn installments_come_from_the_provider_and_keep_the_charge_unchanged() {
         body["installments"].as_array().unwrap().iter().map(|o| o["installments"].as_u64().unwrap()).collect()
     };
 
-    // with a BIN: the provider's interest-free options only (1 to 3), each one keeping the total
+    // With a known BIN, return every provider plan, including buyer-interest options.
     let (status, body) = request(app.clone(), Method::GET, "/checkout/installments?tenantId=1&amountCents=3000&bin=506777", None, None).await.unwrap();
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(counts(&body), vec![1, 2, 3]);
+    assert_eq!(counts(&body), (1..=12).collect::<Vec<_>>());
     assert_eq!(body["installments"][2]["installmentCents"], 1000);
     assert_eq!(body["installments"][2]["totalCents"], 3000);
     assert_eq!(body["installments"][2]["interestFree"], true);
+    assert_eq!(body["installments"][3]["totalCents"], 3105);
+    assert_eq!(body["installments"][3]["interestFree"], false);
     // a BIN the provider does not know: answered as without a BIN
     let (status, body) = request(app.clone(), Method::GET, "/checkout/installments?tenantId=1&amountCents=3000&bin=000000", None, None).await.unwrap();
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(counts(&body), vec![1, 2, 3]);
+    assert_eq!(counts(&body), vec![1, 2, 3, 4, 5]);
     // without a BIN: the options valid for every brand
     let (status, body) = request(app.clone(), Method::GET, "/checkout/installments?tenantId=1&amountCents=3000", None, None).await.unwrap();
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(counts(&body), vec![1, 2, 3]);
+    assert_eq!(counts(&body), vec![1, 2, 3, 4, 5]);
     // the interest-free limit is configurable
     unsafe { std::env::set_var("PAYMENT_MAX_INTEREST_FREE_INSTALLMENTS", "2"); }
     let (_, body) = request(app.clone(), Method::GET, "/checkout/installments?tenantId=1&amountCents=3000", None, None).await.unwrap();
-    assert_eq!(counts(&body), vec![1, 2]);
+    assert_eq!(counts(&body), vec![1, 2, 3, 4, 5]);
+    assert_eq!(body["installments"][1]["interestFree"], true);
+    assert_eq!(body["installments"][2]["interestFree"], false);
     unsafe { std::env::remove_var("PAYMENT_MAX_INTEREST_FREE_INSTALLMENTS"); }
     // invalid input and unconfigured tenants
     for uri in ["/checkout/installments?tenantId=1&amountCents=0", "/checkout/installments?tenantId=1&amountCents=abc",
