@@ -68,6 +68,26 @@ describe('PagSeguroCardForm card data', () => {
     append.mockRestore();
   });
 
+  it('never sends the card when SDK encryption throws', async () => {
+    window.PagSeguro = { encryptCard: vi.fn(() => { throw new Error('SDK encryption failed'); }) };
+    const { container, onPay } = setup();
+    await waitFor(() => expect(container.querySelector('#pagseguro-submit')).not.toBeDisabled());
+    fill(container);
+    fireEvent.submit(container.querySelector('form')!);
+    expect(await screen.findByText('SDK encryption failed')).toBeInTheDocument();
+    expect(onPay).not.toHaveBeenCalled();
+  });
+
+  it('never sends the card when SDK encryption returns no token', async () => {
+    window.PagSeguro = { encryptCard: vi.fn().mockReturnValue({}) };
+    const { container, onPay } = setup();
+    await waitFor(() => expect(container.querySelector('#pagseguro-submit')).not.toBeDisabled());
+    fill(container);
+    fireEvent.submit(container.querySelector('form')!);
+    expect(await screen.findByText(/ambiente seguro de pagamento/)).toBeInTheDocument();
+    expect(onPay).not.toHaveBeenCalled();
+  });
+
   it('lists provider options, shows the selected total, and sends the card BIN', async () => {
     window.PagSeguro = { encryptCard: vi.fn() };
     const { container, onPay, rerender } = setup();
