@@ -2425,6 +2425,7 @@ async fn pagbank_provider_error_logs_redact_bodies_across_payment_flows() {
     let app = router(app_state);
 
     let double = Router::new()
+        .route("/charges/fees/calculate", get(fees_double))
         .route("/charges", post(tc28_pagbank_error_response).get(tc28_pagbank_error_response))
         .route("/charges/{reference}", get(tc28_pagbank_error_response));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -2621,6 +2622,7 @@ async fn tc01_card_submit_rejects_invalid_input_and_non_card_provider() {
     assert_eq!(attempts, 0);
 
     let double = Router::new()
+        .route("/charges/fees/calculate", get(fees_double))
         .route("/charges", post(tc01_non_card_charge_response));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
@@ -3010,6 +3012,7 @@ async fn tc05_persists_attempt_before_provider_and_reuses_it() {
         let submit_uri = format!("/purchases/{purchase_id}/payments/submit");
         let charge_state = Tc05BlockingChargeState::default();
         let double = Router::new()
+            .route("/charges/fees/calculate", get(fees_double))
             .route("/charges", post(tc05_pagbank_charge_double))
             .with_state(charge_state.clone());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -3442,6 +3445,7 @@ async fn tc07_provider_timeout_keeps_attempt_pending_then_reconciles() {
     let app = router(app_state);
     let double_state = Tc07TimeoutDoubleState::default();
     let double = Router::new()
+        .route("/charges/fees/calculate", get(fees_double))
         .route(
             "/charges",
             post(tc07_charge_never_responds).get(tc07_search_finds_approved_payment),
