@@ -15,6 +15,8 @@ The original implementation was directed before Gate 1. These commits were publi
 
 `ef3c95e` is a mixed implementation commit. Its storefront catalog honesty, cart coupon/error handling, and initial provider installment lookup/UI belong to NOV-37 / C-041, not C-040. Those hunks are independently accepted under SR-STO-001..006 and DES-STO-01..05; the archived NOV-37 AI-G2 report records PASS. Provider-priced interest corrections are in NOV-37 commits `66ce87f` and `4d7422d`. The NOV-36 Gate 2 review excludes these separately owned C-041 behaviors from C-040 scope.
 
+The Customer-link race in `ef3c95e` is separate NOV-26/C-029 work, traced to SR-CMP-008 and DES-CMP-04 and independently accepted in that change's Gate 2 review. The rate-limit client-key helper extraction in the same commit preserves existing behavior and introduces no new requirement.
+
 ## Gate 1 Follow-Up
 
 The TC-04 component-test additions in `torg/src/components/checkout/__tests__/PagSeguroCardForm.test.tsx` cover `encryptCard` throwing and returning no `encryptedCard` (SR-PAY-027). Focused validation passed 7/7 tests.
