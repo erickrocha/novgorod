@@ -21,6 +21,18 @@ test.describe('card payment through the screens (provider double)', () => {
     await expect(page.getByText(/Compra #\d+ confirmada/)).toBeVisible();
   });
 
+  test('payment configuration uses the first seller of a multi-seller quote', async ({ page }) => {
+    await stubSdk(page);
+    await addToCart(page, 'product-pro-1');
+    await addToCart(page, 'product-b1');
+    const configRequest = page.waitForRequest(request =>
+      new URL(request.url()).pathname.endsWith('/checkout/payment-config'),
+    );
+    await reachPayment(page);
+    const configUrl = new URL((await configRequest).url());
+    expect(configUrl.searchParams.get('tenantId')).toBe('1');
+  });
+
   test('declined: the recovery message is shown and the cart is kept', async ({ page }) => {
     await stubSdk(page, 'reject-card');
     await addToCart(page, 'product-pro-1');

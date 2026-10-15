@@ -3830,6 +3830,7 @@ async fn tc03_persists_only_accepted_card_metadata() {
         .try_get("", "count")
         .unwrap();
     assert_eq!(forbidden_columns, 0);
+    assert_payment_markers_absent(&db, &["mock:approved"]).await;
 
     cleanup(root, db, schema).await.unwrap();
 }
