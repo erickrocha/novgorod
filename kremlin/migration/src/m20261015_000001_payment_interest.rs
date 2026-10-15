@@ -1,5 +1,7 @@
 use sea_orm_migration::prelude::*;
 
+/// Buyer interest of the chosen installments (C-041): the charge is `amount_cents + interest_cents`;
+/// `amount_cents` stays the purchase total that the seller allocations add up to.
 #[derive(DeriveMigrationName)]
 pub struct Migration;
 
@@ -9,7 +11,7 @@ impl MigrationTrait for Migration {
         manager
             .get_connection()
             .execute_unprepared(
-                "ALTER TABLE payment ADD COLUMN interest_cents BIGINT NOT NULL DEFAULT 0;",
+                "ALTER TABLE payment ADD COLUMN interest_cents BIGINT NOT NULL DEFAULT 0 CHECK (interest_cents >= 0);",
             )
             .await?;
         Ok(())

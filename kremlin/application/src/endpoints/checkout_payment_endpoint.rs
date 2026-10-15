@@ -89,15 +89,44 @@ pub async fn config(
     }
 }
 
-/// Maximum number of installments the provider may price without buyer interest:
-/// `PAYMENT_MAX_INTEREST_FREE_INSTALLMENTS`, default 3, at most 12. Interest-bearing
-/// options are returned too; submit prices the selected plan with the provider.
-pub fn max_interest_free_installments() -> u32 {
-    std::env::var("PAYMENT_MAX_INTEREST_FREE_INSTALLMENTS")
-        .ok()
-        .and_then(|value| value.trim().parse::<u32>().ok())
-        .filter(|n| (1..=12).contains(n))
-        .unwrap_or(3)
+/// Plans of the mock provider (no fee table): up to 12 installments, interest-free up to 3, then 1% per installment.
+fn mock_installment_options(amount_cents: i64) -> Vec<InstallmentOption> {
+    (1..=12_u32)
+        .map(|n| {
+            let total_cents = if n <= 3 { amount_cents } else { amount_cents * (100 + i64::from(n)) / 100 };
+            InstallmentOption {
+                installments: n,
+                installment_cents: total_cents / i64::from(n),
+                total_cents,
+                interest_free: n <= 3,
+            }
+        })
+        .collect()
+}
+
+/// The card BIN (six to eight digits) when given; anything else is a 400.
+fn valid_bin(bin: Option<&str>) -> Result<Option<&str>, ApiError> {
+    match bin.map(str::trim).filter(|v| !v.is_empty()) {
+        None => Ok(None),
+        Some(v) if (6..=8).contains(&v.len()) && v.bytes().all(|b| b.is_ascii_digit()) => Ok(Some(v)),
+        Some(_) => Err(bad(StatusCode::BAD_REQUEST, "BIN do cartão inválido")),
+    }
+}
+
+/// The provider's plans for the purchase amount (what `installments` lists and `submit` charges).
+async fn provider_installment_options(
+    provider: &ResolvedProvider,
+    tenant_id: i64,
+    amount_cents: i64,
+    bin: Option<&str>,
+) -> Result<Vec<InstallmentOption>, ApiError> {
+    match provider {
+        ResolvedProvider::PagSeguro(ps) => ps.installments(amount_cents, bin).await.map_err(|e| {
+            log::warn!("installment lookup failed for tenant {tenant_id}: {}", e.0);
+            bad(StatusCode::BAD_GATEWAY, "Não foi possível consultar as parcelas")
+        }),
+        ResolvedProvider::Mock(_) => Ok(mock_installment_options(amount_cents)),
+    }
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
@@ -125,28 +154,12 @@ pub async fn installments(
         .and_then(|v| v.parse::<i64>().ok())
         .filter(|v| (1..=100_000_000).contains(v))
         .ok_or_else(|| bad(StatusCode::BAD_REQUEST, "Valor inválido"))?;
-    let bin = match params.get("bin").map(|v| v.trim()).filter(|v| !v.is_empty()) {
-        None => None,
-        Some(v) if (6..=8).contains(&v.len()) && v.bytes().all(|b| b.is_ascii_digit()) => Some(v),
-        Some(_) => return Err(bad(StatusCode::BAD_REQUEST, "BIN do cartão inválido")),
-    };
-    let max_free = max_interest_free_installments();
+    let bin = valid_bin(params.get("bin").map(String::as_str))?;
     let provider = match configured_mock_provider()? {
         Some(mock) => ResolvedProvider::Mock(mock),
         None => tenant_provider(&state, tenant_id).await?,
     };
-    let options = provider
-        .installments(amount_cents, bin, max_free)
-        .await
-        .map_err(|e| {
-            log::warn!("installment lookup failed for tenant {tenant_id}: {}", e.0);
-            bad(StatusCode::BAD_GATEWAY, "Não foi possível consultar as parcelas")
-        })?;
-    // The provider has already priced each plan for this amount and BIN.
-    let installments = options
-        .into_iter()
-        .filter(|o| (1..=12).contains(&o.installments) && o.total_cents >= amount_cents)
-        .collect();
+    let installments = provider_installment_options(&provider, tenant_id, amount_cents, bin).await?;
     Ok(Json(InstallmentPlan { installments }))
 }
 
@@ -157,6 +170,7 @@ pub struct SubmitCard {
     payment_method_id: String,
     issuer_id: Option<String>,
     installments: i32,
+    /// First digits of the card, to price the installments (the same BIN the options were listed with).
     bin: Option<String>,
 }
 
@@ -185,35 +199,6 @@ impl ResolvedProvider {
         match self {
             Self::PagSeguro(ps) => ps.charge(request).await,
             Self::Mock(mock) => mock.charge(request).await,
-        }
-    }
-
-    async fn installments(
-        &self,
-        amount_cents: i64,
-        bin: Option<&str>,
-        max_interest_free: u32,
-    ) -> Result<Vec<InstallmentOption>, ProviderError> {
-        match self {
-            Self::PagSeguro(ps) => {
-                ps.installments(amount_cents, bin, max_interest_free).await
-            }
-            Self::Mock(_) => Ok((1..=12)
-                .map(|installments| {
-                    let interest_cents = if installments <= max_interest_free {
-                        0
-                    } else {
-                        amount_cents * i64::from(installments - max_interest_free) * 35 / 10_000
-                    };
-                    let total_cents = amount_cents + interest_cents;
-                    InstallmentOption {
-                        installments,
-                        installment_cents: total_cents / i64::from(installments),
-                        total_cents,
-                        interest_free: interest_cents == 0,
-                    }
-                })
-                .collect()),
         }
     }
 
@@ -398,17 +383,13 @@ fn validate_provider(
     purchase: &purchase_entity::Model,
     payment: &payment_entity::Model,
 ) -> Result<(), ApiError> {
-    let expected_charge_cents = payment
-        .amount_cents
-        .checked_add(payment.interest_cents)
-        .ok_or_else(|| bad(StatusCode::BAD_GATEWAY, "Valor de pagamento inconsistente"))?;
     if result.external_reference
         != format!(
             "torg-{}-{}",
             purchase.id,
             payment.attempt_key.as_deref().unwrap_or_default()
         )
-        || result.amount_cents != expected_charge_cents
+        || result.amount_cents != payment.amount_cents + payment.interest_cents
         || result.currency != "BRL"
         || result.payment_type_id != "credit_card"
     {
@@ -740,16 +721,9 @@ pub async fn submit(
     if card.token.is_empty()
         || card.token.len() > 1024
         || card.payment_method_id.is_empty()
-        || card.installments < 1
-        || card.installments > 12
+        || !(1..=12).contains(&card.installments)
     {
         return Err(bad(StatusCode::BAD_REQUEST, "Dados do cartão inválidos"));
-    }
-    let bin = card.bin.as_deref().map(str::trim).filter(|value| !value.is_empty());
-    if bin.is_some_and(|value| {
-        !(6..=8).contains(&value.len()) || !value.bytes().all(|byte| byte.is_ascii_digit())
-    }) {
-        return Err(bad(StatusCode::BAD_REQUEST, "BIN do cartão inválido"));
     }
     // Never accept card fields from the client, in any environment (SR-PAY-030).
     if crate::infrastructure::pagseguro::reject_raw_card_data(&card.token).is_err() {
@@ -794,27 +768,23 @@ pub async fn submit(
 
     let provider = resolve_provider(&app, id).await?;
     let provider_name = provider.name();
-    let options = provider
-        .installments(
-            payment.amount_cents,
-            bin,
-            max_interest_free_installments(),
-        )
-        .await
-        .map_err(|error| {
-            log::warn!("installment lookup failed for purchase {id}: {}", error.0);
-            bad(StatusCode::BAD_GATEWAY, "Não foi possível consultar as parcelas")
-        })?;
-    let interest_cents = options
-        .iter()
-        .find(|option| option.installments == card.installments as u32)
-        .and_then(|option| option.total_cents.checked_sub(payment.amount_cents))
-        .filter(|interest| *interest >= 0)
-        .ok_or_else(|| bad(StatusCode::BAD_REQUEST, "Parcelamento não disponível"))?;
-    let charge_amount_cents = payment
-        .amount_cents
-        .checked_add(interest_cents)
-        .ok_or_else(|| bad(StatusCode::BAD_REQUEST, "Valor do parcelamento inválido"))?;
+    // the buyer pays the provider's price for the chosen installments; never a client-supplied amount
+    let bin = valid_bin(card.bin.as_deref())?;
+    let wanted = u32::try_from(card.installments).unwrap_or_default();
+    let interest_cents = if wanted == 1 {
+        0 // a single payment has no installment interest
+    } else {
+        provider_installment_options(&provider, purchase.tenant_id.unwrap_or_default(), payment.amount_cents, bin)
+            .await?
+            .into_iter()
+            .find(|o| o.installments == wanted)
+            .ok_or_else(|| bad(StatusCode::BAD_REQUEST, "Parcelamento indisponível"))?
+            .total_cents
+            - payment.amount_cents
+    };
+    if interest_cents < 0 {
+        return Err(bad(StatusCode::BAD_GATEWAY, "Resposta de pagamento inconsistente"));
+    }
 
     let tx = app.conn.begin().await.map_err(|_| unavailable())?;
     tx.query_one_raw(Statement::from_sql_and_values(
@@ -918,7 +888,7 @@ pub async fn submit(
         payment_id: Set(saved.id),
         operation: Set("charge".into()),
         status: Set("pending".into()),
-        amount_cents: Set(charge_amount_cents),
+        amount_cents: Set(saved.amount_cents + saved.interest_cents),
         currency: Set("BRL".into()),
         idempotency_key: Set(key.clone()),
         gateway_provider: Set(Some(provider_name.into())),
@@ -930,7 +900,7 @@ pub async fn submit(
     tx.commit().await.map_err(|_| unavailable())?;
     let charge = ChargeRequest {
         payment_id: saved.id,
-        amount_cents: charge_amount_cents,
+        amount_cents: saved.amount_cents + saved.interest_cents,
         currency: "BRL".into(),
         idempotency_key: key.clone(),
         provider_token: card.token,

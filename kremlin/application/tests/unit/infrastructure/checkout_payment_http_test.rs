@@ -4546,7 +4546,8 @@ async fn fees_double(
         return (StatusCode::BAD_REQUEST, axum::Json(json!({"error_messages": [{"error": "credit_card_bin_data_not_found"}]})));
     }
     let value: i64 = query["value"].parse().unwrap();
-    let free: i64 = query["max_installments_no_interest"].parse().unwrap();
+    // gateway first: the provider decides what is interest-free (the merchant's own deal), not the request
+    let free: i64 = 3;
     assert_eq!(query["payment_methods"], "CREDIT_CARD");
     let plan = |up_to: i64| -> Vec<Value> {
         (1..=up_to)
@@ -4643,13 +4644,6 @@ async fn installments_return_provider_priced_interest_options() {
     let (status, body) = request(app.clone(), Method::GET, "/checkout/installments?tenantId=1&amountCents=3000", None, None).await.unwrap();
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(counts(&body), vec![1, 2, 3, 4, 5]);
-    // the interest-free limit is configurable
-    unsafe { std::env::set_var("PAYMENT_MAX_INTEREST_FREE_INSTALLMENTS", "2"); }
-    let (_, body) = request(app.clone(), Method::GET, "/checkout/installments?tenantId=1&amountCents=3000", None, None).await.unwrap();
-    assert_eq!(counts(&body), vec![1, 2, 3, 4, 5]);
-    assert_eq!(body["installments"][1]["interestFree"], true);
-    assert_eq!(body["installments"][2]["interestFree"], false);
-    unsafe { std::env::remove_var("PAYMENT_MAX_INTEREST_FREE_INSTALLMENTS"); }
     // invalid input and unconfigured tenants
     for uri in ["/checkout/installments?tenantId=1&amountCents=0", "/checkout/installments?tenantId=1&amountCents=abc",
                 "/checkout/installments?tenantId=1&amountCents=3000&bin=12", "/checkout/installments?tenantId=1&amountCents=3000&bin=4539x2"] {
