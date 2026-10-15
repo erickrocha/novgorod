@@ -2425,6 +2425,7 @@ async fn pagbank_provider_error_logs_redact_bodies_across_payment_flows() {
     let app = router(app_state);
 
     let double = Router::new()
+        .route("/charges/fees/calculate", get(fees_double))
         .route("/charges", post(tc28_pagbank_error_response).get(tc28_pagbank_error_response))
         .route("/charges/{reference}", get(tc28_pagbank_error_response));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -2585,6 +2586,7 @@ async fn tc01_card_submit_rejects_invalid_input_and_non_card_provider() {
         }),
         json!({"token":"card-token","paymentMethodId":"visa","installments":0}),
         json!({"token":"card-token","paymentMethodId":"visa","installments":25}),
+        json!({"token":"card-token","paymentMethodId":"visa","installments":13}),
         json!({"token":"x".repeat(1025),"paymentMethodId":"visa","installments":1}),
         // SR-PAY-030: card fields are refused in any form, before an attempt exists
         json!({"token":r#"{"number":"4111111111111111","exp_month":"12","exp_year":"2030","security_code":"123"}"#,
@@ -2601,6 +2603,10 @@ async fn tc01_card_submit_rejects_invalid_input_and_non_card_provider() {
         .await
         .unwrap();
         assert!(status.is_client_error(), "{status}");
+        // SR-STO-005: above the provider's maximum it is exactly a bad request
+        if invalid["installments"] == 13 {
+            assert_eq!(status, StatusCode::BAD_REQUEST);
+        }
     }
     let attempts: i64 = db
         .query_one_raw(Statement::from_sql_and_values(
@@ -2616,6 +2622,7 @@ async fn tc01_card_submit_rejects_invalid_input_and_non_card_provider() {
     assert_eq!(attempts, 0);
 
     let double = Router::new()
+        .route("/charges/fees/calculate", get(fees_three_installments_double))
         .route("/charges", post(tc01_non_card_charge_response));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
@@ -2623,6 +2630,33 @@ async fn tc01_card_submit_rejects_invalid_input_and_non_card_provider() {
     unsafe {
         std::env::set_var("PAGSEGURO_API_BASE_URL", format!("http://{address}"));
     }
+    let unsupported_status = request_in(
+        app.clone(),
+        Method::POST,
+        &submit_uri,
+        Some(json!({
+            "token":"valid-token",
+            "paymentMethodId":"visa",
+            "installments":4,
+            "bin":"506777"
+        })),
+        TenantContext::Marketplace,
+    )
+    .await
+    .unwrap();
+    assert_eq!(unsupported_status, StatusCode::BAD_REQUEST);
+    let attempts: i64 = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT count(*) AS count FROM payment_transaction WHERE payment_id=(SELECT id FROM payment WHERE purchase_id=$1)",
+            [purchase_id.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "count")
+        .unwrap();
+    assert_eq!(attempts, 0);
     let status = request_in(
         app,
         Method::POST,
@@ -2672,11 +2706,26 @@ async fn tc04_charge_double(
     axum::Json(request): axum::Json<Value>,
 ) -> axum::Json<Value> {
     state.requests.lock().unwrap().push(request.clone());
+    let charge_id = match request.pointer("/payment_method/card/token").and_then(Value::as_str) {
+        Some("tc04-one-installment-token") => "CHAR_TC04_002",
+        Some("tc04-twelve-installment-token") => "CHAR_TC04_003",
+        Some("tc04-mismatch-token") => "CHAR_TC04_004",
+        _ => "CHAR_TC04_001",
+    };
+    let amount = if request.pointer("/payment_method/card/token").and_then(Value::as_str)
+        == Some("tc04-mismatch-token")
+    {
+        let mut amount = request["amount"].clone();
+        amount["value"] = json!(amount["value"].as_i64().unwrap() + 1);
+        amount
+    } else {
+        request["amount"].clone()
+    };
     axum::Json(json!({
-        "id": "CHAR_TC04_001",
+        "id": charge_id,
         "reference_id": request["reference_id"],
         "status": "PAID",
-        "amount": request["amount"],
+        "amount": amount,
         "payment_method": {
             "type": "CREDIT_CARD",
             "card": {
@@ -2775,9 +2824,14 @@ async fn tc07_search_finds_approved_payment(
 #[ignore = "requires isolated PostgreSQL and payment test keyring"]
 async fn tc04_charge_uses_purchase_amount_and_payer_and_skips_zero_total() {
     let _environment_restore =
-        EnvironmentRestore::capture(&["PAYMENT_PROVIDER_MODE", "PAGSEGURO_API_BASE_URL"]);
+        EnvironmentRestore::capture(&[
+            "PAYMENT_PROVIDER_MODE",
+            "PAGSEGURO_API_BASE_URL",
+            "PAYMENT_MAX_INTEREST_FREE_INSTALLMENTS",
+        ]);
     unsafe {
         std::env::set_var("PAYMENT_PROVIDER_MODE", "real");
+        std::env::set_var("PAYMENT_MAX_INTEREST_FREE_INSTALLMENTS", "3");
     }
     let payment_keys = Arc::new(PaymentKeyRing::from_env().unwrap());
     let (root, db, schema) = database().await.unwrap();
@@ -2801,8 +2855,8 @@ async fn tc04_charge_uses_purchase_amount_and_payer_and_skips_zero_total() {
     let app = router(app_state);
     let requests = Arc::new(std::sync::Mutex::new(Vec::new()));
     let double = Router::new()
-        .route("/charges", post(tc04_charge_double))
         .route("/charges/fees/calculate", get(fees_double))
+        .route("/charges", post(tc04_charge_double))
         .with_state(Tc04ChargeDoubleState {
             requests: requests.clone(),
         });
@@ -2825,16 +2879,15 @@ async fn tc04_charge_uses_purchase_amount_and_payer_and_skips_zero_total() {
         Some(json!({
             "token":"tc04-card-token",
             "paymentMethodId":"visa",
-            "installments":3,
-            "amount":1,
-            "payerEmail":"attacker@example.test",
-            "payerTaxId":"00000000000"
+            "installments":4,
+            "bin":"506777",
+            "amount":1
         })),
         TenantContext::Marketplace,
     )
     .await
     .unwrap();
-    assert!(status.is_client_error(), "{status}");
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     assert!(requests.lock().unwrap().is_empty());
 
     let expected = db
@@ -2849,6 +2902,22 @@ async fn tc04_charge_uses_purchase_amount_and_payer_and_skips_zero_total() {
     let expected_amount_cents: i64 = expected.try_get("", "total_cents").unwrap();
     let expected_email: String = expected.try_get("", "customer_email").unwrap();
     let expected_tax_id: String = expected.try_get("", "customer_tax_id").unwrap();
+    let allocations_before: Vec<(i64, i64)> = db
+        .query_all_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT order_id,amount_cents FROM payment_allocation WHERE purchase_id=$1 ORDER BY order_id",
+            [purchase_id.into()],
+        ))
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|row| {
+            (
+                row.try_get("", "order_id").unwrap(),
+                row.try_get("", "amount_cents").unwrap(),
+            )
+        })
+        .collect();
     let payment_amount_cents: i64 = db
         .query_one_raw(Statement::from_sql_and_values(
             DbBackend::Postgres,
@@ -2867,37 +2936,195 @@ async fn tc04_charge_uses_purchase_amount_and_payer_and_skips_zero_total() {
         Some(json!({
             "token":"tc04-card-token",
             "paymentMethodId":"visa",
-            "installments":3
+            "installments":4,
+            "bin":"506777"
         })),
         None,
     )
     .await
     .unwrap();
     assert_eq!(status, StatusCode::OK, "{submitted}");
-    // the buyer pays the provider's price for 3 installments (no free ones in the double): purchase total + interest
-    let interest_cents: i64 = db
+    {
+        let captured_requests = requests.lock().unwrap();
+        assert_eq!(captured_requests.len(), 1);
+        let provider_request = &captured_requests[0];
+        let expected_interest_cents = payment_amount_cents * 35 / 1000;
+        assert_eq!(provider_request["amount"]["value"], payment_amount_cents + expected_interest_cents);
+        assert_eq!(payment_amount_cents, expected_amount_cents);
+        assert_eq!(provider_request["customer"]["email"], expected_email);
+        assert_eq!(provider_request["customer"]["tax_id"], expected_tax_id);
+        assert_eq!(provider_request["payment_method"]["installments"], 4);
+    }
+    let payment = db
         .query_one_raw(Statement::from_sql_and_values(
             DbBackend::Postgres,
-            "SELECT interest_cents FROM payment WHERE purchase_id=$1",
+            "SELECT installments,interest_cents FROM payment WHERE purchase_id=$1",
+            [purchase_id.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(payment.try_get::<i32>("", "installments").unwrap(), 4);
+    let expected_interest_cents = payment_amount_cents * 35 / 1000;
+    assert_eq!(payment.try_get::<i64>("", "interest_cents").unwrap(), expected_interest_cents);
+    let transaction_amount_cents: i64 = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT amount_cents FROM payment_transaction WHERE payment_id=(SELECT id FROM payment WHERE purchase_id=$1)",
             [purchase_id.into()],
         ))
         .await
         .unwrap()
         .unwrap()
-        .try_get("", "interest_cents")
+        .try_get("", "amount_cents")
         .unwrap();
+    assert_eq!(transaction_amount_cents, payment_amount_cents + expected_interest_cents);
+    let purchase_total_after: i64 = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT total_cents FROM purchase WHERE id=$1",
+            [purchase_id.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "total_cents")
+        .unwrap();
+    assert_eq!(purchase_total_after, expected_amount_cents);
+    let allocations_after: Vec<(i64, i64)> = db
+        .query_all_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT order_id,amount_cents FROM payment_allocation WHERE purchase_id=$1 ORDER BY order_id",
+            [purchase_id.into()],
+        ))
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|row| {
+            (
+                row.try_get("", "order_id").unwrap(),
+                row.try_get("", "amount_cents").unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(allocations_after, allocations_before);
+
+    cart_fixture(&db, Some(1), 1, &[1]).await.unwrap();
+    let one_installment_purchase_id = create_purchase_from_quote(app.clone(), "tc04-one-installment", &[1])
+        .await
+        .unwrap();
+    let one_installment_amount: i64 = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT amount_cents FROM payment WHERE purchase_id=$1",
+            [one_installment_purchase_id.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "amount_cents")
+        .unwrap();
+    let (one_installment_status, one_installment_response) = request(
+        app.clone(),
+        Method::POST,
+        &format!("/purchases/{one_installment_purchase_id}/payments/submit"),
+        Some(json!({
+            "token":"tc04-one-installment-token",
+            "paymentMethodId":"visa",
+            "installments":1
+        })),
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(one_installment_status, StatusCode::OK, "{one_installment_response}");
+    let one_installment_payment = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT installments,interest_cents FROM payment WHERE purchase_id=$1",
+            [one_installment_purchase_id.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(one_installment_payment.try_get::<i32>("", "installments").unwrap(), 1);
+    assert_eq!(one_installment_payment.try_get::<i64>("", "interest_cents").unwrap(), 0);
     {
         let captured_requests = requests.lock().unwrap();
-        assert_eq!(captured_requests.len(), 1);
-        let provider_request = &captured_requests[0];
-        assert_eq!(interest_cents, expected_amount_cents * 3 * 35 / 1000);
-        assert!(interest_cents > 0);
-        assert_eq!(provider_request["amount"]["value"], payment_amount_cents + interest_cents);
-        assert_eq!(payment_amount_cents, expected_amount_cents);
-        assert_eq!(provider_request["customer"]["email"], expected_email);
-        assert_eq!(provider_request["customer"]["tax_id"], expected_tax_id);
-        assert_eq!(provider_request["payment_method"]["installments"], 3);
+        assert_eq!(captured_requests[1]["amount"]["value"], one_installment_amount);
+        assert_eq!(captured_requests[1]["payment_method"]["installments"], 1);
     }
+
+    cart_fixture(&db, Some(1), 1, &[1]).await.unwrap();
+    let twelve_installment_purchase_id = create_purchase_from_quote(app.clone(), "tc04-twelve-installments", &[1])
+        .await
+        .unwrap();
+    let twelve_installment_amount: i64 = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT amount_cents FROM payment WHERE purchase_id=$1",
+            [twelve_installment_purchase_id.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "amount_cents")
+        .unwrap();
+    let (twelve_installment_status, twelve_installment_response) = request(
+        app.clone(),
+        Method::POST,
+        &format!("/purchases/{twelve_installment_purchase_id}/payments/submit"),
+        Some(json!({
+            "token":"tc04-twelve-installment-token",
+            "paymentMethodId":"visa",
+            "installments":12,
+            "bin":"506777"
+        })),
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(twelve_installment_status, StatusCode::OK, "{twelve_installment_response}");
+    let twelve_installment_interest = twelve_installment_amount * 9 * 35 / 1000;
+    let twelve_installment_payment = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT installments,interest_cents FROM payment WHERE purchase_id=$1",
+            [twelve_installment_purchase_id.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(twelve_installment_payment.try_get::<i32>("", "installments").unwrap(), 12);
+    assert_eq!(
+        twelve_installment_payment.try_get::<i64>("", "interest_cents").unwrap(),
+        twelve_installment_interest
+    );
+    {
+        let captured_requests = requests.lock().unwrap();
+        assert_eq!(captured_requests[2]["amount"]["value"], twelve_installment_amount + twelve_installment_interest);
+        assert_eq!(captured_requests[2]["payment_method"]["installments"], 12);
+    }
+
+    cart_fixture(&db, Some(1), 1, &[1]).await.unwrap();
+    let mismatch_purchase_id = create_purchase_from_quote(app.clone(), "tc04-provider-mismatch", &[1])
+        .await
+        .unwrap();
+    let (mismatch_status, mismatch_response) = request(
+        app.clone(),
+        Method::POST,
+        &format!("/purchases/{mismatch_purchase_id}/payments/submit"),
+        Some(json!({
+            "token":"tc04-mismatch-token",
+            "paymentMethodId":"visa",
+            "installments":4,
+            "bin":"506777"
+        })),
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(mismatch_status, StatusCode::BAD_GATEWAY, "{mismatch_response}");
 
     db.execute_unprepared(
         "UPDATE sku SET price_cents=0 WHERE id=1; UPDATE shipping_rate SET price_cents=0 WHERE tenant_id=1",
@@ -2922,7 +3149,7 @@ async fn tc04_charge_uses_purchase_amount_and_payer_and_skips_zero_total() {
     .await
     .unwrap();
     assert_eq!(zero_status, StatusCode::OK, "{zero_payment}");
-    assert_eq!(requests.lock().unwrap().len(), 1);
+    assert_eq!(requests.lock().unwrap().len(), 4);
     let zero_transactions: i64 = db
         .query_one_raw(Statement::from_sql_and_values(
             DbBackend::Postgres,
@@ -2987,6 +3214,7 @@ async fn tc05_persists_attempt_before_provider_and_reuses_it() {
         let submit_uri = format!("/purchases/{purchase_id}/payments/submit");
         let charge_state = Tc05BlockingChargeState::default();
         let double = Router::new()
+            .route("/charges/fees/calculate", get(fees_double))
             .route("/charges", post(tc05_pagbank_charge_double))
             .with_state(charge_state.clone());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -3006,7 +3234,7 @@ async fn tc05_persists_attempt_before_provider_and_reuses_it() {
                 Some(json!({
                     "token":"tc05-provider-token",
                     "paymentMethodId":"visa",
-                    "installments":1
+                    "installments":2
                 })),
                 None,
             )
@@ -3419,6 +3647,7 @@ async fn tc07_provider_timeout_keeps_attempt_pending_then_reconciles() {
     let app = router(app_state);
     let double_state = Tc07TimeoutDoubleState::default();
     let double = Router::new()
+        .route("/charges/fees/calculate", get(fees_double))
         .route(
             "/charges",
             post(tc07_charge_never_responds).get(tc07_search_finds_approved_payment),
@@ -3601,6 +3830,7 @@ async fn tc03_persists_only_accepted_card_metadata() {
         .try_get("", "count")
         .unwrap();
     assert_eq!(forbidden_columns, 0);
+    assert_payment_markers_absent(&db, &["mock:approved"]).await;
 
     cleanup(root, db, schema).await.unwrap();
 }
@@ -4321,8 +4551,8 @@ async fn fees_double(
     let plan = |up_to: i64| -> Vec<Value> {
         (1..=up_to)
             .map(|n| {
-                let total = if n == 1 || n <= free { value } else { value + value * (n - free) * 35 / 1000 };
-                json!({"installments": n, "installment_value": total / n, "interest_free": n == 1 || n <= free,
+                let total = if n <= free { value } else { value + value * (n - free) * 35 / 1000 };
+                json!({"installments": n, "installment_value": total / n, "interest_free": n <= free,
                        "amount": {"value": total, "currency": "BRL"}})
             })
             .collect()
@@ -4335,13 +4565,34 @@ async fn fees_double(
     }
 }
 
-// SR-STO-004, SR-STO-005 (NOV-37): installment options come from the provider and never change the charged total.
+async fn fees_three_installments_double(
+    Query(query): Query<std::collections::HashMap<String, String>>,
+) -> (StatusCode, axum::Json<Value>) {
+    let value: i64 = query["value"].parse().unwrap();
+    let plans: Vec<Value> = (1..=3)
+        .map(|installments| {
+            json!({
+                "installments": installments,
+                "installment_value": value / installments,
+                "interest_free": true,
+                "amount": {"value": value, "currency": "BRL"}
+            })
+        })
+        .collect();
+    (
+        StatusCode::OK,
+        axum::Json(json!({"payment_methods":{"credit_card":{"visa":{"installment_plans":plans}}}})),
+    )
+}
+
+// SR-STO-004, SR-STO-005 (NOV-37): installment options include provider-priced buyer interest.
 #[tokio::test]
 #[ignore = "requires isolated PostgreSQL"]
-async fn installments_come_from_the_provider_with_their_interest() {
-    let _environment_restore = EnvironmentRestore::capture(&["PAYMENT_PROVIDER_MODE", "PAGSEGURO_API_BASE_URL"]);
+async fn installments_return_provider_priced_interest_options() {
+    let _environment_restore = EnvironmentRestore::capture(&["PAYMENT_PROVIDER_MODE", "PAGSEGURO_API_BASE_URL", "PAYMENT_MAX_INTEREST_FREE_INSTALLMENTS"]);
     unsafe {
         std::env::set_var("PAYMENT_PROVIDER_MODE", "real");
+        std::env::remove_var("PAYMENT_MAX_INTEREST_FREE_INSTALLMENTS");
     }
     let payment_keys = Arc::new(PaymentKeyRing::from_env().unwrap());
     let (root, db, schema) = database().await.unwrap();
@@ -4374,23 +4625,31 @@ async fn installments_come_from_the_provider_with_their_interest() {
         body["installments"].as_array().unwrap().iter().map(|o| o["installments"].as_u64().unwrap()).collect()
     };
 
-    // with a BIN: every option of the provider, 1 to 12, with the interest of the ones after the free ones
+    // With a known BIN, return every provider plan, including buyer-interest options.
     let (status, body) = request(app.clone(), Method::GET, "/checkout/installments?tenantId=1&amountCents=3000&bin=506777", None, None).await.unwrap();
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(counts(&body), (1..=12).collect::<Vec<u64>>());
-    assert_eq!(body["installments"][0]["totalCents"], 3000);
-    assert_eq!(body["installments"][0]["interestFree"], true);
-    // the double offers no free installment but the first: 3 installments cost 3000 + 3000*3*35/1000
-    assert_eq!(body["installments"][2]["totalCents"], 3315);
-    assert_eq!(body["installments"][2]["installmentCents"], 1105);
-    assert_eq!(body["installments"][2]["interestFree"], false);
-    // a BIN the provider does not know: answered as without a BIN (the options valid for every brand)
+    assert_eq!(counts(&body), (1..=12).collect::<Vec<_>>());
+    assert_eq!(body["installments"][2]["installmentCents"], 1000);
+    assert_eq!(body["installments"][2]["totalCents"], 3000);
+    assert_eq!(body["installments"][2]["interestFree"], true);
+    assert_eq!(body["installments"][3]["installmentCents"], 776);
+    assert_eq!(body["installments"][3]["totalCents"], 3105);
+    assert_eq!(body["installments"][3]["interestFree"], false);
+    // a BIN the provider does not know: answered as without a BIN
     let (status, body) = request(app.clone(), Method::GET, "/checkout/installments?tenantId=1&amountCents=3000&bin=000000", None, None).await.unwrap();
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(counts(&body), vec![1, 2, 3, 4, 5]);
+    // without a BIN: the options valid for every brand
     let (status, body) = request(app.clone(), Method::GET, "/checkout/installments?tenantId=1&amountCents=3000", None, None).await.unwrap();
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(counts(&body), vec![1, 2, 3, 4, 5]);
+    // the interest-free limit is configurable
+    unsafe { std::env::set_var("PAYMENT_MAX_INTEREST_FREE_INSTALLMENTS", "2"); }
+    let (_, body) = request(app.clone(), Method::GET, "/checkout/installments?tenantId=1&amountCents=3000", None, None).await.unwrap();
+    assert_eq!(counts(&body), vec![1, 2, 3, 4, 5]);
+    assert_eq!(body["installments"][1]["interestFree"], true);
+    assert_eq!(body["installments"][2]["interestFree"], false);
+    unsafe { std::env::remove_var("PAYMENT_MAX_INTEREST_FREE_INSTALLMENTS"); }
     // invalid input and unconfigured tenants
     for uri in ["/checkout/installments?tenantId=1&amountCents=0", "/checkout/installments?tenantId=1&amountCents=abc",
                 "/checkout/installments?tenantId=1&amountCents=3000&bin=12", "/checkout/installments?tenantId=1&amountCents=3000&bin=4539x2"] {
@@ -4400,7 +4659,7 @@ async fn installments_come_from_the_provider_with_their_interest() {
     let (status, _) = request(app.clone(), Method::GET, "/checkout/installments?tenantId=2&amountCents=3000", None, None).await.unwrap();
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
     // a missing or invalid tenant id is a bad request; 503 is only for a tenant without payment configuration
-    for uri in ["/checkout/installments?amountCents=3000", "/checkout/installments?tenantId=x&amountCents=3000"] {
+    for uri in ["/checkout/installments?amountCents=3000", "/checkout/installments?tenantId=x&amountCents=3000", "/checkout/installments?tenantId=0&amountCents=3000", "/checkout/installments?tenantId=-1&amountCents=3000"] {
         let (status, _) = request(app.clone(), Method::GET, uri, None, None).await.unwrap();
         assert_eq!(status, StatusCode::BAD_REQUEST, "{uri}");
     }

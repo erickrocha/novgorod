@@ -28,6 +28,13 @@ describe('catalogService does not invent product data', () => {
     expect(product?.thumbnail).toBeUndefined();
     expect(product?.rating).toBeUndefined();
   });
+
+  it('treats a SKU with missing stock as zero', async () => {
+    vi.mocked(apiClient.get).mockResolvedValue({ data: { id: 1, slug: 'v', name: 'V', images: [], skus: [{ id: 1, priceCents: 1000, active: true, attributes: [] }] } });
+    const product = await catalogService.getProductBySlug('v');
+    expect(product?.skus?.[0].stock).toBe(0);
+    expect(product?.stock).toBe(0);
+  });
 });
 
 describe('catalogService does not hide errors', () => {

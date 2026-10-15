@@ -58,6 +58,7 @@ test('the cart has no demo coupon: coupons are applied at checkout, per seller',
   await page.goto('/carrinho');
   await expect(page.getByText(/Cupons de desconto são aplicados na finalização da compra, por vendedor/)).toBeVisible();
   await expect(page.locator('#coupon-code')).toHaveCount(0);
+  await expect(page.getByText('Desconto:', { exact: true })).toHaveCount(0);
   const text = await page.locator('main').innerText();
   expect(text).not.toMatch(/TORG10|NOVGOROD50/);
   const couponCalls: string[] = [];

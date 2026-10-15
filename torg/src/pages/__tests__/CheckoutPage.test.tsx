@@ -259,7 +259,7 @@ describe('CheckoutPage', () => {
     // Check seller summary breakdown
     await waitFor(() => {
       expect(screen.getByText('Vinícola Serra Alta')).toBeInTheDocument();
-      expect(screen.getByText(/Total a pagar:/i)).toBeInTheDocument();
+      expect(screen.getAllByText(/Total a pagar:/i).length).toBeGreaterThan(0);
       expect(screen.getAllByText(/195,00/).length).toBeGreaterThan(0);
     });
 

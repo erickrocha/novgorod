@@ -21,6 +21,18 @@ test.describe('card payment through the screens (provider double)', () => {
     await expect(page.getByText(/Compra #\d+ confirmada/)).toBeVisible();
   });
 
+  test('payment configuration uses the first seller of a multi-seller quote', async ({ page }) => {
+    await stubSdk(page);
+    await addToCart(page, 'product-pro-1');
+    await addToCart(page, 'product-b1');
+    const configRequest = page.waitForRequest(request =>
+      new URL(request.url()).pathname.endsWith('/checkout/payment-config'),
+    );
+    await reachPayment(page);
+    const configUrl = new URL((await configRequest).url());
+    expect(configUrl.searchParams.get('tenantId')).toBe('1');
+  });
+
   test('declined: the recovery message is shown and the cart is kept', async ({ page }) => {
     await stubSdk(page, 'reject-card');
     await addToCart(page, 'product-pro-1');
@@ -60,24 +72,27 @@ test.describe('card payment through the screens (provider double)', () => {
     await expect(page.getByText(/Pagamento indisponível/)).toBeVisible();
   });
 
-  test('installments come from the provider, with their interest, and the buyer pays that total', async ({ page }) => {
+  test('installments come from the provider, keep the total and travel with the payment', async ({ page }) => {
     await stubSdk(page, 'approved-card');
     await addToCart(page, 'product-pro-1');
     await reachPayment(page);
-    // total R$ 30,00 (item R$ 15,00 + shipping R$ 15,00); the double adds 0.35% per installment after the first
+    // Total R$ 30,00; the double is interest-free up to 3 installments and prices 4x at R$ 30,10.
     const select = page.locator('#pagseguro-installments');
     await expect(select.locator('option')).toHaveCount(12);
-    await expect(select.locator('option').first()).toHaveText('1x de R$ 30,00 sem juros');
-    await expect(select.locator('option').nth(2)).toHaveText('3x de R$ 10,10 (total R$ 30,31)');
+    await expect(select.locator('option').nth(0)).toHaveText('1x de R$ 30,00 sem juros');
+    await expect(select.locator('option').nth(2)).toHaveText('3x de R$ 10,00 sem juros');
+    await expect(select.locator('option').nth(3)).toHaveText('4x de R$ 7,52 (total R$ 30,10)');
     await fillCard(page);
     await expect(select.locator('option')).toHaveCount(12);
-    await select.selectOption('3');
-    await expect(page.locator('#pagseguro-total')).toHaveText('Total a pagar: R$ 30,31 (juros de R$ 0,31)');
+    await select.selectOption('4');
+    const total = page.locator('form p').filter({ hasText: 'Total a pagar:' });
+    await expect(total).toContainText('Total a pagar: R$ 30,10');
+    await expect(total).toContainText('juros de R$ 0,10');
     const submit = page.waitForRequest(r => /\/purchases\/\d+\/payments\/submit$/.test(r.url()));
     await page.locator('#pagseguro-submit').click();
-    const sent = JSON.parse((await submit).postData() ?? '{}');
-    expect(sent.installments).toBe(3);
-    expect(sent.bin).toMatch(/^\d{6}$/);
+    const body = JSON.parse((await submit).postData() ?? '{}');
+    expect(body.installments).toBe(4);
+    expect(body.bin).toBe('453962');
     await expect(page.getByText('Pagamento confirmado')).toBeVisible();
   });
 

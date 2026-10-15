@@ -65,7 +65,7 @@ export interface PaymentState { purchaseId: number; status: string; reference?: 
 export interface InstallmentOption {
   installments: number;
   installmentCents: number;
-  /** What the buyer pays in total; above the purchase total when the provider adds interest. */
+  /** Total payable for this provider plan, including buyer interest when applicable. */
   totalCents: number;
   interestFree: boolean;
 }

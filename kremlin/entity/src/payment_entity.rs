@@ -11,7 +11,6 @@ pub struct Model {
     pub status: String,
     pub installments: i32,
     pub amount_cents: i64,
-    /// Buyer interest of the chosen installments; the charge is `amount_cents + interest_cents`.
     pub interest_cents: i64,
     pub currency: String,
     pub gateway_provider: Option<String>,
