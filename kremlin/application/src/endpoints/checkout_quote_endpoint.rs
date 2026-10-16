@@ -117,9 +117,6 @@ pub async fn estimate(
             .get(ACCEPT_LANGUAGE)
             .and_then(|value| value.to_str().ok()),
     );
-    let Json(input) = input.map_err(|_| {
-        ExceptionResponse::UnprocessableEntity(locale, ErrorKey::InvalidParameterValue)
-    })?;
     // public route that can cost a carrier call: limited per client (default 10 per minute)
     if let Err(retry_after) = crate::commons::rate_limit::check_estimate(
         &headers,
@@ -131,6 +128,9 @@ pub async fn estimate(
             retry_after,
         ));
     }
+    let Json(input) = input.map_err(|_| {
+        ExceptionResponse::UnprocessableEntity(locale, ErrorKey::InvalidParameterValue)
+    })?;
     let result =
         CheckoutQuoteUseCase::with_provider(state.conn.as_ref().clone(), state.shipping.clone())
             .estimate(input, context.tenant_id())

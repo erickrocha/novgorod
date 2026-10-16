@@ -4510,7 +4510,7 @@ async fn public_shipping_estimate_is_rate_limited_per_client() {
     Migrator::up(&db, None).await.unwrap();
     fixtures(&db).await.unwrap();
     let app = router(state(db.clone()));
-    let send = |client: &'static str| {
+    let send = |client: &'static str, body: &'static str| {
         let app = app.clone();
         async move {
             let mut request = Request::builder()
@@ -4518,21 +4518,34 @@ async fn public_shipping_estimate_is_rate_limited_per_client() {
                 .uri("/api/public/shipping/estimate")
                 .header("content-type", "application/json")
                 .header("x-test-client", client)
-                .body(Body::from(json!({"items":[{"skuId":1,"quantity":1}],"cep":"01001000"}).to_string()))
+                .body(Body::from(body))
                 .unwrap();
             request.extensions_mut().insert(TenantContext::Marketplace);
             app.oneshot(request).await.unwrap()
         }
     };
-    for call in 1..=10 {
-        let response = send("203.0.113.10").await;
-        assert_ne!(response.status(), StatusCode::TOO_MANY_REQUESTS, "call {call}");
+    let valid = r#"{"items":[{"skuId":1,"quantity":1}],"cep":"01001000"}"#;
+    let requests = [
+        (r#"{"items":"#, StatusCode::UNPROCESSABLE_ENTITY),
+        (r#"{"items":[{"skuId":1,"quantity":1}],"cep":"01001000","unexpected":true}"#, StatusCode::UNPROCESSABLE_ENTITY),
+        (valid, StatusCode::OK),
+        (valid, StatusCode::OK),
+        (valid, StatusCode::OK),
+        (valid, StatusCode::OK),
+        (valid, StatusCode::OK),
+        (valid, StatusCode::OK),
+        (valid, StatusCode::OK),
+        (valid, StatusCode::OK),
+    ];
+    for (call, (body, expected)) in requests.into_iter().enumerate() {
+        let response = send("203.0.113.10", body).await;
+        assert_eq!(response.status(), expected, "call {}", call + 1);
     }
-    let limited = send("203.0.113.10").await;
+    let limited = send("203.0.113.10", valid).await;
     assert_eq!(limited.status(), StatusCode::TOO_MANY_REQUESTS);
     let retry_after: u64 = limited.headers()["retry-after"].to_str().unwrap().parse().unwrap();
     assert!((1..=60).contains(&retry_after));
-    assert_ne!(send("203.0.113.11").await.status(), StatusCode::TOO_MANY_REQUESTS, "another client");
+    assert_ne!(send("203.0.113.11", valid).await.status(), StatusCode::TOO_MANY_REQUESTS, "another client");
     cleanup(root, db, schema).await.unwrap();
 }
 
