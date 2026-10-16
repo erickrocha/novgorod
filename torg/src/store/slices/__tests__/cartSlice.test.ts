@@ -186,6 +186,29 @@ describe('cartSlice', () => {
     expect(nextState.shippingDetails?.service).toBe('Express');
   });
 
+  it('preserves shipping estimates while recalculating and clears them after failure', () => {
+    const staleState: CartState = {
+      ...initialState,
+      shippingAmount: 35,
+      shippingCep: '01310-100',
+      shippingDetails: { cost: 35, deliveryDays: 2, service: 'Express' },
+    };
+    const pendingState = cartReducer(staleState, { type: estimateShipping.pending.type });
+
+    expect(pendingState.shippingAmount).toBe(35);
+    expect(pendingState.shippingCep).toBe('01310-100');
+    expect(pendingState.shippingDetails?.service).toBe('Express');
+
+    const rejectedState = cartReducer(staleState, {
+      type: estimateShipping.rejected.type,
+      payload: 'O vendedor não entrega neste CEP',
+    });
+    expect(rejectedState.shippingAmount).toBe(0);
+    expect(rejectedState.shippingCep).toBe('');
+    expect(rejectedState.shippingDetails).toBeNull();
+    expect(rejectedState.shippingError).toBe('O vendedor não entrega neste CEP');
+  });
+
   it('rejects estimateShipping with the backend message', async () => {
     vi.mocked(cartService.estimateShipping).mockRejectedValueOnce({ message: 'O vendedor 2 não entrega no RJ' });
     const item = { id: 'i', product: mockProduct, variant: { id: '7', name: 'v', sku: 's', price: 1, stock: 1 }, quantity: 1, unitPrice: 1, totalPrice: 1 } as CartItem;

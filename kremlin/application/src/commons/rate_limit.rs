@@ -25,6 +25,15 @@ impl RateLimiter {
         if hits.len() >= MAX_KEYS {
             hits.retain(|_, (start, _)| now.duration_since(*start) < WINDOW);
         }
+        if !hits.contains_key(key) && hits.len() >= MAX_KEYS {
+            let oldest_key = hits
+                .iter()
+                .min_by_key(|(_, (start, _))| *start)
+                .map(|(client, _)| client.clone());
+            if let Some(oldest_key) = oldest_key {
+                hits.remove(&oldest_key);
+            }
+        }
         let entry = hits.entry(key.to_owned()).or_insert((now, 0));
         if now.duration_since(entry.0) >= WINDOW {
             *entry = (now, 0);
@@ -94,6 +103,39 @@ mod tests {
         assert_eq!(wait, 40);
         assert!(limiter.check_at("b", 10, start).is_ok(), "other clients are independent");
         assert!(limiter.check_at("a", 10, start + Duration::from_secs(60)).is_ok(), "new window");
+    }
+
+    #[test]
+    fn evicts_the_oldest_live_key_when_client_capacity_is_full() {
+        let limiter = RateLimiter::new();
+        let start = Instant::now();
+        for index in 0..MAX_KEYS {
+            let started_at = start + Duration::from_millis(index as u64);
+            assert!(limiter.check_at(&format!("client-{index}"), 10, started_at).is_ok());
+        }
+        for _ in 1..10 {
+            assert!(limiter.check_at("client-0", 10, start + Duration::from_secs(10)).is_ok());
+        }
+        assert_eq!(limiter.check_at("client-0", 10, start + Duration::from_secs(10)), Err(50));
+
+        assert_eq!(limiter.hits.lock().unwrap().len(), MAX_KEYS);
+        assert!(limiter.check_at("new-client", 10, start + Duration::from_secs(11)).is_ok());
+        {
+            let hits = limiter.hits.lock().unwrap();
+            assert!(!hits.contains_key("client-0"));
+            assert!(hits.contains_key("new-client"));
+            assert_eq!(hits.len(), MAX_KEYS);
+        }
+        assert!(limiter.check_at("client-0", 10, start + Duration::from_secs(11)).is_ok());
+        for _ in 1..10 {
+            assert!(limiter.check_at("client-0", 10, start + Duration::from_secs(11)).is_ok());
+        }
+        assert_eq!(limiter.check_at("client-0", 10, start + Duration::from_secs(11)), Err(60));
+        assert_eq!(limiter.hits.lock().unwrap().len(), MAX_KEYS);
+        let hits = limiter.hits.lock().unwrap();
+        assert!(!hits.contains_key("client-1"));
+        assert!(hits.contains_key("client-0"));
+        assert!(hits.contains_key("new-client"));
     }
 
     #[test]

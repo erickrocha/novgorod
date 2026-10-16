@@ -198,6 +198,9 @@ export const cartSlice = createSlice({
     builder.addCase(estimateShipping.rejected, (state, action) => {
       state.shippingLoading = false;
       state.shippingError = action.payload as string;
+      state.shippingAmount = 0;
+      state.shippingCep = '';
+      state.shippingDetails = null;
     });
   },
 });
