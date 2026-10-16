@@ -1,7 +1,7 @@
 use crate::{
     AppState,
     commons::{i18n::Locale, tenant_context::TenantContext},
-    endpoints::checkout_quote_endpoint::quote,
+    endpoints::checkout_quote_endpoint::{estimate, quote},
     infrastructure::{
         correios::Correios,
         shipping_credentials::{CorreiosCredentials, ShippingKeyRing},
@@ -10,7 +10,7 @@ use crate::{
 use axum::{
     Json, Router,
     body::{Body, to_bytes},
-    extract::State,
+    extract::{Extension, State},
     http::{HeaderMap, Request, StatusCode},
     routing::post,
 };
@@ -189,6 +189,13 @@ fn router(state: AppState) -> Router {
         .with_state(state)
 }
 
+fn estimate_router(state: AppState) -> Router {
+    Router::new()
+        .route("/api/public/shipping/estimate", post(estimate))
+        .layer(Extension(TenantContext::Marketplace))
+        .with_state(state)
+}
+
 async fn quote_request(app: Router) -> anyhow::Result<(StatusCode, String)> {
     let mut request = Request::builder()
         .method("POST")
@@ -214,6 +221,25 @@ async fn quote_request(app: Router) -> anyhow::Result<(StatusCode, String)> {
     request.extensions_mut().insert(user());
     request.extensions_mut().insert(Locale::En);
     request.extensions_mut().insert(TenantContext::Marketplace);
+    let response = app.oneshot(request).await?;
+    let status = response.status();
+    let body = String::from_utf8(to_bytes(response.into_body(), usize::MAX).await?.to_vec())?;
+    Ok((status, body))
+}
+
+async fn estimate_request(app: Router) -> anyhow::Result<(StatusCode, String)> {
+    let body = json!({"items":[{"skuId":1,"quantity":1}],"cep":"01001-000"}).to_string();
+    estimate_body_request(app, &body).await
+}
+
+async fn estimate_body_request(app: Router, body: &str) -> anyhow::Result<(StatusCode, String)> {
+    let request = Request::builder()
+        .method("POST")
+        .uri("/api/public/shipping/estimate")
+        .header("content-type", "application/json")
+        .header("x-forwarded-for", "198.51.100.185")
+        .header("accept-language", "pt-BR")
+        .body(Body::from(body.to_owned()))?;
     let response = app.oneshot(request).await?;
     let status = response.status();
     let body = String::from_utf8(to_bytes(response.into_body(), usize::MAX).await?.to_vec())?;
@@ -341,4 +367,83 @@ async fn quote_http_covers_fixed_correios_and_sanitized_provider_failures() {
     let result = execute_cases(db.clone()).await;
     cleanup(root, db, schema).await.unwrap();
     result.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires isolated PostgreSQL via KREMLIN_TEST_DATABASE_URL"]
+async fn estimate_http_uses_correios_and_never_falls_back_to_fixed_rates() {
+    let (root, db, schema) = database().await.unwrap();
+    Migrator::up(&db, None).await.unwrap();
+    fixtures(&db).await.unwrap();
+    let keys = Arc::new(ShippingKeyRing::for_test());
+    let double = Arc::new(CorreiosDouble::default());
+    let (base_url, task) = start_double(double.clone()).await;
+    let credentials = CorreiosCredentials {
+        username: "user-correios".into(),
+        api_access_code: SECRET_SENTINELS[0].into(),
+        posting_card: "card-correios".into(),
+        contract: "contract-correios".into(),
+        regional_identifier: "72".into(),
+    };
+    let (key_version, encrypted) = keys.encrypt(1, &credentials).unwrap();
+    db.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "INSERT INTO tenant_shipping_settings (tenant_id, configuration, credentials, key_version, credential_version) VALUES ($1, $2, $3, $4, 1)",
+        [
+            1.into(),
+            json!({"mode":"correios","originCep":"01001000","services":[{"code":"03220","name":"SEDEX"}]}).into(),
+            encrypted.into(),
+            key_version.into(),
+        ],
+    ))
+    .await
+    .unwrap();
+
+    let provider = Arc::new(
+        Correios::with_base_url_for_test(db.clone(), keys.clone(), &base_url).unwrap(),
+    );
+    let app = estimate_router(state(db.clone(), provider, keys.clone()));
+    for body in [
+        r#"{"items":"#,
+        r#"{"items":[{"skuId":1,"quantity":1}],"cep":"01001-000","unexpected":true}"#,
+    ] {
+        let (status, response_body) = estimate_body_request(app.clone(), body).await.unwrap();
+        assert_eq!(
+            status,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "invalid request returned {status}: {response_body}"
+        );
+    }
+    let (status, body) = estimate_request(app).await.unwrap();
+    assert_eq!(status, StatusCode::OK, "estimate returned {status}: {body}");
+    let estimate: Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(estimate["sellers"][0]["options"][0]["serviceName"], "SEDEX");
+    assert_eq!(estimate["sellers"][0]["options"][0]["priceCents"], 2450);
+    assert_eq!(estimate["sellers"][0]["options"][0]["transitDays"], 2);
+    assert_eq!(double.auth_calls.load(Ordering::SeqCst), 1);
+
+    double.mode.store(PROVIDER_OUTAGE, Ordering::SeqCst);
+    let provider = Arc::new(
+        Correios::with_base_url_for_test(db.clone(), keys.clone(), &base_url).unwrap(),
+    );
+    let app = estimate_router(state(db.clone(), provider, keys.clone()));
+    let (status, body) = estimate_request(app).await.unwrap();
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "failure returned {status}: {body}");
+    assert!(!body.contains("priceCents"));
+    assert!(!body.contains("1500"));
+
+    let quote_count: i64 = db
+        .query_one_raw(Statement::from_string(
+            DbBackend::Postgres,
+            "SELECT count(*) AS n FROM checkout_quote".to_owned(),
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "n")
+        .unwrap();
+    assert_eq!(quote_count, 0);
+
+    task.abort();
+    cleanup(root, db, schema).await.unwrap();
 }

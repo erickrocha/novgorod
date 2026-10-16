@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { fillCard, loginAtCheckout, stubSdk } from './helpers';
 
 // Fixtures from infra/test/kit.py seed: product-pro-1 (T1, R$ 15,00, shipping SP R$ 15,00 / RJ R$ 0, 2 days),
 // product-b1 (T2, R$ 30,00, shipping SP R$ 10,00, no RJ rate).
@@ -68,4 +69,41 @@ test('the public estimate answers 429 with Retry-After after 10 requests from on
   expect((await limited.json()).message).toMatch(/Muitas solicitações/);
   const other = await request.post(url, { headers: { ...headers, 'x-forwarded-for': '198.51.100.250' }, data });
   expect(other.status()).toBe(200);
+});
+
+test('checkout recalculates the estimate and persists selected shipping on the purchase', async ({ page }) => {
+  await stubSdk(page);
+  await addToCart(page, 'product-pro-1');
+  const estimateResponsePromise = page.waitForResponse(response =>
+    response.request().method() === 'POST' && response.url().endsWith('/api/public/shipping/estimate'));
+  await estimate(page, '01001-000');
+  const estimateResponse = await estimateResponsePromise;
+  expect(estimateResponse.status()).toBe(200);
+  const estimateBody = await estimateResponse.json();
+  const estimatedShipping = estimateBody.sellers[0].options[0].priceCents;
+
+  await loginAtCheckout(page);
+  const quoteResponsePromise = page.waitForResponse(response =>
+    response.request().method() === 'POST' && response.url().endsWith('/checkout/quotes'));
+  await page.getByRole('button', { name: /Calcular total com frete/ }).click();
+  const quoteResponse = await quoteResponsePromise;
+  expect(quoteResponse.status()).toBe(201);
+  const quote = await quoteResponse.json();
+  const sellerQuote = quote.sellers[0];
+  const selectedShipping = sellerQuote.shipping.selectedOption.priceCents;
+  expect(selectedShipping).toBe(estimatedShipping);
+  expect(sellerQuote.shippingCents).toBe(selectedShipping);
+
+  await expect(page.locator('#pagseguro-card-number')).toBeVisible();
+  await fillCard(page);
+  const purchaseResponsePromise = page.waitForResponse(response =>
+    response.request().method() === 'POST' && new URL(response.url()).pathname === '/purchases');
+  await page.locator('#pagseguro-submit').click();
+  const purchaseResponse = await purchaseResponsePromise;
+  expect([200, 201]).toContain(purchaseResponse.status());
+  const purchase = await purchaseResponse.json();
+  expect(purchase.shippingCents).toBe(selectedShipping);
+  expect(purchase.orders).toHaveLength(1);
+  expect(purchase.orders[0].shippingCents).toBe(selectedShipping);
+  expect(purchase.orders[0].shippingSnapshot.selectedOption.priceCents).toBe(selectedShipping);
 });

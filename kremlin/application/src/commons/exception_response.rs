@@ -13,6 +13,7 @@ pub enum ExceptionResponse {
     Forbidden(Locale, ErrorKey),
 
     BadRequest(Locale, ErrorKey),
+    UnprocessableEntity(Locale, ErrorKey),
 
     NotFound(Locale, ErrorKey),
 
@@ -43,6 +44,10 @@ impl IntoResponse for ExceptionResponse {
             ),
             ExceptionResponse::BadRequest(locale, key) => (
                 axum::http::StatusCode::BAD_REQUEST,
+                ErrorResponseJson::new(key.as_str().to_string(), translate(locale, key)),
+            ),
+            ExceptionResponse::UnprocessableEntity(locale, key) => (
+                axum::http::StatusCode::UNPROCESSABLE_ENTITY,
                 ErrorResponseJson::new(key.as_str().to_string(), translate(locale, key)),
             ),
             ExceptionResponse::NotFound(locale, key) => (

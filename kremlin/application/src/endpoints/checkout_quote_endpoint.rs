@@ -6,7 +6,7 @@ use crate::commons::{
 use std::net::SocketAddr;
 use axum::{
     Json,
-    extract::{ConnectInfo, Extension, State},
+    extract::{ConnectInfo, Extension, State, rejection::JsonRejection},
     http::{HeaderMap, StatusCode, header::ACCEPT_LANGUAGE},
 };
 use business::{
@@ -109,7 +109,7 @@ pub async fn estimate(
     headers: HeaderMap,
     peer: Option<Extension<ConnectInfo<SocketAddr>>>,
     Extension(context): Extension<crate::commons::tenant_context::TenantContext>,
-    Json(input): Json<ShippingEstimateRequest>,
+    input: Result<Json<ShippingEstimateRequest>, JsonRejection>,
 ) -> HttpResponse<Json<ShippingEstimate>> {
     // public route: no authentication middleware, so no `Locale` extension
     let locale = Locale::from_accept_language(
@@ -117,6 +117,9 @@ pub async fn estimate(
             .get(ACCEPT_LANGUAGE)
             .and_then(|value| value.to_str().ok()),
     );
+    let Json(input) = input.map_err(|_| {
+        ExceptionResponse::UnprocessableEntity(locale, ErrorKey::InvalidParameterValue)
+    })?;
     // public route that can cost a carrier call: limited per client (default 10 per minute)
     if let Err(retry_after) = crate::commons::rate_limit::check_estimate(
         &headers,
