@@ -10,7 +10,7 @@ async function addToCart(page: Page, slug: string) {
 
 async function estimate(page: Page, cep: string) {
   await page.goto('/carrinho');
-  await page.locator('#shipping-cep').fill(cep);
+  await page.getByLabel('Calcular frete').fill(cep);
   await page.getByRole('button', { name: 'Calcular', exact: true }).click();
 }
 

@@ -234,7 +234,7 @@ export const CartPage: React.FC = () => {
             {/* Shipping Estimator */}
             <form onSubmit={handleSubmitShipping(onCalculateShipping)} className="space-y-2 border-t border-slate-100 pt-4">
               <label htmlFor="shipping-cep" className="text-xs font-bold uppercase tracking-wider text-slate-500 block">
-                Calcular Frete Climatizado
+                Calcular frete
               </label>
               <div className="flex gap-2">
                 <input
